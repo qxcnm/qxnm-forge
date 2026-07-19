@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/faux-scenario.schema.json",
+  "title": "qxnm-forge deterministic faux provider scenario v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/scenario",
+  "$defs": {
+    "contextMessage": {
+      "type": "object",
+      "required": ["role", "content"],
+      "properties": {
+        "role": { "enum": ["user", "assistant", "tool"] },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "../domain/content.schema.json#/$defs/content" },
+          "maxItems": 1024
+        },
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "toolName": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "isError": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "role": { "const": "tool" } }, "required": ["role"] },
+          "then": { "required": ["toolCallId", "toolName", "isError"] },
+          "else": {
+            "not": {
+              "anyOf": [
+                { "required": ["toolCallId"] },
+                { "required": ["toolName"] },
+                { "required": ["isError"] }
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "textStep": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "toolCallStep": {
+      "type": "object",
+      "required": ["type", "toolCallId", "name", "arguments"],
+      "properties": {
+        "type": { "const": "tool_call" },
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "arguments": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "errorStep": {
+      "type": "object",
+      "required": ["type", "error"],
+      "properties": {
+        "type": { "const": "error" },
+        "error": { "$ref": "../domain/error.schema.json#/$defs/error" }
+      },
+      "additionalProperties": false
+    },
+    "delayStep": {
+      "type": "object",
+      "required": ["type", "durationMs"],
+      "properties": {
+        "type": { "const": "delay" },
+        "durationMs": { "type": "integer", "minimum": 0, "maximum": 60000 }
+      },
+      "additionalProperties": false
+    },
+    "disconnectStep": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "disconnect" },
+        "reason": { "type": "string", "maxLength": 4096 }
+      },
+      "additionalProperties": false
+    },
+    "step": {
+      "oneOf": [
+        { "$ref": "#/$defs/textStep" },
+        { "$ref": "#/$defs/toolCallStep" },
+        { "$ref": "#/$defs/errorStep" },
+        { "$ref": "#/$defs/delayStep" },
+        { "$ref": "#/$defs/disconnectStep" }
+      ]
+    },
+    "continuation": {
+      "type": "object",
+      "required": ["steps"],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/step" },
+          "maxItems": 10000
+        },
+        "expectedContext": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contextMessage" },
+          "maxItems": 10000
+        },
+        "usage": { "$ref": "../domain/usage.schema.json#/$defs/usage" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["schemaVersion", "name", "seed", "steps"],
+      "properties": {
+        "schemaVersion": { "const": "0.1" },
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "minLength": 1, "maxLength": 128 },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/step" },
+          "maxItems": 10000
+        },
+        "expectedContext": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contextMessage" },
+          "maxItems": 10000
+        },
+        "usage": { "$ref": "../domain/usage.schema.json#/$defs/usage" },
+        "continuations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/continuation" },
+          "maxItems": 100
+        },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "0.1",
+  "routes": [
+    {
+      "entryId": "example-relay",
+      "providerId": "relay-example-relay",
+      "displayName": "示例中转站",
+      "apiFamily": "openai-completions",
+      "apiBaseUrl": "https://relay.example/v1",
+      "catalogVersion": 7,
+      "commissionDisclosure": "通过该链接注册，发行方可能获得佣金",
+      "models": ["model-v1"],
+      "installedAt": "2026-07-18T12:00:00.000Z"
+    }
+  ]
+}

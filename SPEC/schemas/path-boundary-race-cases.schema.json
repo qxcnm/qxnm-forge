@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-protocol:security:path-boundary-race-cases:0.1",
+  "title": "Agent Protocol Linux file path race conformance cases",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "type": "object",
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "platform",
+    "contract",
+    "cases",
+    "productionNegativeCases"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "urn:agent-protocol:security:path-boundary-race-cases:0.1"
+    },
+    "schemaVersion": { "const": "0.1" },
+    "platform": { "const": "linux" },
+    "contract": {
+      "const": {
+        "configurationEnvironment": "AGENT_PATH_BOUNDARY_CONFORMANCE_CONFIG",
+        "conformanceGate": {
+          "cliArgument": "--conformance",
+          "environment": { "name": "QXNM_FORGE_CONFORMANCE", "value": "1" }
+        },
+        "configurationFields": [
+          "schemaVersion",
+          "caseId",
+          "toolCallId",
+          "checkpoint",
+          "controlDirectory",
+          "timeoutMs"
+        ],
+        "controlDirectoryMode": "0700",
+        "readyFile": "ready.json",
+        "releaseFile": "release.json",
+        "barrierFields": [
+          "schemaVersion",
+          "caseId",
+          "toolCallId",
+          "checkpoint",
+          "state"
+        ],
+        "readyState": "ready",
+        "releaseState": "release",
+        "hookTimeoutMs": 5000,
+        "hookPolicy": "one_shot_bounded_regular_no_follow",
+        "outsideTreePolicy": "exact_manifest_unchanged",
+        "canaryPolicy": "random_per_run_no_leak",
+        "productionError": {
+          "code": -32603,
+          "retryable": false,
+          "kind": "conformance_configuration_invalid"
+        }
+      }
+    },
+    "cases": {
+      "const": [
+        {
+          "name": "read_workspace_root_rebind",
+          "toolName": "file.read",
+          "toolCallId": "path-race-read-root-1",
+          "relativePath": "target.txt",
+          "checkpoint": "before_parent_walk",
+          "mutationTarget": "workspace_root",
+          "insideContent": "inside root read\n",
+          "expected": {
+            "result": "success",
+            "pinnedTarget": "read_original_content",
+            "outsideTree": "unchanged"
+          }
+        },
+        {
+          "name": "write_workspace_root_rebind",
+          "toolName": "file.write",
+          "toolCallId": "path-race-write-root-1",
+          "relativePath": "target.txt",
+          "checkpoint": "before_parent_walk",
+          "mutationTarget": "workspace_root",
+          "insideContent": "inside root before write\n",
+          "writeContent": "inside root after write\n",
+          "expected": {
+            "result": "success",
+            "pinnedTarget": "write_new_content",
+            "outsideTree": "unchanged"
+          }
+        },
+        {
+          "name": "read_nested_parent_rebind",
+          "toolName": "file.read",
+          "toolCallId": "path-race-read-parent-1",
+          "relativePath": "nested/parent/target.txt",
+          "checkpoint": "after_parent_open",
+          "mutationTarget": "nested_parent",
+          "insideContent": "inside parent read\n",
+          "expected": {
+            "result": "success",
+            "pinnedTarget": "read_original_content",
+            "outsideTree": "unchanged"
+          }
+        },
+        {
+          "name": "write_nested_parent_rebind",
+          "toolName": "file.write",
+          "toolCallId": "path-race-write-parent-1",
+          "relativePath": "nested/parent/target.txt",
+          "checkpoint": "after_parent_open",
+          "mutationTarget": "nested_parent",
+          "insideContent": "inside parent before write\n",
+          "writeContent": "inside parent after write\n",
+          "expected": {
+            "result": "success",
+            "pinnedTarget": "write_new_content",
+            "outsideTree": "unchanged"
+          }
+        },
+        {
+          "name": "read_leaf_rebind",
+          "toolName": "file.read",
+          "toolCallId": "path-race-read-leaf-1",
+          "relativePath": "leaf/target.txt",
+          "checkpoint": "after_leaf_open_before_read",
+          "mutationTarget": "leaf",
+          "insideContent": "inside leaf read\n",
+          "expected": {
+            "result": "success",
+            "pinnedTarget": "read_open_file_descriptor",
+            "outsideTree": "unchanged"
+          }
+        },
+        {
+          "name": "write_leaf_rebind",
+          "toolName": "file.write",
+          "toolCallId": "path-race-write-leaf-1",
+          "relativePath": "leaf/target.txt",
+          "checkpoint": "after_temp_fsync_before_rename",
+          "mutationTarget": "leaf",
+          "insideContent": "inside leaf before write\n",
+          "writeContent": "inside leaf after write\n",
+          "expected": {
+            "result": "success",
+            "pinnedTarget": "replace_original_name_in_pinned_parent",
+            "movedOldLeaf": "preserve_old_content",
+            "outsideTree": "unchanged"
+          }
+        }
+      ]
+    },
+    "productionNegativeCases": {
+      "const": [
+        {
+          "name": "configuration_with_cli_gate_only",
+          "cliGate": true,
+          "environmentGate": false,
+          "configurationSource": "unread_fifo",
+          "expected": "initialize_fails_before_configuration_read"
+        },
+        {
+          "name": "configuration_with_environment_gate_only",
+          "cliGate": false,
+          "environmentGate": true,
+          "configurationSource": "unread_fifo",
+          "expected": "initialize_fails_before_configuration_read"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

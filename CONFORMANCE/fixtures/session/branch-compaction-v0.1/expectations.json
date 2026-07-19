@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "0.1",
+  "sessionId": "session-branch-compaction",
+  "selectedHeadRecordId": "record-select-branch-a",
+  "compactionRecordId": "record-compaction",
+  "selectedMessageIds": [
+    "message-summary",
+    "message-recent-user",
+    "message-recent-assistant",
+    "message-branch-a-user",
+    "message-branch-a-assistant"
+  ],
+  "excludedMessageIds": [
+    "message-old-user",
+    "message-old-assistant",
+    "message-branch-b-user",
+    "message-branch-b-assistant"
+  ],
+  "mutationErrors": {
+    "staleExpectedHead": { "code": -32010, "retryable": true, "kind": "stale_session_head" },
+    "sessionBusy": { "code": -32004, "retryable": true, "kind": "session_busy" },
+    "recordNotFound": { "code": -32602, "retryable": false, "kind": "record_not_found" },
+    "branchNotQuiescent": { "code": -32010, "retryable": false, "kind": "branch_not_quiescent" },
+    "invalidCompactionBoundary": { "code": -32602, "retryable": false, "kind": "invalid_compaction_boundary" },
+    "invalidCompactionTokens": { "code": -32602, "retryable": false, "kind": "invalid_compaction_tokens" },
+    "journalCorrupt": { "code": -32008, "retryable": false, "kind": "journal_corrupt" }
+  },
+  "continuation": {
+    "input": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Continue only the selected compacted branch."
+        }
+      ]
+    },
+    "responseText": "The selected compacted branch continued portably."
+  }
+}

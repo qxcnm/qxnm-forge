@@ -1,0 +1,600 @@
+{
+  "schemaVersion": "0.1",
+  "cases": [
+    {
+      "name": "safe_file_read_without_approval",
+      "kind": "daemon",
+      "mode": "headless",
+      "seedFiles": [
+        { "path": "read.txt", "content": "fixture read content\n" }
+      ],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-safe-read",
+        "seed": 101,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-safe-read-1", "name": "file.read", "arguments": { "path": "read.txt" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "safe read complete" }],
+            "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+          }
+        ]
+      },
+      "control": { "action": "none" },
+      "expected": {
+        "terminal": "completed",
+        "providerTurnCount": 2,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "tool.started", "tool.completed", "turn.completed", "turn.started", "run.completed"],
+        "approvalCount": 0,
+        "toolCalls": [
+          { "toolCallId": "tool-safe-read-1", "name": "file.read", "executed": true, "isError": false }
+        ],
+        "workspace": [
+          { "path": "read.txt", "state": "file", "content": "fixture read content\n" }
+        ],
+        "journal": {
+          "toolIntentCount": 1,
+          "toolResultCount": 1,
+          "approvalRequestedCount": 0,
+          "approvalResolvedCount": 0,
+          "cancellationRequestedCount": 0,
+          "durabilityEvents": ["tool.requested", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "headless_file_write_default_deny",
+      "kind": "daemon",
+      "mode": "headless",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-headless-write-deny",
+        "seed": 102,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-headless-write-1", "name": "file.write", "arguments": { "path": "headless-denied.txt", "content": "must not be written\n" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "headless denial observed" }],
+            "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+          }
+        ]
+      },
+      "control": { "action": "none" },
+      "expected": {
+        "terminal": "completed",
+        "providerTurnCount": 2,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "tool.completed", "turn.completed", "turn.started", "run.completed"],
+        "approvalCount": 0,
+        "toolCalls": [
+          { "toolCallId": "tool-headless-write-1", "name": "file.write", "executed": false, "isError": true, "terminationReason": "denied", "errorKind": "permission_denied" }
+        ],
+        "workspace": [
+          { "path": "headless-denied.txt", "state": "absent" }
+        ],
+        "journal": {
+          "toolIntentCount": 1,
+          "toolResultCount": 1,
+          "approvalRequestedCount": 0,
+          "approvalResolvedCount": 0,
+          "cancellationRequestedCount": 0,
+          "durabilityEvents": ["tool.requested", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "interactive_allow_once",
+      "kind": "daemon",
+      "mode": "interactive",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-interactive-allow",
+        "seed": 103,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-interactive-allow-1", "name": "file.write", "arguments": { "path": "interactive-allow.txt", "content": "approved write\n" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "approved write complete" }],
+            "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+          }
+        ]
+      },
+      "control": { "action": "respond", "decision": "allow_once" },
+      "expected": {
+        "terminal": "completed",
+        "providerTurnCount": 2,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "approval.requested", "approval.resolved", "tool.started", "tool.completed", "turn.completed", "turn.started", "run.completed"],
+        "approvalCount": 1,
+        "toolCalls": [
+          { "toolCallId": "tool-interactive-allow-1", "name": "file.write", "executed": true, "isError": false }
+        ],
+        "workspace": [
+          { "path": "interactive-allow.txt", "state": "file", "content": "approved write\n" }
+        ],
+        "journal": {
+          "toolIntentCount": 1,
+          "toolResultCount": 1,
+          "approvalRequestedCount": 1,
+          "approvalResolvedCount": 1,
+          "cancellationRequestedCount": 0,
+          "durabilityEvents": ["tool.requested", "approval.requested", "approval.resolved", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "interactive_deny",
+      "kind": "daemon",
+      "mode": "interactive",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-interactive-deny",
+        "seed": 104,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-interactive-deny-1", "name": "file.write", "arguments": { "path": "interactive-denied.txt", "content": "must not be written\n" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "interactive denial observed" }],
+            "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+          }
+        ]
+      },
+      "control": { "action": "respond", "decision": "deny" },
+      "expected": {
+        "terminal": "completed",
+        "providerTurnCount": 2,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "approval.requested", "approval.resolved", "tool.completed", "turn.completed", "turn.started", "run.completed"],
+        "approvalCount": 1,
+        "toolCalls": [
+          { "toolCallId": "tool-interactive-deny-1", "name": "file.write", "executed": false, "isError": true, "terminationReason": "denied", "errorKind": "permission_denied" }
+        ],
+        "workspace": [
+          { "path": "interactive-denied.txt", "state": "absent" }
+        ],
+        "journal": {
+          "toolIntentCount": 1,
+          "toolResultCount": 1,
+          "approvalRequestedCount": 1,
+          "approvalResolvedCount": 1,
+          "cancellationRequestedCount": 0,
+          "durabilityEvents": ["tool.requested", "approval.requested", "approval.resolved", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "unknown_tool",
+      "kind": "daemon",
+      "mode": "headless",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-unknown",
+        "seed": 105,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-unknown-1", "name": "fixture.unknown", "arguments": {} }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "unknown tool result observed" }],
+            "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+          }
+        ]
+      },
+      "control": { "action": "none" },
+      "expected": {
+        "terminal": "completed",
+        "providerTurnCount": 2,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "tool.completed", "turn.completed", "turn.started", "run.completed"],
+        "approvalCount": 0,
+        "toolCalls": [
+          { "toolCallId": "tool-unknown-1", "name": "fixture.unknown", "executed": false, "isError": true, "terminationReason": "validation_error", "errorKind": "tool_not_found" }
+        ],
+        "workspace": [],
+        "journal": {
+          "toolIntentCount": 1,
+          "toolResultCount": 1,
+          "approvalRequestedCount": 0,
+          "approvalResolvedCount": 0,
+          "cancellationRequestedCount": 0,
+          "durabilityEvents": ["tool.requested", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "invalid_tool_arguments",
+      "kind": "daemon",
+      "mode": "headless",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-invalid-arguments",
+        "seed": 106,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-invalid-arguments-1", "name": "file.read", "arguments": {} }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "invalid arguments result observed" }],
+            "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+          }
+        ]
+      },
+      "control": { "action": "none" },
+      "expected": {
+        "terminal": "completed",
+        "providerTurnCount": 2,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "tool.completed", "turn.completed", "turn.started", "run.completed"],
+        "approvalCount": 0,
+        "toolCalls": [
+          { "toolCallId": "tool-invalid-arguments-1", "name": "file.read", "executed": false, "isError": true, "terminationReason": "validation_error", "errorKind": "tool_arguments_invalid" }
+        ],
+        "workspace": [],
+        "journal": {
+          "toolIntentCount": 1,
+          "toolResultCount": 1,
+          "approvalRequestedCount": 0,
+          "approvalResolvedCount": 0,
+          "cancellationRequestedCount": 0,
+          "durabilityEvents": ["tool.requested", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "sequential_source_order",
+      "kind": "daemon",
+      "mode": "headless",
+      "seedFiles": [
+        { "path": "first.txt", "content": "first\n" },
+        { "path": "second.txt", "content": "second\n" }
+      ],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-sequential-order",
+        "seed": 107,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-order-1", "name": "file.read", "arguments": { "path": "first.txt" } },
+          { "type": "tool_call", "toolCallId": "tool-order-2", "name": "file.read", "arguments": { "path": "second.txt" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 2, "totalTokens": 3 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "sequential reads complete" }],
+            "usage": { "inputTokens": 2, "outputTokens": 1, "totalTokens": 3 }
+          }
+        ]
+      },
+      "control": { "action": "none" },
+      "expected": {
+        "terminal": "completed",
+        "providerTurnCount": 2,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "tool.started", "tool.completed", "tool.requested", "tool.started", "tool.completed", "turn.completed", "turn.started", "run.completed"],
+        "approvalCount": 0,
+        "toolCalls": [
+          { "toolCallId": "tool-order-1", "name": "file.read", "executed": true, "isError": false },
+          { "toolCallId": "tool-order-2", "name": "file.read", "executed": true, "isError": false }
+        ],
+        "workspace": [
+          { "path": "first.txt", "state": "file", "content": "first\n" },
+          { "path": "second.txt", "state": "file", "content": "second\n" }
+        ],
+        "journal": {
+          "toolIntentCount": 2,
+          "toolResultCount": 2,
+          "approvalRequestedCount": 0,
+          "approvalResolvedCount": 0,
+          "cancellationRequestedCount": 0,
+          "durabilityEvents": ["tool.requested", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "tool_result_in_next_provider_context",
+      "kind": "daemon",
+      "mode": "headless",
+      "seedFiles": [
+        { "path": "context.txt", "content": "context fixture\n" }
+      ],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-context-handoff",
+        "seed": 108,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-context-1", "name": "file.read", "arguments": { "path": "context.txt" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "expectedContext": [
+              { "role": "user", "content": [{ "type": "text", "text": "Execute the configured local conformance tool calls." }] },
+              { "role": "assistant", "content": [{ "type": "tool_call", "toolCallId": "tool-context-1", "name": "file.read", "arguments": { "path": "context.txt" } }] },
+              { "role": "tool", "toolCallId": "tool-context-1", "toolName": "file.read", "isError": false, "content": [{ "type": "text", "text": "context fixture\n" }] }
+            ],
+            "steps": [{ "type": "text", "text": "context handoff verified" }],
+            "usage": { "inputTokens": 3, "outputTokens": 1, "totalTokens": 4 }
+          }
+        ]
+      },
+      "control": { "action": "none" },
+      "expected": {
+        "terminal": "completed",
+        "providerTurnCount": 2,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "tool.started", "tool.completed", "turn.completed", "turn.started", "run.completed"],
+        "approvalCount": 0,
+        "toolCalls": [
+          { "toolCallId": "tool-context-1", "name": "file.read", "executed": true, "isError": false }
+        ],
+        "workspace": [
+          { "path": "context.txt", "state": "file", "content": "context fixture\n" }
+        ],
+        "journal": {
+          "toolIntentCount": 1,
+          "toolResultCount": 1,
+          "approvalRequestedCount": 0,
+          "approvalResolvedCount": 0,
+          "cancellationRequestedCount": 0,
+          "durabilityEvents": ["tool.requested", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "cancel_while_waiting_approval",
+      "kind": "daemon",
+      "mode": "interactive",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-approval-cancel",
+        "seed": 109,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-approval-cancel-1", "name": "file.write", "arguments": { "path": "cancelled-write.txt", "content": "must not be written\n" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+      },
+      "control": { "action": "cancel_on_approval" },
+      "expected": {
+        "terminal": "cancelled",
+        "providerTurnCount": 1,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "approval.requested", "approval.resolved", "tool.completed", "turn.completed", "run.cancelled"],
+        "approvalCount": 1,
+        "toolCalls": [
+          { "toolCallId": "tool-approval-cancel-1", "name": "file.write", "executed": false, "isError": true, "terminationReason": "cancelled", "errorKind": "cancelled" }
+        ],
+        "workspace": [
+          { "path": "cancelled-write.txt", "state": "absent" }
+        ],
+        "journal": {
+          "toolIntentCount": 1,
+          "toolResultCount": 1,
+          "approvalRequestedCount": 1,
+          "approvalResolvedCount": 1,
+          "cancellationRequestedCount": 1,
+          "durabilityEvents": ["tool.requested", "approval.requested", "approval.resolved", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "cancel_finishes_remaining_source_calls",
+      "kind": "daemon",
+      "mode": "interactive",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-cancel-remaining-source-calls",
+        "seed": 111,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-cancel-batch-1", "name": "file.write", "arguments": { "path": "cancelled-first.txt", "content": "must not be written\n" } },
+          { "type": "tool_call", "toolCallId": "tool-cancel-batch-2", "name": "file.write", "arguments": { "path": "cancelled-second.txt", "content": "must not be written\n" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 2, "totalTokens": 3 }
+      },
+      "control": { "action": "cancel_on_approval" },
+      "expected": {
+        "terminal": "cancelled",
+        "providerTurnCount": 1,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "approval.requested", "approval.resolved", "tool.completed", "tool.requested", "tool.completed", "turn.completed", "run.cancelled"],
+        "approvalCount": 1,
+        "toolCalls": [
+          { "toolCallId": "tool-cancel-batch-1", "name": "file.write", "executed": false, "isError": true, "terminationReason": "cancelled", "errorKind": "cancelled" },
+          { "toolCallId": "tool-cancel-batch-2", "name": "file.write", "executed": false, "isError": true, "terminationReason": "cancelled", "errorKind": "cancelled" }
+        ],
+        "workspace": [
+          { "path": "cancelled-first.txt", "state": "absent" },
+          { "path": "cancelled-second.txt", "state": "absent" }
+        ],
+        "journal": {
+          "toolIntentCount": 2,
+          "toolResultCount": 2,
+          "approvalRequestedCount": 1,
+          "approvalResolvedCount": 1,
+          "cancellationRequestedCount": 1,
+          "durabilityEvents": ["tool.requested", "approval.requested", "approval.resolved", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "append_before_event",
+      "kind": "daemon",
+      "mode": "headless",
+      "seedFiles": [
+        { "path": "durability.txt", "content": "durable fixture\n" }
+      ],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "tool-append-before-event",
+        "seed": 110,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "tool-durability-1", "name": "file.read", "arguments": { "path": "durability.txt" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "durability ordering verified" }],
+            "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+          }
+        ]
+      },
+      "control": { "action": "none" },
+      "expected": {
+        "terminal": "completed",
+        "providerTurnCount": 2,
+        "semanticEventOrder": ["run.started", "turn.started", "tool.requested", "tool.started", "tool.completed", "turn.completed", "turn.started", "run.completed"],
+        "approvalCount": 0,
+        "toolCalls": [
+          { "toolCallId": "tool-durability-1", "name": "file.read", "executed": true, "isError": false }
+        ],
+        "workspace": [
+          { "path": "durability.txt", "state": "file", "content": "durable fixture\n" }
+        ],
+        "journal": {
+          "toolIntentCount": 1,
+          "toolResultCount": 1,
+          "approvalRequestedCount": 0,
+          "approvalResolvedCount": 0,
+          "cancellationRequestedCount": 0,
+          "durabilityEvents": ["tool.requested", "tool.completed"]
+        }
+      }
+    },
+    {
+      "name": "approval_timeout_late_duplicate_conflict",
+      "kind": "approval_failure",
+      "mode": "interactive",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "approval-timeout-failure",
+        "seed": 112,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "approval-timeout-call-1", "name": "file.write", "arguments": { "path": "approval-timeout.txt", "content": "must not be written\n" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "timeout denial observed" }],
+            "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+          }
+        ]
+      },
+      "fault": { "action": "timeout", "timeoutMs": 100, "lateResponseCount": 2 },
+      "expected": {
+        "resolution": { "count": 1, "decision": "deny", "source": "timeout" },
+        "conflictResponses": { "count": 2, "code": -32010, "retryable": false },
+        "toolIntentCount": 1,
+        "toolResultCount": 1,
+        "toolStartedCount": 0,
+        "outcomeKnown": true,
+        "terminalStatuses": ["completed"],
+        "workspace": [{ "path": "approval-timeout.txt", "state": "absent" }]
+      }
+    },
+    {
+      "name": "approval_stdin_eof_disconnect",
+      "kind": "approval_failure",
+      "mode": "interactive",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "approval-stdin-eof",
+        "seed": 113,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "approval-disconnect-call-1", "name": "file.write", "arguments": { "path": "approval-disconnect.txt", "content": "must not be written\n" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 },
+        "continuations": [
+          {
+            "steps": [{ "type": "text", "text": "disconnect denial observed" }],
+            "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+          }
+        ]
+      },
+      "fault": { "action": "stdin_eof" },
+      "expected": {
+        "resolution": { "count": 1, "decision": "deny", "source": "disconnect" },
+        "conflictResponses": { "count": 0, "code": -32010, "retryable": false },
+        "toolIntentCount": 1,
+        "toolResultCount": 1,
+        "toolStartedCount": 0,
+        "outcomeKnown": true,
+        "terminalStatuses": ["completed", "interrupted"],
+        "workspace": [{ "path": "approval-disconnect.txt", "state": "absent" }]
+      }
+    },
+    {
+      "name": "approval_response_delivery_failure",
+      "kind": "approval_failure",
+      "mode": "interactive",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "approval-response-delivery-failure",
+        "seed": 114,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "approval-delivery-call-1", "name": "file.write", "arguments": { "path": "approval-delivery.txt", "content": "must not be written\n" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+      },
+      "fault": { "action": "response_delivery_failure", "decision": "allow_once" },
+      "expected": {
+        "resolution": { "count": 1, "decision": "allow_once", "source": "client" },
+        "conflictResponses": { "count": 0, "code": -32010, "retryable": false },
+        "toolIntentCount": 1,
+        "toolResultCount": 1,
+        "toolStartedCount": 0,
+        "outcomeKnown": true,
+        "terminalStatuses": ["completed", "interrupted"],
+        "workspace": [{ "path": "approval-delivery.txt", "state": "absent" }]
+      }
+    },
+    {
+      "name": "approval_sigkill_recovery",
+      "kind": "approval_failure",
+      "mode": "interactive",
+      "seedFiles": [],
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "approval-sigkill-recovery",
+        "seed": 115,
+        "steps": [
+          { "type": "tool_call", "toolCallId": "approval-crash-call-1", "name": "file.write", "arguments": { "path": "approval-crash.txt", "content": "must not be written\n" } }
+        ],
+        "usage": { "inputTokens": 1, "outputTokens": 1, "totalTokens": 2 }
+      },
+      "fault": { "action": "force_kill_recovery" },
+      "expected": {
+        "resolution": { "count": 1, "decision": "deny", "source": "disconnect" },
+        "conflictResponses": { "count": 0, "code": -32010, "retryable": false },
+        "toolIntentCount": 1,
+        "toolResultCount": 1,
+        "toolStartedCount": 0,
+        "outcomeKnown": true,
+        "terminalStatuses": ["interrupted"],
+        "workspace": [{ "path": "approval-crash.txt", "state": "absent" }]
+      }
+    },
+    {
+      "name": "non_idempotent_not_replayed",
+      "kind": "portable_recovery",
+      "fixtureDirectory": "CONFORMANCE/fixtures/session/portable-v0.1",
+      "expected": {
+        "toolCallId": "tool-call-side-effect-1",
+        "intentCountBefore": 1,
+        "intentCountAfter": 1,
+        "resultCountAfter": 1,
+        "outcomeKnown": false,
+        "terminal": "interrupted"
+      }
+    }
+  ]
+}

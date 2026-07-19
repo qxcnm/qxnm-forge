@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/terminal.schema.json",
+  "title": "qxnm-forge terminal RPC and notification contract",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$defs": {
+    "size": {
+      "type": "object",
+      "required": ["columns", "rows"],
+      "properties": {
+        "columns": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "rows": { "type": "integer", "minimum": 1, "maximum": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "lifetimeMs", "idleTimeoutMs", "retentionBytes", "inputBufferBytes", "eventBytes"
+      ],
+      "properties": {
+        "lifetimeMs": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "idleTimeoutMs": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "retentionBytes": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "inputBufferBytes": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "eventBytes": {
+          "description": "Maximum raw PTY byteCount represented by one terminal.output; serialized notifications also obey initialize maxEventBytes/maxFrameBytes.",
+          "$ref": "../common.schema.json#/$defs/positiveSafeInteger"
+        }
+      },
+      "additionalProperties": false
+    },
+    "openParams": {
+      "type": "object",
+      "required": [
+        "sessionId", "executable", "args", "cwd", "environment", "size", "limits", "disconnectPolicy"
+      ],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "executable": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "args": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 1048576 },
+          "maxItems": 4096
+        },
+        "cwd": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "environment": {
+          "type": "array",
+          "items": { "$ref": "../executor.schema.json#/$defs/environmentEntry" },
+          "maxItems": 1024
+        },
+        "size": { "$ref": "#/$defs/size" },
+        "limits": { "$ref": "#/$defs/limits" },
+        "disconnectPolicy": { "enum": ["terminate", "retain"] },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "writeParams": {
+      "type": "object",
+      "required": ["sessionId", "terminalId", "attachmentId", "inputSeq", "data"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "terminalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "attachmentId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "inputSeq": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "data": { "type": "string", "maxLength": 65536 },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "resizeParams": {
+      "type": "object",
+      "required": ["sessionId", "terminalId", "attachmentId", "size"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "terminalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "attachmentId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "size": { "$ref": "#/$defs/size" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "signalParams": {
+      "type": "object",
+      "required": ["sessionId", "terminalId", "attachmentId", "signal"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "terminalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "attachmentId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "signal": { "enum": ["interrupt", "terminate", "kill", "hangup"] },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "attachParams": {
+      "type": "object",
+      "required": ["sessionId", "terminalId", "afterSeq", "takeover"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "terminalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "afterSeq": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "takeover": { "type": "boolean" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "closeParams": {
+      "type": "object",
+      "required": ["sessionId", "terminalId", "attachmentId", "mode"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "terminalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "attachmentId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "mode": { "enum": ["detach", "terminate"] },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "openResult": {
+      "type": "object",
+      "required": [
+        "terminalId", "attachmentId", "state", "ptyKind", "size", "latestOutputSeq"
+      ],
+      "properties": {
+        "terminalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "attachmentId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "state": { "enum": ["running", "exited", "closed"] },
+        "ptyKind": { "enum": ["unix_pty", "windows_conpty"] },
+        "size": { "$ref": "#/$defs/size" },
+        "latestOutputSeq": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "writeResult": {
+      "type": "object",
+      "required": ["accepted", "inputSeq", "acceptedBytes"],
+      "properties": {
+        "accepted": { "const": true },
+        "inputSeq": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "acceptedBytes": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "resizeResult": {
+      "type": "object",
+      "required": ["accepted", "size"],
+      "properties": {
+        "accepted": { "const": true },
+        "size": { "$ref": "#/$defs/size" }
+      },
+      "additionalProperties": false
+    },
+    "acceptedResult": {
+      "type": "object",
+      "required": ["accepted"],
+      "properties": { "accepted": { "const": true } },
+      "additionalProperties": false
+    },
+    "attachResult": {
+      "type": "object",
+      "required": [
+        "terminalId", "attachmentId", "state", "ptyKind", "size", "latestOutputSeq", "replayThroughSeq"
+      ],
+      "properties": {
+        "terminalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "attachmentId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "state": { "enum": ["running", "exited", "closed"] },
+        "ptyKind": { "enum": ["unix_pty", "windows_conpty"] },
+        "size": { "$ref": "#/$defs/size" },
+        "latestOutputSeq": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "replayThroughSeq": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "outputData": {
+      "type": "object",
+      "required": ["stream", "data", "byteCount"],
+      "properties": {
+        "stream": { "const": "pty" },
+        "data": { "type": "string", "maxLength": 65536 },
+        "byteCount": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "exitedData": {
+      "type": "object",
+      "required": ["exitCode", "signal", "terminationReason"],
+      "properties": {
+        "exitCode": {
+          "oneOf": [
+            { "type": "integer", "minimum": -2147483648, "maximum": 4294967295 },
+            { "type": "null" }
+          ]
+        },
+        "signal": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+            { "type": "null" }
+          ]
+        },
+        "terminationReason": { "enum": ["exit", "signal", "timeout", "cancelled", "output_limit"] }
+      },
+      "additionalProperties": false
+    },
+    "truncatedData": {
+      "type": "object",
+      "required": ["omittedBytes", "retainedThroughSeq"],
+      "properties": {
+        "omittedBytes": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "retainedThroughSeq": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "closedData": {
+      "type": "object",
+      "required": ["reason"],
+      "properties": { "reason": { "enum": ["client", "daemon_shutdown", "idle_timeout", "lifetime"] } },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": ["sessionId", "terminalId", "seq", "time", "type", "data"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "terminalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "seq": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "time": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "type": { "enum": ["terminal.output", "terminal.truncated", "terminal.exited", "terminal.closed"] },
+        "data": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "terminal.output" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/outputData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "terminal.truncated" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/truncatedData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "terminal.exited" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/exitedData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "terminal.closed" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/closedData" } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "notification": {
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "terminal/event" },
+        "params": { "$ref": "#/$defs/event" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "$schema": "./schemas/language-profiles.schema.json",
+  "schemaVersion": "0.1",
+  "project": "qxnm-forge",
+  "author": {
+    "name": "高宏顺",
+    "email": "18272669457@163.com"
+  },
+  "profiles": [
+    {
+      "id": "dotnet",
+      "displayName": ".NET",
+      "markers": ["*.sln", "*.slnx", "*.csproj", "global.json"],
+      "toolchains": [{ "executable": "dotnet", "probeArgs": ["--info"] }],
+      "operations": {
+        "restore": [{ "executable": "dotnet", "args": ["restore", "${target}"] }],
+        "build": [{ "executable": "dotnet", "args": ["build", "${target}", "--no-restore"] }],
+        "test": [{ "executable": "dotnet", "args": ["test", "${target}", "--no-build"] }],
+        "lint": [{ "executable": "dotnet", "args": ["format", "${target}", "--verify-no-changes", "--no-restore"] }],
+        "formatCheck": [{ "executable": "dotnet", "args": ["format", "${target}", "--verify-no-changes", "--no-restore"] }]
+      }
+    },
+    {
+      "id": "rust",
+      "displayName": "Rust",
+      "markers": ["Cargo.toml"],
+      "toolchains": [{ "executable": "cargo", "probeArgs": ["--version"] }, { "executable": "rustc", "probeArgs": ["--version"] }],
+      "operations": {
+        "build": [{ "executable": "cargo", "args": ["build", "--workspace", "--all-targets"] }],
+        "test": [{ "executable": "cargo", "args": ["test", "--workspace"] }],
+        "lint": [{ "executable": "cargo", "args": ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"] }],
+        "formatCheck": [{ "executable": "cargo", "args": ["fmt", "--all", "--", "--check"] }]
+      }
+    },
+    {
+      "id": "go",
+      "displayName": "Go",
+      "markers": ["go.mod", "go.work"],
+      "toolchains": [{ "executable": "go", "probeArgs": ["version"] }],
+      "operations": {
+        "build": [{ "executable": "go", "args": ["build", "./..."] }],
+        "test": [{ "executable": "go", "args": ["test", "./..."] }],
+        "lint": [{ "executable": "go", "args": ["vet", "./..."] }],
+        "formatCheck": [{ "executable": "gofmt", "args": ["-l", "${goFiles}"], "successRequiresEmptyStdout": true }]
+      }
+    },
+    {
+      "id": "typescript",
+      "displayName": "TypeScript",
+      "markers": ["package.json", "tsconfig.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"],
+      "toolchains": [{ "executable": "node", "probeArgs": ["--version"] }],
+      "selectors": [
+        { "marker": "pnpm-lock.yaml", "executable": "pnpm" },
+        { "marker": "yarn.lock", "executable": "yarn" },
+        { "marker": "package-lock.json", "executable": "npm" }
+      ],
+      "operations": {
+        "build": [{ "executable": "${packageManager}", "args": ["run", "build"] }],
+        "test": [{ "executable": "${packageManager}", "args": ["run", "test"] }],
+        "lint": [{ "executable": "${packageManager}", "args": ["run", "check"] }],
+        "formatCheck": [{ "executable": "${packageManager}", "args": ["run", "check"] }]
+      }
+    },
+    {
+      "id": "python",
+      "displayName": "Python",
+      "markers": ["pyproject.toml", "requirements.txt", "uv.lock", "poetry.lock"],
+      "toolchains": [{ "executable": "python", "probeArgs": ["--version"] }],
+      "operations": {
+        "test": [{ "executable": "python", "args": ["-m", "pytest"] }],
+        "lint": [{ "executable": "python", "args": ["-m", "ruff", "check", "."] }, { "executable": "python", "args": ["-m", "mypy", "."] }],
+        "formatCheck": [{ "executable": "python", "args": ["-m", "ruff", "format", "--check", "."] }]
+      }
+    }
+  ]
+}

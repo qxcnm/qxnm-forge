@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-protocol:session:journal-tail-recovery-cases:0.1",
+  "title": "qxnm-forge portable Session journal tail recovery conformance cases",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "type": "object",
+  "required": ["$schema", "schemaVersion", "contract", "cases"],
+  "properties": {
+    "$schema": {
+      "const": "urn:agent-protocol:session:journal-tail-recovery-cases:0.1"
+    },
+    "schemaVersion": { "const": "0.1" },
+    "contract": {
+      "type": "object",
+      "required": [
+        "namespace",
+        "action",
+        "backupFileTemplate",
+        "unterminatedPolicy",
+        "corruptError"
+      ],
+      "properties": {
+        "namespace": { "const": "org.agent-session.recovery" },
+        "action": { "const": "truncate_uncommitted_tail" },
+        "backupFileTemplate": {
+          "const": "journal.recovery-{originalSha256}.bak"
+        },
+        "unterminatedPolicy": {
+          "const": "uncommitted_without_independent_durability_witness"
+        },
+        "corruptError": {
+          "type": "object",
+          "required": ["code", "retryable", "kind"],
+          "properties": {
+            "code": { "const": -32008 },
+            "retryable": { "const": false },
+            "kind": { "const": "journal_corrupt" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "cases": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/case",
+          "properties": {
+            "name": { "const": "invalid_torn_tail" },
+            "mutation": { "const": "invalid_json_no_lf" },
+            "expected": { "const": "repair" }
+          }
+        },
+        {
+          "$ref": "#/$defs/case",
+          "properties": {
+            "name": { "const": "valid_json_no_lf" },
+            "mutation": { "const": "valid_record_no_lf" },
+            "expected": { "const": "repair" }
+          }
+        },
+        {
+          "$ref": "#/$defs/case",
+          "properties": {
+            "name": { "const": "complete_invalid_utf8" },
+            "mutation": { "const": "invalid_utf8_lf" },
+            "expected": { "const": "journal_corrupt" }
+          }
+        },
+        {
+          "$ref": "#/$defs/case",
+          "properties": {
+            "name": { "const": "complete_invalid_json" },
+            "mutation": { "const": "invalid_json_lf" },
+            "expected": { "const": "journal_corrupt" }
+          }
+        },
+        {
+          "$ref": "#/$defs/case",
+          "properties": {
+            "name": { "const": "complete_invalid_schema" },
+            "mutation": { "const": "invalid_schema_lf" },
+            "expected": { "const": "journal_corrupt" }
+          }
+        },
+        {
+          "$ref": "#/$defs/case",
+          "properties": {
+            "name": { "const": "recursive_duplicate_key" },
+            "mutation": { "const": "recursive_duplicate_key_lf" },
+            "expected": { "const": "journal_corrupt" }
+          }
+        }
+      ],
+      "minItems": 6,
+      "maxItems": 6
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": ["name", "mutation", "expected"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "maxLength": 128
+        },
+        "mutation": {
+          "enum": [
+            "invalid_json_no_lf",
+            "valid_record_no_lf",
+            "invalid_utf8_lf",
+            "invalid_json_lf",
+            "invalid_schema_lf",
+            "recursive_duplicate_key_lf"
+          ]
+        },
+        "expected": { "enum": ["repair", "journal_corrupt"] }
+      },
+      "additionalProperties": false
+    }
+  }
+}

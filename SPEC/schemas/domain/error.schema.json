@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/error.schema.json",
+  "title": "qxnm-forge portable error",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/error",
+  "$defs": {
+    "details": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "httpStatus": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "retryAfterMs": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "field": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "operation": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "providerId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "modelId": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "toolName": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "supportedVersions": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$", "maxLength": 16 },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "limit": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "observed": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "exitCode": {
+          "type": ["integer", "null"]
+        },
+        "signal": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "resourceId": {
+          "$ref": "../common.schema.json#/$defs/opaqueId"
+        },
+        "extensions": {
+          "$ref": "../common.schema.json#/$defs/extensions"
+        }
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "retryable", "details"],
+      "properties": {
+        "code": {
+          "type": "integer",
+          "minimum": -32768,
+          "maximum": -1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "$ref": "#/$defs/details"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

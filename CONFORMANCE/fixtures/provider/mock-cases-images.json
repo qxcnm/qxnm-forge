@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schemas.agentprotocol.local/spec/0.1/schemas/provider-image-mock-cases.schema.json",
+  "schemaVersion": "0.1",
+  "suiteId": "openrouter-images-artifact-v1",
+  "family": {
+    "id": "openrouter-images",
+    "apiFamily": "openrouter-images",
+    "providerId": "openrouter",
+    "modelId": "google/gemini-2.5-flash-image",
+    "endpointEnv": "QXNM_FORGE_OPENROUTER_IMAGES_ENDPOINT",
+    "credentialEnv": "OPENROUTER_API_KEY",
+    "request": {
+      "pathSuffix": "/chat/completions",
+      "requiredHeaders": ["authorization", "content-type"],
+      "equals": {
+        "/model": "google/gemini-2.5-flash-image",
+        "/stream": false,
+        "/modalities/0": "image",
+        "/modalities/1": "text",
+        "/messages/0/role": "user",
+        "/messages/0/content/0/type": "text",
+        "/messages/0/content/0/text": "生成一张确定性本地图像。"
+      }
+    }
+  },
+  "limits": {
+    "maxInputImages": 8,
+    "maxOutputImages": 8,
+    "maxInputImageBytes": 16777216,
+    "maxOutputImageBytes": 33554432,
+    "maxResponseBytes": 50331648,
+    "maxTextBytes": 262144
+  },
+  "cases": [
+    {"name":"success_png_text","response":{"kind":"success","mediaType":"image/png","text":"已生成。","usage":{"prompt_tokens":7,"completion_tokens":5,"total_tokens":12},"chunkSizes":[1,2,3,5,8]},"expected":{"terminal":"completed","artifactCount":1}},
+    {"name":"success_jpeg","response":{"kind":"success","mediaType":"image/jpeg","chunkSizes":[2,1,4]},"expected":{"terminal":"completed","artifactCount":1}},
+    {"name":"success_webp","response":{"kind":"success","mediaType":"image/webp","chunkSizes":[3,1,2]},"expected":{"terminal":"completed","artifactCount":1}},
+    {"name":"success_gif","response":{"kind":"success","mediaType":"image/gif","chunkSizes":[1,1,7]},"expected":{"terminal":"completed","artifactCount":1}},
+    {"name":"remote_url_rejected","response":{"kind":"remote_url"},"expected":{"terminal":"failed","artifactCount":0}},
+    {"name":"invalid_base64_rejected","response":{"kind":"invalid_base64"},"expected":{"terminal":"failed","artifactCount":0}},
+    {"name":"mime_mismatch_rejected","response":{"kind":"mime_mismatch"},"expected":{"terminal":"failed","artifactCount":0}},
+    {"name":"svg_rejected","response":{"kind":"svg"},"expected":{"terminal":"failed","artifactCount":0}},
+    {"name":"rate_limit_retry","response":{"kind":"http_retry","status":429,"retryAfter":"0","thenMediaType":"image/png"},"expected":{"terminal":"completed","artifactCount":1,"minRequests":2}},
+    {"name":"server_error_retry","response":{"kind":"http_retry","status":503,"thenMediaType":"image/png"},"expected":{"terminal":"completed","artifactCount":1,"minRequests":2}},
+    {"name":"disconnect","response":{"kind":"disconnect"},"expected":{"terminal":"interrupted","artifactCount":0}},
+    {"name":"idle_timeout","response":{"kind":"idle","idleMs":500},"expected":{"terminal":"failed","artifactCount":0}},
+    {"name":"cancellation","response":{"kind":"cancel","idleMs":500},"expected":{"terminal":"cancelled","artifactCount":0}}
+  ]
+}

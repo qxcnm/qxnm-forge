@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.2/schemas/provider-manifest.schema.json",
+  "title": "qxnm-forge frozen provider manifest",
+  "$comment": "功能：约束 35 个 Provider 的 adapter、端点、认证环境、模型目录、header 策略和兼容 quirk。作者：高宏顺；邮箱：18272669457@163.com",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "manifestDigestAlgorithm",
+    "manifestSha256",
+    "project",
+    "author",
+    "reference",
+    "textApiFamilies",
+    "imageApiFamilies",
+    "adapters",
+    "modelCatalogs",
+    "headerPolicies",
+    "providers"
+  ],
+  "properties": {
+    "$schema": { "const": "./schemas/provider-manifest.schema.json" },
+    "schemaVersion": { "const": "0.2" },
+    "manifestDigestAlgorithm": { "const": "sha256-canonical-json-excluding-manifest-digest-v1" },
+    "manifestSha256": { "const": "7b420d7b1ff89248be186525cb6da9cb038a29b16dcb4d5339a68ce5f0e615d1" },
+    "project": { "const": "qxnm-forge" },
+    "author": { "$ref": "#/$defs/author" },
+    "reference": { "$ref": "#/$defs/reference" },
+    "textApiFamilies": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/textApiFamily" },
+      "minItems": 9,
+      "maxItems": 9,
+      "uniqueItems": true
+    },
+    "imageApiFamilies": {
+      "type": "array",
+      "items": { "const": "openrouter-images" },
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true
+    },
+    "adapters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/adapter" },
+      "minItems": 10,
+      "maxItems": 10
+    },
+    "modelCatalogs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/modelCatalogReference" },
+      "minItems": 1,
+      "maxItems": 1
+    },
+    "headerPolicies": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/headerPolicy" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "providers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/provider" },
+      "minItems": 35,
+      "maxItems": 35
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "author": {
+      "type": "object",
+      "required": ["name", "email"],
+      "properties": {
+        "name": { "const": "高宏顺" },
+        "email": { "const": "18272669457@163.com" }
+      },
+      "additionalProperties": false
+    },
+    "reference": {
+      "type": "object",
+      "required": ["project", "commit", "license"],
+      "properties": {
+        "project": { "const": "PI" },
+        "commit": { "const": "3f9aa5d10b35223abf6146f960ff5cb5c68053ee" },
+        "license": { "const": "MIT" }
+      },
+      "additionalProperties": false
+    },
+    "textApiFamily": {
+      "enum": [
+        "openai-completions",
+        "mistral-conversations",
+        "openai-responses",
+        "azure-openai-responses",
+        "openai-codex-responses",
+        "anthropic-messages",
+        "bedrock-converse-stream",
+        "google-generative-ai",
+        "google-vertex"
+      ]
+    },
+    "apiFamily": {
+      "oneOf": [
+        { "$ref": "#/$defs/textApiFamily" },
+        { "const": "openrouter-images" }
+      ]
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "maxLength": 128
+    },
+    "envName": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,127}$"
+    },
+    "adapter": {
+      "type": "object",
+      "required": ["id", "apiFamily"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "apiFamily": { "$ref": "#/$defs/apiFamily" }
+      },
+      "additionalProperties": false
+    },
+    "modelCatalogReference": {
+      "type": "object",
+      "required": ["id", "path", "sourceCommit"],
+      "properties": {
+        "id": { "const": "pi-v1-frozen" },
+        "path": { "const": "./models.v1.json" },
+        "sourceCommit": { "const": "3f9aa5d10b35223abf6146f960ff5cb5c68053ee" }
+      },
+      "additionalProperties": false
+    },
+    "headerPolicy": {
+      "type": "object",
+      "required": ["id", "credentialPlacement", "fixedHeaders"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "credentialPlacement": { "enum": ["api-family", "cloudflare-aig-authorization"] },
+        "fixedHeaders": { "enum": ["none", "model-catalog"] }
+      },
+      "additionalProperties": false
+    },
+    "environmentVariable": {
+      "type": "object",
+      "required": ["name", "role"],
+      "properties": {
+        "name": { "$ref": "#/$defs/envName" },
+        "role": {
+          "enum": [
+            "secret",
+            "configuration",
+            "credential-file",
+            "credential-selector",
+            "credential-endpoint"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "authProfile": {
+      "type": "object",
+      "required": ["id", "kind", "environment"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "kind": {
+          "enum": [
+            "api-key",
+            "oauth",
+            "aws-credential-chain",
+            "google-application-default",
+            "cloudflare-token"
+          ]
+        },
+        "environment": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/envName" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "templateBinding": {
+      "type": "object",
+      "required": ["variable", "environment", "valuePattern"],
+      "properties": {
+        "variable": { "enum": ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID", "location"] },
+        "environment": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/envName" }
+        },
+        "valuePattern": { "enum": ["cloudflare-identifier-v1", "google-location-v1"] }
+      },
+      "additionalProperties": false
+    },
+    "endpointPolicy": {
+      "type": "object",
+      "required": ["source", "templateBindings", "runtimeEndpointEnv", "runtimeOverride"],
+      "properties": {
+        "source": { "const": "model-catalog" },
+        "templateBindings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/templateBinding" }
+        },
+        "runtimeEndpointEnv": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/envName" }
+        },
+        "runtimeOverride": { "const": "explicit-configuration-only" }
+      },
+      "additionalProperties": false
+    },
+    "quirk": {
+      "enum": [
+        "cacheControlFormat",
+        "forceAdaptiveThinking",
+        "maxTokensField",
+        "requiresReasoningContentOnAssistantMessages",
+        "sendSessionAffinityHeaders",
+        "supportsCacheControlOnTools",
+        "supportsDeveloperRole",
+        "supportsEagerToolInputStreaming",
+        "supportsLongCacheRetention",
+        "supportsReasoningEffort",
+        "supportsStore",
+        "supportsStrictMode",
+        "supportsTemperature",
+        "thinkingFormat",
+        "zaiToolStream"
+      ]
+    },
+    "route": {
+      "type": "object",
+      "required": [
+        "media",
+        "apiFamily",
+        "adapterId",
+        "modelCatalogId",
+        "endpoint",
+        "authProfileIds",
+        "headerPolicyId",
+        "quirks"
+      ],
+      "properties": {
+        "media": { "enum": ["text", "image"] },
+        "apiFamily": { "$ref": "#/$defs/apiFamily" },
+        "adapterId": { "$ref": "#/$defs/slug" },
+        "modelCatalogId": { "$ref": "#/$defs/slug" },
+        "endpoint": { "$ref": "#/$defs/endpointPolicy" },
+        "authProfileIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/slug" }
+        },
+        "headerPolicyId": { "$ref": "#/$defs/slug" },
+        "quirks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/quirk" }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "media": { "const": "image" } }, "required": ["media"] },
+          "then": { "properties": { "apiFamily": { "const": "openrouter-images" } } },
+          "else": { "properties": { "apiFamily": { "$ref": "#/$defs/textApiFamily" } } }
+        }
+      ]
+    },
+    "provider": {
+      "type": "object",
+      "required": ["id", "environment", "authProfiles", "routes"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "environment": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/environmentVariable" }
+        },
+        "authProfiles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/authProfile" }
+        },
+        "routes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/route" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "0.1",
+  "description": "These are policy outcomes, not a claim that lexical path checks provide a sandbox.",
+  "cases": [
+    {
+      "name": "relative_file_inside_workspace",
+      "platform": "any",
+      "workspace": "<WORKSPACE>",
+      "path": "src/main.rs",
+      "expected": "allow"
+    },
+    {
+      "name": "parent_traversal",
+      "platform": "any",
+      "workspace": "<WORKSPACE>",
+      "path": "../outside.txt",
+      "expected": "deny",
+      "reason": "workspace_boundary"
+    },
+    {
+      "name": "sibling_prefix_is_not_child",
+      "platform": "posix",
+      "workspace": "/work/project",
+      "path": "/work/project-evil/secret.txt",
+      "expected": "deny",
+      "reason": "workspace_boundary"
+    },
+    {
+      "name": "symlink_escape",
+      "platform": "any",
+      "workspace": "<WORKSPACE>",
+      "path": "link-out/secret.txt",
+      "fixtureSymlink": {
+        "path": "link-out",
+        "target": "<OUTSIDE>"
+      },
+      "expected": "deny",
+      "reason": "symlink_escape"
+    },
+    {
+      "name": "windows_drive_escape",
+      "platform": "windows",
+      "workspace": "C:\\work\\project",
+      "path": "D:\\outside\\secret.txt",
+      "expected": "deny",
+      "reason": "workspace_boundary"
+    },
+    {
+      "name": "windows_unc_escape",
+      "platform": "windows",
+      "workspace": "C:\\work\\project",
+      "path": "\\\\server\\share\\secret.txt",
+      "expected": "deny",
+      "reason": "workspace_boundary"
+    }
+  ]
+}

@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/tool-parameters.schema.json",
+  "title": "qxnm-forge restricted JSON Schema subset for tool arguments",
+  "$comment": "This is a meta-schema. Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/objectSchema",
+  "$defs": {
+    "annotations": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 8192 },
+        "default": true
+      }
+    },
+    "objectSchema": {
+      "type": "object",
+      "required": ["type", "properties", "additionalProperties"],
+      "properties": {
+        "type": { "const": "object" },
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 8192 },
+        "properties": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$", "maxLength": 128 },
+          "additionalProperties": { "$ref": "#/$defs/schemaNode" },
+          "maxProperties": 256
+        },
+        "required": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$", "maxLength": 128 },
+          "uniqueItems": true,
+          "maxItems": 256
+        },
+        "additionalProperties": { "const": false },
+        "minProperties": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "maxProperties": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "default": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "arraySchema": {
+      "type": "object",
+      "required": ["type", "items", "maxItems"],
+      "properties": {
+        "type": { "const": "array" },
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 8192 },
+        "items": { "$ref": "#/$defs/schemaNode" },
+        "minItems": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "maxItems": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "uniqueItems": { "type": "boolean" },
+        "default": { "type": "array" }
+      },
+      "additionalProperties": false
+    },
+    "stringSchema": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "string" },
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 8192 },
+        "minLength": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "maxLength": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "pattern": { "type": "string", "maxLength": 4096 },
+        "enum": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "const": { "type": "string" },
+        "default": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "integerSchema": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "integer" },
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 8192 },
+        "minimum": { "type": "integer" },
+        "maximum": { "type": "integer" },
+        "exclusiveMinimum": { "type": "integer" },
+        "exclusiveMaximum": { "type": "integer" },
+        "multipleOf": { "type": "integer", "minimum": 1 },
+        "enum": { "type": "array", "items": { "type": "integer" }, "minItems": 1, "maxItems": 256, "uniqueItems": true },
+        "const": { "type": "integer" },
+        "default": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "numberSchema": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "number" },
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 8192 },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "exclusiveMinimum": { "type": "number" },
+        "exclusiveMaximum": { "type": "number" },
+        "multipleOf": { "type": "number", "exclusiveMinimum": 0 },
+        "enum": { "type": "array", "items": { "type": "number" }, "minItems": 1, "maxItems": 256, "uniqueItems": true },
+        "const": { "type": "number" },
+        "default": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "booleanSchema": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "boolean" },
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 8192 },
+        "const": { "type": "boolean" },
+        "default": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "nullSchema": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "null" },
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 8192 },
+        "const": { "type": "null" },
+        "default": { "type": "null" }
+      },
+      "additionalProperties": false
+    },
+    "taggedUnionSchema": {
+      "type": "object",
+      "required": ["oneOf", "x-discriminator"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 8192 },
+        "oneOf": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/objectSchema" },
+          "minItems": 2,
+          "maxItems": 32
+        },
+        "x-discriminator": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$", "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "schemaNode": {
+      "oneOf": [
+        { "$ref": "#/$defs/objectSchema" },
+        { "$ref": "#/$defs/arraySchema" },
+        { "$ref": "#/$defs/stringSchema" },
+        { "$ref": "#/$defs/integerSchema" },
+        { "$ref": "#/$defs/numberSchema" },
+        { "$ref": "#/$defs/booleanSchema" },
+        { "$ref": "#/$defs/nullSchema" },
+        { "$ref": "#/$defs/taggedUnionSchema" }
+      ]
+    }
+  }
+}

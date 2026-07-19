@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "0.1",
+  "name": "hello-v1",
+  "seed": 20260710,
+  "steps": [
+    {
+      "type": "text",
+      "text": "Hello from faux. 你好，世界。"
+    }
+  ],
+  "usage": {
+    "inputTokens": 8,
+    "outputTokens": 9,
+    "totalTokens": 17
+  }
+}

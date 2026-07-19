@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/language-profiles.schema.json",
+  "title": "qxnm-forge target-project language profiles",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "type": "object",
+  "required": ["schemaVersion", "project", "author", "profiles"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": "0.1" },
+    "project": { "const": "qxnm-forge" },
+    "author": {
+      "type": "object",
+      "required": ["name", "email"],
+      "properties": {
+        "name": { "const": "高宏顺" },
+        "email": { "const": "18272669457@163.com" }
+      },
+      "additionalProperties": false
+    },
+    "profiles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/profile" },
+      "minItems": 5,
+      "maxItems": 5
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "command": {
+      "type": "object",
+      "required": ["executable", "args"],
+      "properties": {
+        "executable": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "args": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 4096 },
+          "maxItems": 128
+        },
+        "successRequiresEmptyStdout": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "operationMap": {
+      "type": "object",
+      "propertyNames": { "enum": ["restore", "build", "test", "lint", "formatCheck", "run"] },
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/command" },
+        "minItems": 1,
+        "maxItems": 16
+      },
+      "minProperties": 1
+    },
+    "toolchain": {
+      "type": "object",
+      "required": ["executable", "probeArgs"],
+      "properties": {
+        "executable": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "probeArgs": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 4096 },
+          "maxItems": 16
+        }
+      },
+      "additionalProperties": false
+    },
+    "selector": {
+      "type": "object",
+      "required": ["marker", "executable"],
+      "properties": {
+        "marker": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "executable": { "type": "string", "minLength": 1, "maxLength": 256 }
+      },
+      "additionalProperties": false
+    },
+    "profile": {
+      "type": "object",
+      "required": ["id", "displayName", "markers", "toolchains", "operations"],
+      "properties": {
+        "id": { "enum": ["dotnet", "rust", "go", "typescript", "python"] },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "markers": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "toolchains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolchain" },
+          "minItems": 1
+        },
+        "selectors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/selector" },
+          "minItems": 1
+        },
+        "operations": { "$ref": "#/$defs/operationMap" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

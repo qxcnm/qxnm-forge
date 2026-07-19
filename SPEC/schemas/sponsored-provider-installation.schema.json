@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/sponsored-provider-installation.schema.json",
+  "title": "Installed sponsored provider routes",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>. This document never contains credentials.",
+  "type": "object",
+  "required": ["schemaVersion", "routes"],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "routes": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/route" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"
+    },
+    "safeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "route": {
+      "type": "object",
+      "required": ["entryId", "providerId", "displayName", "apiFamily", "apiBaseUrl", "catalogVersion", "commissionDisclosure", "models", "installedAt"],
+      "properties": {
+        "entryId": { "$ref": "#/$defs/id" },
+        "providerId": { "$ref": "#/$defs/id" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "apiFamily": {
+          "enum": ["openai-completions", "openai-responses", "anthropic-messages"]
+        },
+        "apiBaseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+        "catalogVersion": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "commissionDisclosure": { "$ref": "#/$defs/safeText" },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
+        "installedAt": { "$ref": "common.schema.json#/$defs/utcTime" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

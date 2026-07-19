@@ -1,0 +1,693 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/provider-mock-cases.schema.json",
+  "title": "qxnm-forge local provider transport mock suites v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "type": "object",
+  "required": ["$schema", "schemaVersion", "families"],
+  "properties": {
+    "$schema": { "const": "https://schemas.agentprotocol.local/spec/0.1/schemas/provider-mock-cases.schema.json" },
+    "schemaVersion": { "const": "0.1" },
+    "suiteId": { "enum": ["batch2-native-v1", "batch3-native-v1"] },
+    "families": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "suiteId": { "const": "batch3-native-v1" } },
+        "required": ["suiteId"]
+      },
+      "then": {
+        "properties": {
+          "families": {
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/family",
+                "required": ["requestTarget", "toolArgumentDelivery", "streamProtocol", "fixedHeaders"],
+                "properties": {
+                  "id": { "const": "google-vertex" },
+                  "apiFamily": { "const": "google-vertex" },
+                  "providerId": { "const": "google-vertex" },
+                  "endpointEnv": { "const": "QXNM_FORGE_GOOGLE_VERTEX_ENDPOINT" },
+                  "credentialEnv": { "const": "QXNM_FORGE_GOOGLE_VERTEX_OAUTH_TOKEN" },
+                  "authHeaders": {
+                    "const": [{ "name": "Authorization", "prefix": "Bearer " }]
+                  },
+                  "fixedHeaders": { "const": [] },
+                  "requestTarget": {
+                    "const": {
+                      "pathSuffix": "/v1/projects/mock-project/locations/us-central1/publishers/google/models/mock-vertex-v1:streamGenerateContent",
+                      "requiredQuery": { "alt": "sse" }
+                    }
+                  },
+                  "toolArgumentDelivery": { "const": "complete-json-object" },
+                  "streamProtocol": { "const": "sse" }
+                }
+              },
+              {
+                "$ref": "#/$defs/family",
+                "required": ["requestTarget", "toolArgumentDelivery", "streamProtocol", "fixedHeaders"],
+                "properties": {
+                  "id": { "const": "bedrock-converse-stream" },
+                  "apiFamily": { "const": "bedrock-converse-stream" },
+                  "providerId": { "const": "amazon-bedrock" },
+                  "endpointEnv": { "const": "QXNM_FORGE_BEDROCK_CONVERSE_STREAM_ENDPOINT" },
+                  "credentialEnv": { "const": "AWS_ACCESS_KEY_ID" },
+                  "authHeaders": {
+                    "const": [{ "name": "Authorization", "prefix": "AWS4-HMAC-SHA256 " }]
+                  },
+                  "fixedHeaders": { "const": [] },
+                  "requestTarget": {
+                    "const": {
+                      "pathSuffix": "/model/mock-bedrock-v1/converse-stream",
+                      "requiredQuery": {}
+                    }
+                  },
+                  "toolArgumentDelivery": { "const": "partial-json-string" },
+                  "streamProtocol": { "const": "aws-event-stream" }
+                }
+              },
+              {
+                "$ref": "#/$defs/family",
+                "required": ["requestTarget", "toolArgumentDelivery", "streamProtocol", "fixedHeaders"],
+                "properties": {
+                  "id": { "const": "openai-codex-responses" },
+                  "apiFamily": { "const": "openai-codex-responses" },
+                  "providerId": { "const": "openai-codex" },
+                  "endpointEnv": { "const": "QXNM_FORGE_OPENAI_CODEX_RESPONSES_ENDPOINT" },
+                  "credentialEnv": { "const": "QXNM_FORGE_OPENAI_CODEX_OAUTH_TOKEN" },
+                  "authHeaders": {
+                    "const": [{ "name": "Authorization", "prefix": "Bearer " }]
+                  },
+                  "fixedHeaders": {
+                    "const": [
+                      { "name": "OpenAI-Beta", "prefix": "responses=experimental" },
+                      { "name": "originator", "prefix": "qxnm-forge" }
+                    ]
+                  },
+                  "requestTarget": {
+                    "const": {
+                      "pathSuffix": "/codex/responses",
+                      "requiredQuery": {}
+                    }
+                  },
+                  "toolArgumentDelivery": { "const": "partial-json-string" },
+                  "streamProtocol": { "const": "sse" }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "if": {
+          "properties": { "suiteId": { "const": "batch2-native-v1" } },
+          "required": ["suiteId"]
+        },
+        "then": {
+          "properties": {
+            "families": {
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/family",
+                  "required": ["requestTarget", "toolArgumentDelivery"],
+                  "properties": {
+                    "id": { "const": "mistral-conversations" },
+                    "apiFamily": { "const": "mistral-conversations" },
+                    "providerId": { "const": "mistral" },
+                    "endpointEnv": { "const": "QXNM_FORGE_MISTRAL_CONVERSATIONS_ENDPOINT" },
+                    "credentialEnv": { "const": "MISTRAL_API_KEY" },
+                    "authHeaders": {
+                      "const": [{ "name": "Authorization", "prefix": "Bearer " }]
+                    },
+                    "requestTarget": {
+                      "const": {
+                        "pathSuffix": "/v1/chat/completions",
+                        "requiredQuery": {}
+                      }
+                    },
+                    "toolArgumentDelivery": { "const": "partial-json-string" }
+                  }
+                },
+                {
+                  "$ref": "#/$defs/family",
+                  "required": ["requestTarget", "toolArgumentDelivery"],
+                  "properties": {
+                    "id": { "const": "azure-openai-responses" },
+                    "apiFamily": { "const": "azure-openai-responses" },
+                    "providerId": { "const": "azure-openai-responses" },
+                    "endpointEnv": { "const": "QXNM_FORGE_AZURE_OPENAI_RESPONSES_ENDPOINT" },
+                    "credentialEnv": { "const": "AZURE_OPENAI_API_KEY" },
+                    "authHeaders": {
+                      "const": [{ "name": "api-key", "prefix": "" }]
+                    },
+                    "requestTarget": {
+                      "const": {
+                        "pathSuffix": "/responses",
+                        "requiredQuery": { "api-version": "v1" }
+                      }
+                    },
+                    "toolArgumentDelivery": { "const": "partial-json-string" }
+                  }
+                },
+                {
+                  "$ref": "#/$defs/family",
+                  "required": ["requestTarget", "toolArgumentDelivery"],
+                  "properties": {
+                    "id": { "const": "google-generative-ai" },
+                    "apiFamily": { "const": "google-generative-ai" },
+                    "providerId": { "const": "google" },
+                    "endpointEnv": { "const": "QXNM_FORGE_GOOGLE_GENERATIVE_AI_ENDPOINT" },
+                    "credentialEnv": { "const": "GEMINI_API_KEY" },
+                    "authHeaders": {
+                      "const": [{ "name": "x-goog-api-key", "prefix": "" }]
+                    },
+                    "requestTarget": {
+                      "const": {
+                        "pathSuffix": "/models/mock-google-v1:streamGenerateContent",
+                        "requiredQuery": { "alt": "sse" }
+                      }
+                    },
+                    "toolArgumentDelivery": { "const": "complete-json-object" }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "families": {
+              "prefixItems": [
+              {
+                "$ref": "#/$defs/family",
+                "properties": {
+                  "id": { "const": "openai-compatible" },
+                  "apiFamily": { "const": "openai-completions" },
+                  "providerId": { "const": "openai-compatible" },
+                  "endpointEnv": { "const": "QXNM_FORGE_OPENAI_COMPATIBLE_ENDPOINT" },
+                  "credentialEnv": { "const": "OPENAI_API_KEY" },
+                  "requestTarget": false,
+                  "toolArgumentDelivery": false,
+                  "authHeaders": {
+                    "const": [{ "name": "Authorization", "prefix": "Bearer " }]
+                  },
+                  "cases": { "$ref": "#/$defs/baselineCases" }
+                }
+              },
+              {
+                "$ref": "#/$defs/family",
+                "properties": {
+                  "id": { "const": "openai-responses" },
+                  "apiFamily": { "const": "openai-responses" },
+                  "providerId": { "const": "openai-responses" },
+                  "endpointEnv": { "const": "QXNM_FORGE_OPENAI_RESPONSES_ENDPOINT" },
+                  "credentialEnv": { "const": "OPENAI_API_KEY" },
+                  "requestTarget": false,
+                  "toolArgumentDelivery": false,
+                  "authHeaders": {
+                    "const": [{ "name": "Authorization", "prefix": "Bearer " }]
+                  },
+                  "cases": { "$ref": "#/$defs/baselineCases" }
+                }
+              },
+              {
+                "$ref": "#/$defs/family",
+                "properties": {
+                  "id": { "const": "anthropic-messages" },
+                  "apiFamily": { "const": "anthropic-messages" },
+                  "providerId": { "const": "anthropic" },
+                  "endpointEnv": { "const": "QXNM_FORGE_ANTHROPIC_ENDPOINT" },
+                  "credentialEnv": { "const": "ANTHROPIC_API_KEY" },
+                  "requestTarget": false,
+                  "toolArgumentDelivery": false,
+                  "authHeaders": {
+                    "const": [{ "name": "x-api-key", "prefix": "" }]
+                  },
+                  "cases": { "$ref": "#/$defs/baselineCases" }
+                }
+              }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "jsonScalar": {
+      "type": ["null", "boolean", "number", "string"]
+    },
+    "authHeader": {
+      "type": "object",
+      "required": ["name", "prefix"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "prefix": { "type": "string", "maxLength": 64 }
+      },
+      "additionalProperties": false
+    },
+    "requestContract": {
+      "type": "object",
+      "required": ["requiredHeaders", "requiredJsonPointers", "equals"],
+      "properties": {
+        "requiredHeaders": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "uniqueItems": true,
+          "maxItems": 32
+        },
+        "requiredJsonPointers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^/(?:[^~/]|~[01])+(?:/(?:[^~/]|~[01])+)*$",
+            "maxLength": 512
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "maxItems": 64
+        },
+        "equals": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^/(?:[^~/]|~[01])+(?:/(?:[^~/]|~[01])+)*$"
+          },
+          "additionalProperties": { "$ref": "#/$defs/jsonScalar" },
+          "maxProperties": 64
+        }
+      },
+      "additionalProperties": false
+    },
+    "requestTarget": {
+      "type": "object",
+      "required": ["pathSuffix", "requiredQuery"],
+      "properties": {
+        "pathSuffix": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._~!$&'()*+,;=:@/-]+$",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "requiredQuery": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9._~-]+$",
+            "maxLength": 128
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._~-]+$",
+            "maxLength": 256
+          },
+          "maxProperties": 16
+        }
+      },
+      "additionalProperties": false
+    },
+    "chunkSizes": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1, "maximum": 65536 },
+      "minItems": 1,
+      "maxItems": 256
+    },
+    "streamAttempt": {
+      "type": "object",
+      "required": ["kind", "lineEnding", "multiline", "chunkSizes"],
+      "properties": {
+        "kind": { "enum": ["text_stream", "tool_stream"] },
+        "lineEnding": { "enum": ["lf", "crlf"] },
+        "multiline": { "type": "boolean" },
+        "finalEventWithoutBlankLine": { "type": "boolean" },
+        "chunkSizes": { "$ref": "#/$defs/chunkSizes" }
+      },
+      "additionalProperties": false
+    },
+    "eventStreamAttempt": {
+      "type": "object",
+      "required": ["kind", "protocol", "crcBoundaryCoverage", "chunkSizes"],
+      "properties": {
+        "kind": { "enum": ["text_stream", "tool_stream"] },
+        "protocol": { "const": "aws-event-stream" },
+        "crcBoundaryCoverage": { "const": true },
+        "chunkSizes": { "$ref": "#/$defs/chunkSizes" }
+      },
+      "additionalProperties": false
+    },
+    "httpErrorAttempt": {
+      "type": "object",
+      "required": ["kind", "status"],
+      "properties": {
+        "kind": { "const": "http_error" },
+        "status": { "enum": [429, 500, 502, 503, 504] },
+        "retryAfter": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": 429 } }, "required": ["status"] },
+          "then": { "required": ["retryAfter"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "sseDisconnectAttempt": {
+      "type": "object",
+      "required": ["kind", "lineEnding", "chunkSizes"],
+      "properties": {
+        "kind": { "const": "disconnect_stream" },
+        "lineEnding": { "enum": ["lf", "crlf"] },
+        "chunkSizes": { "$ref": "#/$defs/chunkSizes" }
+      },
+      "additionalProperties": false
+    },
+    "eventStreamDisconnectAttempt": {
+      "type": "object",
+      "required": ["kind", "protocol", "crcBoundaryCoverage", "chunkSizes"],
+      "properties": {
+        "kind": { "const": "disconnect_stream" },
+        "protocol": { "const": "aws-event-stream" },
+        "crcBoundaryCoverage": { "const": true },
+        "chunkSizes": { "$ref": "#/$defs/chunkSizes" }
+      },
+      "additionalProperties": false
+    },
+    "waitAttempt": {
+      "type": "object",
+      "required": ["kind", "idleMs"],
+      "properties": {
+        "kind": { "enum": ["idle_stream", "cancel_stream"] },
+        "idleMs": { "type": "integer", "minimum": 50, "maximum": 10000 }
+      },
+      "additionalProperties": false
+    },
+    "attempt": {
+      "oneOf": [
+        { "$ref": "#/$defs/streamAttempt" },
+        { "$ref": "#/$defs/eventStreamAttempt" },
+        { "$ref": "#/$defs/httpErrorAttempt" },
+        { "$ref": "#/$defs/sseDisconnectAttempt" },
+        { "$ref": "#/$defs/eventStreamDisconnectAttempt" },
+        { "$ref": "#/$defs/waitAttempt" }
+      ]
+    },
+    "usage": {
+      "type": "object",
+      "required": ["inputTokens", "outputTokens", "totalTokens"],
+      "properties": {
+        "inputTokens": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "outputTokens": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "totalTokens": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      },
+      "additionalProperties": false
+    },
+    "toolCall": {
+      "type": "object",
+      "required": ["id", "name", "arguments"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "maxLength": 128
+        },
+        "arguments": { "type": "object", "maxProperties": 64 }
+      },
+      "additionalProperties": false
+    },
+    "baselineCases": {
+      "type": "array",
+      "contains": {
+        "type": "object",
+        "required": ["name", "attempts", "expected"],
+        "properties": {
+          "name": { "const": "partial_tool_arguments" },
+          "attempts": {
+            "type": "array",
+            "prefixItems": [
+              { "properties": { "kind": { "const": "tool_stream" } }, "required": ["kind"] },
+              { "properties": { "kind": { "const": "text_stream" } }, "required": ["kind"] }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "expected": {
+            "type": "object",
+            "required": [
+              "terminal",
+              "text",
+              "toolCall",
+              "toolResult",
+              "usage",
+              "minRequests",
+              "exactRequests",
+              "requiredEventTypes"
+            ],
+            "properties": {
+              "terminal": { "const": "completed" },
+              "text": { "const": "你好 👋 from mock." },
+              "toolCall": {
+                "const": {
+                  "id": "call_mock_1",
+                  "name": "file.read",
+                  "arguments": { "path": "README.md" }
+                }
+              },
+              "toolResult": {
+                "const": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "provider tool continuation fixture\n"
+                    }
+                  ],
+                  "isError": false
+                }
+              },
+              "usage": {
+                "const": {
+                  "inputTokens": 14,
+                  "outputTokens": 10,
+                  "totalTokens": 24
+                }
+              },
+              "minRequests": { "const": 2 },
+              "exactRequests": { "const": 2 },
+              "requiredEventTypes": {
+                "const": [
+                  "tool.requested",
+                  "tool.completed",
+                  "message.delta",
+                  "run.completed"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "expected": {
+      "type": "object",
+      "required": ["terminal", "minRequests", "requiredEventTypes"],
+      "properties": {
+        "terminal": { "enum": ["completed", "failed", "cancelled", "interrupted"] },
+        "text": { "type": "string", "maxLength": 65536 },
+        "toolCall": { "$ref": "#/$defs/toolCall" },
+        "toolResult": {
+          "type": "object",
+          "required": ["content", "isError"],
+          "properties": {
+            "content": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["type", "text"],
+                "properties": {
+                  "type": { "const": "text" },
+                  "text": { "type": "string", "minLength": 1, "maxLength": 65536 }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 1,
+              "maxItems": 128
+            },
+            "isError": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "usage": { "$ref": "#/$defs/usage" },
+        "minRequests": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "exactRequests": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "requiredEventTypes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "message.delta",
+              "tool.requested",
+              "tool.completed",
+              "retry.scheduled",
+              "run.completed",
+              "run.failed",
+              "run.cancelled",
+              "run.interrupted"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": ["name", "attempts", "expected"],
+      "properties": {
+        "name": {
+          "enum": [
+            "text_success",
+            "partial_tool_arguments",
+            "rate_limit_retry",
+            "server_error_retry",
+            "disconnect",
+            "idle_timeout",
+            "cancellation"
+          ]
+        },
+        "attempts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/attempt" },
+          "minItems": 1,
+          "maxItems": 3
+        },
+        "expected": { "$ref": "#/$defs/expected" }
+      },
+      "additionalProperties": false
+    },
+    "family": {
+      "type": "object",
+      "required": [
+        "id",
+        "apiFamily",
+        "providerId",
+        "modelId",
+        "endpointEnv",
+        "credentialEnv",
+        "authHeaders",
+        "request",
+        "cases"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "openai-compatible",
+            "openai-responses",
+            "anthropic-messages",
+            "mistral-conversations",
+            "azure-openai-responses",
+            "google-generative-ai",
+            "google-vertex",
+            "bedrock-converse-stream",
+            "openai-codex-responses"
+          ]
+        },
+        "apiFamily": {
+          "enum": [
+            "openai-completions",
+            "openai-responses",
+            "anthropic-messages",
+            "mistral-conversations",
+            "azure-openai-responses",
+            "google-generative-ai",
+            "google-vertex",
+            "bedrock-converse-stream",
+            "openai-codex-responses"
+          ]
+        },
+        "providerId": {
+          "enum": [
+            "openai-compatible",
+            "openai-responses",
+            "anthropic",
+            "mistral",
+            "azure-openai-responses",
+            "google",
+            "google-vertex",
+            "amazon-bedrock",
+            "openai-codex"
+          ]
+        },
+        "modelId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "maxLength": 128
+        },
+        "endpointEnv": {
+          "type": "string",
+          "pattern": "^QXNM_FORGE_[A-Z0-9_]+_ENDPOINT$",
+          "maxLength": 128
+        },
+        "credentialEnv": {
+          "enum": [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "MISTRAL_API_KEY",
+            "AZURE_OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "QXNM_FORGE_GOOGLE_VERTEX_OAUTH_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "QXNM_FORGE_OPENAI_CODEX_OAUTH_TOKEN"
+          ]
+        },
+        "authHeaders": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/authHeader" },
+          "minItems": 1,
+          "maxItems": 4
+        },
+        "fixedHeaders": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/authHeader" },
+          "maxItems": 8
+        },
+        "request": { "$ref": "#/$defs/requestContract" },
+        "requestTarget": { "$ref": "#/$defs/requestTarget" },
+        "toolArgumentDelivery": {
+          "enum": ["partial-json-string", "complete-json-object"]
+        },
+        "streamProtocol": { "enum": ["sse", "aws-event-stream"] },
+        "cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/case" },
+          "minItems": 7,
+          "maxItems": 7,
+          "allOf": [
+            { "contains": { "properties": { "name": { "const": "text_success" } }, "required": ["name"] } },
+            { "contains": { "properties": { "name": { "const": "partial_tool_arguments" } }, "required": ["name"] } },
+            { "contains": { "properties": { "name": { "const": "rate_limit_retry" } }, "required": ["name"] } },
+            { "contains": { "properties": { "name": { "const": "server_error_retry" } }, "required": ["name"] } },
+            { "contains": { "properties": { "name": { "const": "disconnect" } }, "required": ["name"] } },
+            { "contains": { "properties": { "name": { "const": "idle_timeout" } }, "required": ["name"] } },
+            { "contains": { "properties": { "name": { "const": "cancellation" } }, "required": ["name"] } }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

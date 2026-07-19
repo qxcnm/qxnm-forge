@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/event.schema.json",
+  "title": "qxnm-forge v0.1 event envelope",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/event",
+  "$defs": {
+    "emptyData": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "runStartedData": {
+      "$ref": "#/$defs/emptyData"
+    },
+    "turnStartedData": {
+      "$ref": "#/$defs/emptyData"
+    },
+    "turnCompletedData": {
+      "type": "object",
+      "properties": {
+        "finishReason": { "enum": ["stop", "length", "tool_use", "error", "cancelled", "interrupted"] },
+        "toolResultCount": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "messageStartedData": {
+      "type": "object",
+      "required": ["messageId", "role"],
+      "properties": {
+        "messageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "role": { "enum": ["user", "assistant", "tool"] },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "messageDeltaData": {
+      "type": "object",
+      "required": ["messageId", "delta"],
+      "properties": {
+        "messageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "delta": { "$ref": "../domain/content.schema.json#/$defs/delta" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "messageCompletedData": {
+      "type": "object",
+      "required": ["messageId", "finishReason"],
+      "properties": {
+        "messageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "finishReason": { "enum": ["stop", "length", "tool_use", "error", "cancelled", "interrupted"] },
+        "usage": { "$ref": "../domain/usage.schema.json#/$defs/usage" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "toolRequestedData": {
+      "type": "object",
+      "required": ["toolCallId", "name", "arguments"],
+      "properties": {
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "arguments": { "type": "object" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "toolStartedData": {
+      "type": "object",
+      "required": ["toolCallId", "name"],
+      "properties": {
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "toolDeltaData": {
+      "type": "object",
+      "required": ["toolCallId", "stream", "text"],
+      "properties": {
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "stream": { "enum": ["stdout", "stderr", "status"] },
+        "text": { "type": "string" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "toolCompletedData": {
+      "type": "object",
+      "required": ["toolCallId", "result"],
+      "properties": {
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "result": { "$ref": "../domain/tool.schema.json#/$defs/toolResult" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "approvalRequestedData": {
+      "type": "object",
+      "required": ["approval"],
+      "properties": {
+        "approval": { "$ref": "../domain/approval.schema.json#/$defs/approvalRequest" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "approvalResolvedData": {
+      "type": "object",
+      "required": ["approvalId", "decision", "resolutionSource"],
+      "properties": {
+        "approvalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "decision": { "$ref": "../domain/approval.schema.json#/$defs/approvalDecision" },
+        "resolutionSource": { "enum": ["client", "policy", "timeout", "cancellation", "disconnect"] },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "retryScheduledData": {
+      "type": "object",
+      "required": ["attempt", "delayMs", "reason"],
+      "properties": {
+        "attempt": { "type": "integer", "minimum": 2, "maximum": 100 },
+        "delayMs": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "reason": { "$ref": "../domain/error.schema.json#/$defs/error" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "contextCompactedData": {
+      "type": "object",
+      "required": ["recordId", "tokensBefore"],
+      "properties": {
+        "recordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "tokensBefore": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "tokensAfter": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runCompletedData": {
+      "type": "object",
+      "required": ["status", "usage"],
+      "properties": {
+        "status": { "const": "completed" },
+        "usage": { "$ref": "../domain/usage.schema.json#/$defs/usage" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runFailedData": {
+      "type": "object",
+      "required": ["status", "error"],
+      "properties": {
+        "status": { "const": "failed" },
+        "error": { "$ref": "../domain/error.schema.json#/$defs/error" },
+        "usage": { "$ref": "../domain/usage.schema.json#/$defs/usage" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runCancelledData": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "const": "cancelled" },
+        "reason": { "type": "string", "maxLength": 4096 },
+        "usage": { "$ref": "../domain/usage.schema.json#/$defs/usage" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runInterruptedData": {
+      "type": "object",
+      "required": ["status", "error"],
+      "properties": {
+        "status": { "const": "interrupted" },
+        "error": { "$ref": "../domain/error.schema.json#/$defs/error" },
+        "usage": { "$ref": "../domain/usage.schema.json#/$defs/usage" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": ["sessionId", "runId", "seq", "time", "type", "data"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "turnId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "seq": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "time": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "type": {
+          "enum": [
+            "run.started",
+            "turn.started",
+            "turn.completed",
+            "message.started",
+            "message.delta",
+            "message.completed",
+            "tool.requested",
+            "approval.requested",
+            "approval.resolved",
+            "tool.started",
+            "tool.delta",
+            "tool.completed",
+            "retry.scheduled",
+            "context.compacted",
+            "run.completed",
+            "run.failed",
+            "run.cancelled",
+            "run.interrupted"
+          ]
+        },
+        "data": { "type": "object" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "enum": ["run.started", "run.completed", "run.failed", "run.cancelled", "run.interrupted"] } } },
+          "then": { "not": { "required": ["turnId"] } },
+          "else": { "required": ["turnId"] }
+        },
+        { "if": { "properties": { "type": { "const": "run.started" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/runStartedData" } } } },
+        { "if": { "properties": { "type": { "const": "turn.started" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/turnStartedData" } } } },
+        { "if": { "properties": { "type": { "const": "turn.completed" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/turnCompletedData" } } } },
+        { "if": { "properties": { "type": { "const": "message.started" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/messageStartedData" } } } },
+        { "if": { "properties": { "type": { "const": "message.delta" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/messageDeltaData" } } } },
+        { "if": { "properties": { "type": { "const": "message.completed" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/messageCompletedData" } } } },
+        { "if": { "properties": { "type": { "const": "tool.requested" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/toolRequestedData" } } } },
+        { "if": { "properties": { "type": { "const": "approval.requested" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/approvalRequestedData" } } } },
+        { "if": { "properties": { "type": { "const": "approval.resolved" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/approvalResolvedData" } } } },
+        { "if": { "properties": { "type": { "const": "tool.started" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/toolStartedData" } } } },
+        { "if": { "properties": { "type": { "const": "tool.delta" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/toolDeltaData" } } } },
+        { "if": { "properties": { "type": { "const": "tool.completed" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/toolCompletedData" } } } },
+        { "if": { "properties": { "type": { "const": "retry.scheduled" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/retryScheduledData" } } } },
+        { "if": { "properties": { "type": { "const": "context.compacted" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/contextCompactedData" } } } },
+        { "if": { "properties": { "type": { "const": "run.completed" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/runCompletedData" } } } },
+        { "if": { "properties": { "type": { "const": "run.failed" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/runFailedData" } } } },
+        { "if": { "properties": { "type": { "const": "run.cancelled" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/runCancelledData" } } } },
+        { "if": { "properties": { "type": { "const": "run.interrupted" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/runInterruptedData" } } } }
+      ],
+      "additionalProperties": false
+    },
+    "notification": {
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "event" },
+        "params": { "$ref": "#/$defs/event" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

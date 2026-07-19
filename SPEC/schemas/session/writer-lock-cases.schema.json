@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/session/writer-lock-cases.schema.json",
+  "title": "qxnm-forge cross-language writer lease conformance cases",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "type": "object",
+  "required": ["$schema", "schemaVersion", "cases"],
+  "properties": {
+    "$schema": { "const": "https://schemas.agentprotocol.local/spec/0.1/schemas/session/writer-lock-cases.schema.json" },
+    "schemaVersion": { "const": "0.1" },
+    "cases": {
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/case", "properties": { "name": { "const": "live_owner" }, "probe": { "const": "connected" }, "expected": { "const": "locked" } } },
+        { "$ref": "#/$defs/case", "properties": { "name": { "const": "live_unresponsive_owner" }, "probe": { "const": "connected_without_response" }, "expected": { "const": "locked" } } },
+        { "$ref": "#/$defs/case", "properties": { "name": { "const": "ambiguous_probe_timeout" }, "probe": { "const": "timeout" }, "expected": { "const": "locked" } } },
+        { "$ref": "#/$defs/case", "properties": { "name": { "const": "dead_owner" }, "probe": { "const": "connection_refused" }, "expected": { "const": "stale_candidate" } } },
+        { "$ref": "#/$defs/case", "properties": { "name": { "const": "metadata_initializing" }, "probe": { "const": "metadata_missing_within_grace" }, "expected": { "const": "wait" } } },
+        { "$ref": "#/$defs/case", "properties": { "name": { "const": "metadata_abandoned" }, "probe": { "const": "metadata_missing_after_grace" }, "expected": { "const": "stale_candidate" } } },
+        { "$ref": "#/$defs/case", "properties": { "name": { "const": "external_host_injection" }, "probe": { "const": "invalid_external_host" }, "expected": { "const": "invalid" } } },
+        { "$ref": "#/$defs/case", "properties": { "name": { "const": "stale_takeover_race_lost" }, "probe": { "const": "atomic_rename_lost" }, "expected": { "const": "retry" } } },
+        { "$ref": "#/$defs/case", "properties": { "name": { "const": "release_token_changed" }, "probe": { "const": "release_token_mismatch" }, "expected": { "const": "preserve" } } }
+      ],
+      "minItems": 9,
+      "maxItems": 9
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": ["name", "probe", "expected"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 128 },
+        "probe": {
+          "enum": [
+            "connected",
+            "connected_without_response",
+            "timeout",
+            "connection_refused",
+            "metadata_missing_within_grace",
+            "metadata_missing_after_grace",
+            "invalid_external_host",
+            "atomic_rename_lost",
+            "release_token_mismatch"
+          ]
+        },
+        "expected": { "enum": ["locked", "stale_candidate", "wait", "invalid", "retry", "preserve"] },
+        "owner": { "$ref": "writer-lock.schema.json#/$defs/owner" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "probe": { "enum": ["connected", "connected_without_response", "timeout", "connection_refused"] }
+            },
+            "required": ["probe"]
+          },
+          "then": { "required": ["owner"] }
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

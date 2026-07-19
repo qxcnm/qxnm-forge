@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/session/writer-lock.schema.json",
+  "title": "qxnm-forge cross-language Session writer lease owner",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/owner",
+  "$defs": {
+    "owner": {
+      "type": "object",
+      "required": ["schemaVersion", "protocol", "sessionId", "token", "endpoint", "pid", "createdAt", "implementation"],
+      "properties": {
+        "schemaVersion": { "const": "0.1" },
+        "protocol": { "const": "tcp-loopback-writer-lease-v1" },
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "token": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "endpoint": {
+          "type": "object",
+          "required": ["host", "port"],
+          "properties": {
+            "host": { "const": "127.0.0.1" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          },
+          "additionalProperties": false
+        },
+        "pid": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "createdAt": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "implementation": { "$ref": "../protocol/jsonrpc.schema.json#/$defs/implementation" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

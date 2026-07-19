@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "0.1",
+  "name": "session-continuation-v1",
+  "seed": 20260710,
+  "expectedContext": [
+    {"role": "user", "content": [{"type": "text", "text": "Remember the token ALPHA."}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "I will remember ALPHA."}]},
+    {"role": "user", "content": [{"type": "text", "text": "Perform the side effect exactly once."}]},
+    {"role": "assistant", "content": [{"type": "tool_call", "toolCallId": "tool-call-side-effect-1", "name": "process.exec", "arguments": {"executable": "side-effect", "args": ["once"]}}]},
+    {"role": "tool", "toolCallId": "tool-call-side-effect-1", "toolName": "process.exec", "isError": true, "content": [{"type": "text", "text": "Tool outcome is unknown after crash; the non-idempotent operation was not replayed."}]},
+    {"role": "user", "content": [{"type": "text", "text": "What token did I ask you to remember?"}]}
+  ],
+  "steps": [
+    {"type": "text", "text": "The recovered token is ALPHA."}
+  ],
+  "usage": {"inputTokens": 24, "outputTokens": 7, "totalTokens": 31}
+}

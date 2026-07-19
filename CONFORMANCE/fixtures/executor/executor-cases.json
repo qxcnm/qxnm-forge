@@ -1,0 +1,141 @@
+{
+  "schemaVersion": "0.1",
+  "name": "executor-terminal-v0.1",
+  "helper": "executor_helper.py",
+  "safety": {
+    "workspace": "temporary_only",
+    "network": "forbidden",
+    "secretCanary": "QXNM_FORGE_EXECUTOR_SECRET_CANARY",
+    "maxCaseSeconds": 12,
+    "maxOutputBytes": 4194304
+  },
+  "processCases": [
+    {
+      "name": "argv_boundaries_and_nonzero",
+      "action": "argv",
+      "arguments": ["space value", "*", "$HOME", "中文"],
+      "limits": {"timeoutMs": 3000, "stdoutBytes": 4096, "stderrBytes": 4096, "totalOutputBytes": 8192},
+      "expected": {"terminationReason": "exit", "exitCode": 0, "stdoutJson": ["space value", "*", "$HOME", "中文"]}
+    },
+    {
+      "name": "separated_streams_and_nonzero",
+      "action": "emit",
+      "arguments": ["7", "executor-stdout", "executor-stderr"],
+      "limits": {"timeoutMs": 3000, "stdoutBytes": 4096, "stderrBytes": 4096, "totalOutputBytes": 8192},
+      "expected": {"terminationReason": "exit", "exitCode": 7, "stdout": "executor-stdout", "stderr": "executor-stderr", "isError": true}
+    },
+    {
+      "name": "bounded_stdin",
+      "action": "read-stdin",
+      "arguments": [],
+      "stdin": "input stays one bounded stream",
+      "limits": {"timeoutMs": 3000, "stdoutBytes": 4096, "stderrBytes": 4096, "totalOutputBytes": 8192},
+      "expected": {"terminationReason": "exit", "exitCode": 0, "stdinEcho": "input stays one bounded stream"}
+    },
+    {
+      "name": "secret_environment_isolation",
+      "action": "env-probe",
+      "arguments": ["QXNM_FORGE_EXECUTOR_SECRET_CANARY"],
+      "limits": {"timeoutMs": 3000, "stdoutBytes": 4096, "stderrBytes": 4096, "totalOutputBytes": 8192},
+      "expected": {"terminationReason": "exit", "exitCode": 0, "stdout": "absent\n", "secretAbsent": true}
+    },
+    {
+      "name": "timeout",
+      "action": "sleep",
+      "arguments": ["5000"],
+      "limits": {"timeoutMs": 200, "stdoutBytes": 4096, "stderrBytes": 4096, "totalOutputBytes": 8192},
+      "expected": {"terminationReason": "timeout", "exitCode": null}
+    },
+    {
+      "name": "output_limit",
+      "action": "overflow",
+      "arguments": ["2097152", "stdout"],
+      "limits": {"timeoutMs": 5000, "stdoutBytes": 65536, "stderrBytes": 65536, "totalOutputBytes": 65536},
+      "expected": {"terminationReason": "output_limit", "exitCode": null, "truncated": true}
+    }
+  ],
+  "shellCases": [
+    {
+      "name": "posix_shell_is_explicit",
+      "platforms": ["linux", "macos"],
+      "shell": "sh",
+      "script": "printf shell-stdout; printf shell-stderr >&2; exit 7",
+      "limits": {"timeoutMs": 3000, "stdoutBytes": 4096, "stderrBytes": 4096, "totalOutputBytes": 8192},
+      "expected": {"terminationReason": "exit", "exitCode": 7, "stdout": "shell-stdout", "stderr": "shell-stderr", "isError": true}
+    },
+    {
+      "name": "windows_shell_is_explicit",
+      "platforms": ["windows"],
+      "shell": "cmd",
+      "script": "echo shell-stdout & echo shell-stderr 1>&2 & exit /b 7",
+      "limits": {"timeoutMs": 3000, "stdoutBytes": 4096, "stderrBytes": 4096, "totalOutputBytes": 8192},
+      "expected": {"terminationReason": "exit", "exitCode": 7, "isError": true}
+    }
+  ],
+  "treeCases": [
+    {
+      "name": "unix_descendant_setsid_escape",
+      "platforms": ["linux", "macos"],
+      "action": "descendant",
+      "arguments": ["descendant-escape.marker", "1200", "escape"],
+      "limits": {"timeoutMs": 200, "stdoutBytes": 4096, "stderrBytes": 4096, "totalOutputBytes": 8192},
+      "settleMs": 1600,
+      "expected": {"terminationReason": "timeout", "markerMustNotExist": true, "requiredContainment": "unix_process_group"}
+    },
+    {
+      "name": "windows_suspended_job_descendant",
+      "platforms": ["windows"],
+      "action": "descendant",
+      "arguments": ["descendant-job.marker", "1200", "escape"],
+      "limits": {"timeoutMs": 2000, "stdoutBytes": 4096, "stderrBytes": 4096, "totalOutputBytes": 8192},
+      "settleMs": 1600,
+      "control": "cancel_on_started",
+      "expected": {"terminationReason": "cancelled", "markerMustNotExist": true, "requiredContainment": "windows_job_suspended_bind"}
+    }
+  ],
+  "terminalCases": [
+    {
+      "name": "pty_identity_io_resize_signal",
+      "platforms": ["linux", "macos", "windows"],
+      "action": "terminal",
+      "initialSize": {"columns": 80, "rows": 24},
+      "actions": [
+        {"type": "await", "event": "terminal.output", "contains": "\"stdinTty\": true"},
+        {"type": "write", "data": "size\n"},
+        {"type": "resize", "size": {"columns": 100, "rows": 40}},
+        {"type": "write", "data": "size\n"},
+        {"type": "signal", "signal": "interrupt"},
+        {"type": "await", "event": "terminal.exited"},
+        {"type": "close", "mode": "terminate"}
+      ],
+      "expected": {"ptyKinds": ["unix_pty", "windows_conpty"], "mustNotBe": "pipe", "resize": {"columns": 100, "rows": 40}, "closed": true}
+    },
+    {
+      "name": "attachment_replay_and_cleanup",
+      "platforms": ["linux", "macos", "windows"],
+      "action": "terminal",
+      "initialSize": {"columns": 80, "rows": 24},
+      "actions": [
+        {"type": "write", "data": "echo:replay-me\n"},
+        {"type": "await", "event": "terminal.output", "contains": "replay-me"},
+        {"type": "write", "data": "size\n"},
+        {"type": "await", "event": "terminal.output", "contains": "\"rows\":"},
+        {"type": "attach", "afterSeq": 0, "takeover": true},
+        {"type": "close", "mode": "terminate"}
+      ],
+      "expected": {"replayContains": "replay-me", "closed": true}
+    },
+    {
+      "name": "input_backpressure_and_atomic_rejection",
+      "platforms": ["linux", "macos", "windows"],
+      "action": "terminal",
+      "initialSize": {"columns": 80, "rows": 24},
+      "actions": [
+        {"type": "await", "event": "terminal.output", "contains": "\"ready\": true"},
+        {"type": "backpressure"},
+        {"type": "close", "mode": "terminate"}
+      ],
+      "expected": {"closed": true}
+    }
+  ]
+}

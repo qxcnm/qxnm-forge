@@ -1,0 +1,371 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.2/schemas/model-catalog.schema.json",
+  "title": "qxnm-forge frozen model catalog",
+  "$comment": "功能：约束从固定 PI 快照机械提取的文本与图像模型目录。作者：高宏顺；邮箱：18272669457@163.com",
+  "type": "object",
+  "required": ["schemaVersion", "catalogId", "project", "author", "source", "models"],
+  "properties": {
+    "$schema": { "const": "./schemas/model-catalog.schema.json" },
+    "schemaVersion": { "const": "1.0" },
+    "catalogId": { "const": "pi-v1-frozen" },
+    "project": { "const": "qxnm-forge" },
+    "author": { "$ref": "#/$defs/author" },
+    "source": { "$ref": "#/$defs/source" },
+    "models": {
+      "type": "array",
+      "minItems": 1076,
+      "maxItems": 1076,
+      "items": { "$ref": "#/$defs/model" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "author": {
+      "type": "object",
+      "required": ["name", "email"],
+      "properties": {
+        "name": { "const": "高宏顺" },
+        "email": { "const": "18272669457@163.com" }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "project",
+        "commit",
+        "license",
+        "textEntrypoint",
+        "imageEntrypoint",
+        "extraction",
+        "sourceDigestAlgorithm",
+        "textEntrypointSha256",
+        "textProviderSourcesSha256",
+        "imageEntrypointSha256",
+        "recordsDigestAlgorithm",
+        "recordsSha256",
+        "observedCounts",
+        "textModelsByProvider",
+        "imageModelsByProvider"
+      ],
+      "properties": {
+        "project": { "const": "PI" },
+        "commit": { "const": "3f9aa5d10b35223abf6146f960ff5cb5c68053ee" },
+        "license": { "const": "MIT" },
+        "textEntrypoint": { "const": "packages/ai/src/models.generated.ts" },
+        "imageEntrypoint": { "const": "packages/ai/src/image-models.generated.ts" },
+        "extraction": { "const": "native-esm-object-enumeration-v1" },
+        "sourceDigestAlgorithm": { "const": "sha256-path-nul-bytes-nul-v1" },
+        "textEntrypointSha256": { "const": "ca7059ec42b51e1ca9aacc92a2be24e552c5025a849a62f8b7f2327d80dea46b" },
+        "textProviderSourcesSha256": { "const": "c4cd2b4fb05478c737c5d1dfb77a9b693593388e052182cb79d81d414ac5ec35" },
+        "imageEntrypointSha256": { "const": "255db32f84f1a94f579f061506ced014ccf33d0b719b4a855eace464cb395a00" },
+        "recordsDigestAlgorithm": { "const": "sha256-canonical-json-v1" },
+        "recordsSha256": { "const": "348afa7405fa435492ec0514f9a8dc42d0861a5f99bc1d898f75b9a81f611bfa" },
+        "observedCounts": {
+          "type": "object",
+          "required": ["providers", "textModels", "imageProviders", "imageModels"],
+          "properties": {
+            "providers": { "const": 35 },
+            "textModels": { "const": 1041 },
+            "imageProviders": { "const": 1 },
+            "imageModels": { "const": 35 }
+          },
+          "additionalProperties": false
+        },
+        "textModelsByProvider": { "$ref": "#/$defs/providerCounts" },
+        "imageModelsByProvider": {
+          "type": "object",
+          "required": ["openrouter"],
+          "properties": { "openrouter": { "const": 35 } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "providerCounts": {
+      "type": "object",
+      "required": [
+        "amazon-bedrock",
+        "ant-ling",
+        "anthropic",
+        "azure-openai-responses",
+        "cerebras",
+        "cloudflare-ai-gateway",
+        "cloudflare-workers-ai",
+        "deepseek",
+        "fireworks",
+        "github-copilot",
+        "google",
+        "google-vertex",
+        "groq",
+        "huggingface",
+        "kimi-coding",
+        "minimax",
+        "minimax-cn",
+        "mistral",
+        "moonshotai",
+        "moonshotai-cn",
+        "nvidia",
+        "openai",
+        "openai-codex",
+        "opencode",
+        "opencode-go",
+        "openrouter",
+        "together",
+        "vercel-ai-gateway",
+        "xai",
+        "xiaomi",
+        "xiaomi-token-plan-ams",
+        "xiaomi-token-plan-cn",
+        "xiaomi-token-plan-sgp",
+        "zai",
+        "zai-coding-cn"
+      ],
+      "properties": {
+        "amazon-bedrock": { "const": 106 },
+        "ant-ling": { "const": 3 },
+        "anthropic": { "const": 14 },
+        "azure-openai-responses": { "const": 42 },
+        "cerebras": { "const": 3 },
+        "cloudflare-ai-gateway": { "const": 38 },
+        "cloudflare-workers-ai": { "const": 13 },
+        "deepseek": { "const": 2 },
+        "fireworks": { "const": 16 },
+        "github-copilot": { "const": 25 },
+        "google": { "const": 16 },
+        "google-vertex": { "const": 10 },
+        "groq": { "const": 7 },
+        "huggingface": { "const": 49 },
+        "kimi-coding": { "const": 3 },
+        "minimax": { "const": 3 },
+        "minimax-cn": { "const": 3 },
+        "mistral": { "const": 30 },
+        "moonshotai": { "const": 9 },
+        "moonshotai-cn": { "const": 9 },
+        "nvidia": { "const": 20 },
+        "openai": { "const": 42 },
+        "openai-codex": { "const": 4 },
+        "opencode": { "const": 51 },
+        "opencode-go": { "const": 13 },
+        "openrouter": { "const": 267 },
+        "together": { "const": 20 },
+        "vercel-ai-gateway": { "const": 188 },
+        "xai": { "const": 8 },
+        "xiaomi": { "const": 6 },
+        "xiaomi-token-plan-ams": { "const": 3 },
+        "xiaomi-token-plan-cn": { "const": 3 },
+        "xiaomi-token-plan-sgp": { "const": 3 },
+        "zai": { "const": 6 },
+        "zai-coding-cn": { "const": 6 }
+      },
+      "additionalProperties": false
+    },
+    "apiFamily": {
+      "enum": [
+        "openai-completions",
+        "mistral-conversations",
+        "openai-responses",
+        "azure-openai-responses",
+        "openai-codex-responses",
+        "anthropic-messages",
+        "bedrock-converse-stream",
+        "google-generative-ai",
+        "google-vertex",
+        "openrouter-images"
+      ]
+    },
+    "endpoint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["strategy", "baseUrl"],
+          "properties": {
+            "strategy": { "const": "fixed" },
+            "baseUrl": { "type": "string", "minLength": 9, "maxLength": 2048 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["strategy", "baseUrl", "templateVariables"],
+          "properties": {
+            "strategy": { "const": "template" },
+            "baseUrl": { "type": "string", "minLength": 9, "maxLength": 2048 },
+            "templateVariables": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "enum": ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID", "location"] }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["strategy"],
+          "properties": { "strategy": { "const": "runtime-required" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "header": {
+      "type": "object",
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "enum": ["Copilot-Integration-Id", "Editor-Plugin-Version", "Editor-Version", "NVCF-POLL-SECONDS", "User-Agent"] },
+        "value": { "type": "string", "minLength": 1, "maxLength": 512 }
+      },
+      "additionalProperties": false
+    },
+    "compatibility": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "cacheControlFormat": { "const": "anthropic" },
+        "forceAdaptiveThinking": { "const": true },
+        "maxTokensField": { "const": "max_tokens" },
+        "requiresReasoningContentOnAssistantMessages": { "const": true },
+        "sendSessionAffinityHeaders": { "const": true },
+        "supportsCacheControlOnTools": { "const": false },
+        "supportsDeveloperRole": { "const": false },
+        "supportsEagerToolInputStreaming": { "const": false },
+        "supportsLongCacheRetention": { "const": false },
+        "supportsReasoningEffort": { "type": "boolean" },
+        "supportsStore": { "const": false },
+        "supportsStrictMode": { "const": false },
+        "supportsTemperature": { "const": false },
+        "thinkingFormat": { "enum": ["ant-ling", "deepseek", "openai", "openrouter", "qwen", "together", "zai"] },
+        "zaiToolStream": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "thinkingLevelMap": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "off": { "type": ["string", "null"] },
+        "minimal": { "type": ["string", "null"] },
+        "low": { "type": ["string", "null"] },
+        "medium": { "type": ["string", "null"] },
+        "high": { "type": ["string", "null"] },
+        "xhigh": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "modelBase": {
+      "type": "object",
+      "required": ["media", "providerId", "modelId", "name", "apiFamily", "endpoint", "capabilities"],
+      "properties": {
+        "media": { "enum": ["text", "image"] },
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128 },
+        "modelId": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "apiFamily": { "$ref": "#/$defs/apiFamily" },
+        "endpoint": { "$ref": "#/$defs/endpoint" },
+        "capabilities": { "type": "object" },
+        "limits": {
+          "type": "object",
+          "required": ["contextWindow", "maxOutputTokens"],
+          "properties": {
+            "contextWindow": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+            "maxOutputTokens": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+          },
+          "additionalProperties": false
+        },
+        "thinkingLevelMap": { "$ref": "#/$defs/thinkingLevelMap" },
+        "fixedHeaders": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/header" }
+        },
+        "compatibility": { "$ref": "#/$defs/compatibility" }
+      },
+      "additionalProperties": false
+    },
+    "textModel": {
+      "allOf": [
+        { "$ref": "#/$defs/modelBase" },
+        {
+          "type": "object",
+          "required": ["limits"],
+          "properties": {
+            "media": { "const": "text" },
+            "apiFamily": {
+              "enum": [
+                "openai-completions",
+                "mistral-conversations",
+                "openai-responses",
+                "azure-openai-responses",
+                "openai-codex-responses",
+                "anthropic-messages",
+                "bedrock-converse-stream",
+                "google-generative-ai",
+                "google-vertex"
+              ]
+            },
+            "capabilities": {
+              "type": "object",
+              "required": ["input", "reasoning"],
+              "properties": {
+                "input": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": { "enum": ["text", "image"] }
+                },
+                "reasoning": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "imageModel": {
+      "allOf": [
+        { "$ref": "#/$defs/modelBase" },
+        {
+          "type": "object",
+          "properties": {
+            "media": { "const": "image" },
+            "apiFamily": { "const": "openrouter-images" },
+            "capabilities": {
+              "type": "object",
+              "required": ["input", "output"],
+              "properties": {
+                "input": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": { "enum": ["text", "image"] }
+                },
+                "output": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": { "enum": ["text", "image"] }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "not": {
+            "anyOf": [
+              { "required": ["limits"] },
+              { "required": ["thinkingLevelMap"] },
+              { "required": ["compatibility"] }
+            ]
+          }
+        }
+      ]
+    },
+    "model": {
+      "oneOf": [
+        { "$ref": "#/$defs/textModel" },
+        { "$ref": "#/$defs/imageModel" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/hard-sandbox.schema.json",
+  "title": "qxnm-forge named hard sandbox profile and capability v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "oneOf": [
+    {"$ref": "#/$defs/request"},
+    {"$ref": "#/$defs/capability"}
+  ],
+  "$defs": {
+    "request": {
+      "type": "object",
+      "required": ["profile", "workspaceAccess", "network"],
+      "properties": {
+        "profile": {"const": "linux-bwrap-v1"},
+        "workspaceAccess": {"enum": ["read_only", "read_write"]},
+        "network": {"const": "isolated"},
+        "extensions": {"$ref": "common.schema.json#/$defs/extensions"}
+      },
+      "additionalProperties": false
+    },
+    "capability": {
+      "type": "object",
+      "required": ["profile", "platform", "filesystem", "network", "process", "credentials", "execution", "failureMode", "selfTested"],
+      "properties": {
+        "profile": {"const": "linux-bwrap-v1"},
+        "platform": {"const": "linux"},
+        "filesystem": {"const": "mount_namespace_allowlist"},
+        "network": {"const": "network_namespace_isolated"},
+        "process": {"const": "pid_namespace_die_with_parent"},
+        "credentials": {"const": "empty_environment"},
+        "execution": {
+          "type": "object",
+          "required": ["timeout", "output", "descendants"],
+          "properties": {
+            "timeout": {"const": "bounded"},
+            "output": {"const": "bounded"},
+            "descendants": {"const": "fork_setsid_terminated_on_cancel_or_parent_exit"}
+          },
+          "additionalProperties": false
+        },
+        "failureMode": {"const": "sandbox_unavailable_no_host_fallback"},
+        "selfTested": {"const": true},
+        "extensions": {"$ref": "common.schema.json#/$defs/extensions"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

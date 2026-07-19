@@ -1,0 +1,265 @@
+{
+  "$schema": "../../../SPEC/schemas/provider-route-cases.schema.json",
+  "schemaVersion": "0.1",
+  "counts": {
+    "routes": 6,
+    "textRoutes": 5,
+    "imageRoutes": 1,
+    "negativeCases": 9
+  },
+  "routes": [
+    {
+      "name": "groq_openai_completions",
+      "providerId": "groq",
+      "apiFamily": "openai-completions",
+      "adapterId": "openai-completions-v1",
+      "modelId": "llama-3.1-8b-instant",
+      "credentialEnv": "GROQ_API_KEY",
+      "mockFixture": "mock-cases.json",
+      "mockFamily": "openai-compatible",
+      "mockCase": "text_success",
+      "requestTarget": {
+        "pathSuffix": "/chat/completions",
+        "requiredQuery": {}
+      },
+      "productionModelCount": 7,
+      "providerFeatures": ["authentication", "text", "streaming", "tools"],
+      "expectedDescriptor": {
+        "providerId": "groq",
+        "modelId": "llama-3.1-8b-instant",
+        "displayName": "Llama 3.1 8B",
+        "apiFamily": "openai-completions",
+        "capabilities": {
+          "input": ["text"],
+          "output": ["text"],
+          "streaming": true,
+          "tools": true,
+          "reasoning": false,
+          "contextTokens": 131072,
+          "maxOutputTokens": 131072
+        }
+      }
+    },
+    {
+      "name": "minimax_anthropic_messages",
+      "providerId": "minimax",
+      "apiFamily": "anthropic-messages",
+      "adapterId": "anthropic-messages-v1",
+      "modelId": "MiniMax-M2.7",
+      "credentialEnv": "MINIMAX_API_KEY",
+      "mockFixture": "mock-cases.json",
+      "mockFamily": "anthropic-messages",
+      "mockCase": "text_success",
+      "requestTarget": {
+        "pathSuffix": "/v1/messages",
+        "requiredQuery": {}
+      },
+      "productionModelCount": 3,
+      "providerFeatures": ["authentication", "text", "streaming", "tools"],
+      "expectedDescriptor": {
+        "providerId": "minimax",
+        "modelId": "MiniMax-M2.7",
+        "displayName": "MiniMax-M2.7",
+        "apiFamily": "anthropic-messages",
+        "capabilities": {
+          "input": ["text"],
+          "output": ["text"],
+          "streaming": true,
+          "tools": true,
+          "reasoning": false,
+          "contextTokens": 204800,
+          "maxOutputTokens": 131072
+        }
+      }
+    },
+    {
+      "name": "mistral_conversations",
+      "providerId": "mistral",
+      "apiFamily": "mistral-conversations",
+      "adapterId": "mistral-conversations-v1",
+      "modelId": "codestral-latest",
+      "credentialEnv": "MISTRAL_API_KEY",
+      "mockFixture": "mock-cases-batch2.json",
+      "mockFamily": "mistral-conversations",
+      "mockCase": "text_success",
+      "requestTarget": {
+        "pathSuffix": "/v1/chat/completions",
+        "requiredQuery": {}
+      },
+      "productionModelCount": 30,
+      "providerFeatures": ["authentication", "text", "streaming", "tools"],
+      "expectedDescriptor": {
+        "providerId": "mistral",
+        "modelId": "codestral-latest",
+        "displayName": "Codestral (latest)",
+        "apiFamily": "mistral-conversations",
+        "capabilities": {
+          "input": ["text"],
+          "output": ["text"],
+          "streaming": true,
+          "tools": true,
+          "reasoning": false,
+          "contextTokens": 256000,
+          "maxOutputTokens": 4096
+        }
+      }
+    },
+    {
+      "name": "openai_responses",
+      "providerId": "openai",
+      "apiFamily": "openai-responses",
+      "adapterId": "openai-responses-v1",
+      "modelId": "gpt-4.1",
+      "credentialEnv": "OPENAI_API_KEY",
+      "mockFixture": "mock-cases.json",
+      "mockFamily": "openai-responses",
+      "mockCase": "text_success",
+      "requestTarget": {
+        "pathSuffix": "/responses",
+        "requiredQuery": {}
+      },
+      "productionModelCount": 42,
+      "providerFeatures": ["authentication", "text", "streaming", "tools"],
+      "expectedDescriptor": {
+        "providerId": "openai",
+        "modelId": "gpt-4.1",
+        "displayName": "GPT-4.1",
+        "apiFamily": "openai-responses",
+        "capabilities": {
+          "input": ["text"],
+          "output": ["text"],
+          "streaming": true,
+          "tools": true,
+          "reasoning": false,
+          "contextTokens": 1047576,
+          "maxOutputTokens": 32768
+        }
+      }
+    },
+    {
+      "name": "google_generative_ai",
+      "providerId": "google",
+      "apiFamily": "google-generative-ai",
+      "adapterId": "google-generative-ai-v1",
+      "modelId": "gemini-2.5-flash",
+      "credentialEnv": "GEMINI_API_KEY",
+      "mockFixture": "mock-cases-batch2.json",
+      "mockFamily": "google-generative-ai",
+      "mockCase": "text_success",
+      "requestTarget": {
+        "pathSuffix": "/models/gemini-2.5-flash:streamGenerateContent",
+        "requiredQuery": {"alt": "sse"}
+      },
+      "productionModelCount": 16,
+      "providerFeatures": ["authentication", "text", "streaming", "tools"],
+      "expectedDescriptor": {
+        "providerId": "google",
+        "modelId": "gemini-2.5-flash",
+        "displayName": "Gemini 2.5 Flash",
+        "apiFamily": "google-generative-ai",
+        "capabilities": {
+          "input": ["text"],
+          "output": ["text"],
+          "streaming": true,
+          "tools": true,
+          "reasoning": false,
+          "contextTokens": 1048576,
+          "maxOutputTokens": 65536
+        }
+      }
+    },
+    {
+      "name": "openrouter_images",
+      "providerId": "openrouter",
+      "apiFamily": "openrouter-images",
+      "adapterId": "openrouter-images-v1",
+      "modelId": "google/gemini-2.5-flash-image",
+      "credentialEnv": "OPENROUTER_API_KEY",
+      "mockFixture": "mock-cases-images.json",
+      "mockFamily": "openrouter-images",
+      "mockCase": "success_png_text",
+      "requestTarget": {
+        "pathSuffix": "/chat/completions",
+        "requiredQuery": {}
+      },
+      "productionModelCount": 35,
+      "providerFeatures": ["authentication", "text", "image_input", "image_output"],
+      "expectedDescriptor": {
+        "providerId": "openrouter",
+        "modelId": "google/gemini-2.5-flash-image",
+        "displayName": "Google: Nano Banana (Gemini 2.5 Flash Image)",
+        "apiFamily": "openrouter-images",
+        "capabilities": {
+          "input": ["image", "text"],
+          "output": ["image", "text"],
+          "streaming": false,
+          "tools": false,
+          "reasoning": false
+        }
+      }
+    }
+  ],
+  "negativeCases": [
+    {
+      "name": "missing_credential",
+      "kind": "missing_credential",
+      "expected": {
+        "advertised": false,
+        "errorCode": -32005,
+        "errorKind": "provider_unavailable",
+        "sessionCreated": false
+      }
+    },
+    {
+      "name": "wrong_family",
+      "kind": "wrong_family",
+      "expected": {
+        "errorCode": -32005,
+        "errorKind": "provider_unavailable",
+        "sessionCreated": false
+      }
+    },
+    {
+      "name": "unknown_model",
+      "kind": "unknown_model",
+      "expected": {
+        "errorCode": -32005,
+        "errorKind": "provider_unavailable",
+        "sessionCreated": false
+      }
+    },
+    {
+      "name": "unlisted_route_config",
+      "kind": "unlisted_route_config",
+      "expected": {"startupRejected": true}
+    },
+    {
+      "name": "production_presence",
+      "kind": "production_presence",
+      "expected": {"startupRejected": true}
+    },
+    {
+      "name": "endpoint_non_loopback",
+      "kind": "endpoint_non_loopback",
+      "expected": {"startupRejected": true}
+    },
+    {
+      "name": "config_unknown_field",
+      "kind": "config_unknown_field",
+      "expected": {"startupRejected": true}
+    },
+    {
+      "name": "config_duplicate_key",
+      "kind": "config_duplicate_key",
+      "expected": {"startupRejected": true}
+    },
+    {
+      "name": "wire_duplicate_key",
+      "kind": "wire_duplicate_key",
+      "expected": {
+        "errorCode": -32700,
+        "sessionCreated": false
+      }
+    }
+  ]
+}

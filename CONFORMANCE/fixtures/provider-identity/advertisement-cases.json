@@ -1,0 +1,206 @@
+{
+  "$schema": "../../../SPEC/schemas/provider-identity-cases.schema.json",
+  "schemaVersion": "0.1",
+  "counts": {
+    "providers": 35,
+    "routes": 45,
+    "models": 1076,
+    "initializeModelIds": 1074,
+    "ambiguousProviderModelPairs": 2
+  },
+  "cases": [
+    {
+      "name": "default_closed",
+      "routes": [],
+      "gates": {
+        "adapter": "missing",
+        "authentication": "missing",
+        "endpoint": "absent",
+        "capability": "denied"
+      },
+      "expected": { "providers": 0, "routes": 0, "models": 0, "initializeModelIds": 0 }
+    },
+    {
+      "name": "all_manifest_routes",
+      "routes": "all",
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "configured",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 35, "routes": 45, "models": 1076, "initializeModelIds": 1074 }
+    },
+    {
+      "name": "credential_missing",
+      "routes": [{ "providerId": "deepseek", "apiFamily": "openai-completions" }],
+      "gates": {
+        "adapter": "available",
+        "authentication": "missing",
+        "endpoint": "configured",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 0, "routes": 0, "models": 0, "initializeModelIds": 0 }
+    },
+    {
+      "name": "single_route_golden",
+      "routes": [{ "providerId": "deepseek", "apiFamily": "openai-completions" }],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "configured",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 1, "routes": 1, "models": 2, "initializeModelIds": 2 }
+    },
+    {
+      "name": "adapter_missing",
+      "routes": [{ "providerId": "deepseek", "apiFamily": "openai-completions" }],
+      "gates": {
+        "adapter": "missing",
+        "authentication": "available",
+        "endpoint": "configured",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 0, "routes": 0, "models": 0, "initializeModelIds": 0 }
+    },
+    {
+      "name": "capability_denied",
+      "routes": [{ "providerId": "deepseek", "apiFamily": "openai-completions" }],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "configured",
+        "capability": "denied"
+      },
+      "expected": { "providers": 0, "routes": 0, "models": 0, "initializeModelIds": 0 }
+    },
+    {
+      "name": "capability_projection",
+      "routes": [{ "providerId": "deepseek", "apiFamily": "openai-completions" }],
+      "capabilityFeatures": ["authentication", "text"],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "configured",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 1, "routes": 1, "models": 2, "initializeModelIds": 2 }
+    },
+    {
+      "name": "runtime_endpoint_missing",
+      "routes": [{ "providerId": "azure-openai-responses", "apiFamily": "azure-openai-responses" }],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "absent",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 0, "routes": 0, "models": 0, "initializeModelIds": 0 }
+    },
+    {
+      "name": "runtime_endpoint_present",
+      "routes": [{ "providerId": "azure-openai-responses", "apiFamily": "azure-openai-responses" }],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "configured",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 1, "routes": 1, "models": 42, "initializeModelIds": 42 }
+    },
+    {
+      "name": "multi_family_provider",
+      "routes": [
+        { "providerId": "opencode", "apiFamily": "anthropic-messages" },
+        { "providerId": "opencode", "apiFamily": "google-generative-ai" },
+        { "providerId": "opencode", "apiFamily": "openai-completions" },
+        { "providerId": "opencode", "apiFamily": "openai-responses" }
+      ],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "configured",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 1, "routes": 4, "models": 51, "initializeModelIds": 51 }
+    },
+    {
+      "name": "openrouter_dual_family",
+      "routes": [
+        { "providerId": "openrouter", "apiFamily": "openai-completions" },
+        { "providerId": "openrouter", "apiFamily": "openrouter-images" }
+      ],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "configured",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 1, "routes": 2, "models": 302, "initializeModelIds": 300 }
+    },
+    {
+      "name": "mixed_endpoint_intersection",
+      "routes": [
+        { "providerId": "azure-openai-responses", "apiFamily": "azure-openai-responses" },
+        { "providerId": "deepseek", "apiFamily": "openai-completions" }
+      ],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "absent",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 1, "routes": 1, "models": 2, "initializeModelIds": 2 }
+    },
+    {
+      "name": "template_endpoint_missing",
+      "routes": [
+        { "providerId": "cloudflare-ai-gateway", "apiFamily": "anthropic-messages" },
+        { "providerId": "cloudflare-ai-gateway", "apiFamily": "openai-completions" },
+        { "providerId": "cloudflare-ai-gateway", "apiFamily": "openai-responses" }
+      ],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "absent",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 0, "routes": 0, "models": 0, "initializeModelIds": 0 }
+    },
+    {
+      "name": "alternate_auth_profile",
+      "routes": [{ "providerId": "anthropic", "apiFamily": "anthropic-messages" }],
+      "usableAuthProfiles": [{ "providerId": "anthropic", "authProfileId": "interactive-oauth" }],
+      "gates": {
+        "adapter": "available",
+        "authentication": "available",
+        "endpoint": "configured",
+        "capability": "allowed"
+      },
+      "expected": { "providers": 1, "routes": 1, "models": 14, "initializeModelIds": 14 }
+    }
+  ],
+  "negativeCases": [
+    {
+      "name": "wire_unknown_field",
+      "kind": "wire_unknown_field",
+      "expected": { "errorCode": -32602 }
+    },
+    {
+      "name": "wire_duplicate_key",
+      "kind": "wire_duplicate_key",
+      "expected": { "errorCode": -32700 }
+    },
+    {
+      "name": "config_unknown_field",
+      "kind": "config_unknown_field",
+      "expected": { "startupRejected": true }
+    },
+    {
+      "name": "config_duplicate_key",
+      "kind": "config_duplicate_key",
+      "expected": { "startupRejected": true }
+    }
+  ]
+}

@@ -1,0 +1,479 @@
+{
+  "$schema": "https://schemas.agentprotocol.local/spec/0.1/schemas/provider-mock-cases.schema.json",
+  "schemaVersion": "0.1",
+  "families": [
+    {
+      "id": "openai-compatible",
+      "apiFamily": "openai-completions",
+      "providerId": "openai-compatible",
+      "modelId": "mock-chat-v1",
+      "endpointEnv": "QXNM_FORGE_OPENAI_COMPATIBLE_ENDPOINT",
+      "credentialEnv": "OPENAI_API_KEY",
+      "authHeaders": [
+        { "name": "Authorization", "prefix": "Bearer " }
+      ],
+      "request": {
+        "requiredHeaders": ["content-type"],
+        "requiredJsonPointers": [
+          "/model",
+          "/messages",
+          "/stream",
+          "/tools/0/type",
+          "/tools/0/function/name",
+          "/tools/0/function/parameters"
+        ],
+        "equals": {
+          "/model": "mock-chat-v1",
+          "/stream": true,
+          "/tools/0/type": "function",
+          "/tools/0/function/name": "file.read"
+        }
+      },
+      "cases": [
+        {
+          "name": "text_success",
+          "attempts": [
+            {
+              "kind": "text_stream",
+              "lineEnding": "crlf",
+              "multiline": true,
+              "finalEventWithoutBlankLine": true,
+              "chunkSizes": [1, 2, 3, 5, 8]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "usage": { "inputTokens": 7, "outputTokens": 5, "totalTokens": 12 },
+            "minRequests": 1,
+            "requiredEventTypes": ["message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "partial_tool_arguments",
+          "attempts": [
+            {
+              "kind": "tool_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [2, 1, 4, 1, 7]
+            },
+            {
+              "kind": "text_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [3, 1, 5, 2, 8]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "toolCall": {
+              "id": "call_mock_1",
+              "name": "file.read",
+              "arguments": { "path": "README.md" }
+            },
+            "toolResult": {
+              "content": [{ "type": "text", "text": "provider tool continuation fixture\n" }],
+              "isError": false
+            },
+            "usage": { "inputTokens": 14, "outputTokens": 10, "totalTokens": 24 },
+            "minRequests": 2,
+            "exactRequests": 2,
+            "requiredEventTypes": ["tool.requested", "tool.completed", "message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "rate_limit_retry",
+          "attempts": [
+            { "kind": "http_error", "status": 429, "retryAfter": "0" },
+            {
+              "kind": "text_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [3, 1, 6, 2]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "usage": { "inputTokens": 7, "outputTokens": 5, "totalTokens": 12 },
+            "minRequests": 2,
+            "requiredEventTypes": ["retry.scheduled", "message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "server_error_retry",
+          "attempts": [
+            {
+              "kind": "http_error",
+              "status": 503,
+              "retryAfter": "Wed, 21 Oct 2037 07:28:00 GMT"
+            },
+            {
+              "kind": "text_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [5, 2, 1, 8]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "usage": { "inputTokens": 7, "outputTokens": 5, "totalTokens": 12 },
+            "minRequests": 2,
+            "requiredEventTypes": ["retry.scheduled", "message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "disconnect",
+          "attempts": [
+            { "kind": "disconnect_stream", "lineEnding": "lf", "chunkSizes": [1, 3, 2] }
+          ],
+          "expected": {
+            "terminal": "interrupted",
+            "minRequests": 1,
+            "requiredEventTypes": ["run.interrupted"]
+          }
+        },
+        {
+          "name": "idle_timeout",
+          "attempts": [
+            { "kind": "idle_stream", "idleMs": 400 }
+          ],
+          "expected": {
+            "terminal": "failed",
+            "minRequests": 1,
+            "requiredEventTypes": ["run.failed"]
+          }
+        },
+        {
+          "name": "cancellation",
+          "attempts": [
+            { "kind": "cancel_stream", "idleMs": 3000 }
+          ],
+          "expected": {
+            "terminal": "cancelled",
+            "minRequests": 1,
+            "requiredEventTypes": ["run.cancelled"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "openai-responses",
+      "apiFamily": "openai-responses",
+      "providerId": "openai-responses",
+      "modelId": "mock-responses-v1",
+      "endpointEnv": "QXNM_FORGE_OPENAI_RESPONSES_ENDPOINT",
+      "credentialEnv": "OPENAI_API_KEY",
+      "authHeaders": [
+        { "name": "Authorization", "prefix": "Bearer " }
+      ],
+      "request": {
+        "requiredHeaders": ["content-type"],
+        "requiredJsonPointers": [
+          "/model",
+          "/input",
+          "/stream",
+          "/tools/0/type",
+          "/tools/0/name",
+          "/tools/0/parameters"
+        ],
+        "equals": {
+          "/model": "mock-responses-v1",
+          "/stream": true,
+          "/tools/0/type": "function",
+          "/tools/0/name": "file.read"
+        }
+      },
+      "cases": [
+        {
+          "name": "text_success",
+          "attempts": [
+            {
+              "kind": "text_stream",
+              "lineEnding": "crlf",
+              "multiline": true,
+              "finalEventWithoutBlankLine": true,
+              "chunkSizes": [1, 2, 3, 5, 8]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "usage": { "inputTokens": 7, "outputTokens": 5, "totalTokens": 12 },
+            "minRequests": 1,
+            "requiredEventTypes": ["message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "partial_tool_arguments",
+          "attempts": [
+            {
+              "kind": "tool_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [2, 1, 4, 1, 7]
+            },
+            {
+              "kind": "text_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [3, 1, 5, 2, 8]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "toolCall": {
+              "id": "call_mock_1",
+              "name": "file.read",
+              "arguments": { "path": "README.md" }
+            },
+            "toolResult": {
+              "content": [{ "type": "text", "text": "provider tool continuation fixture\n" }],
+              "isError": false
+            },
+            "usage": { "inputTokens": 14, "outputTokens": 10, "totalTokens": 24 },
+            "minRequests": 2,
+            "exactRequests": 2,
+            "requiredEventTypes": ["tool.requested", "tool.completed", "message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "rate_limit_retry",
+          "attempts": [
+            { "kind": "http_error", "status": 429, "retryAfter": "0" },
+            {
+              "kind": "text_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [3, 1, 6, 2]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "usage": { "inputTokens": 7, "outputTokens": 5, "totalTokens": 12 },
+            "minRequests": 2,
+            "requiredEventTypes": ["retry.scheduled", "message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "server_error_retry",
+          "attempts": [
+            {
+              "kind": "http_error",
+              "status": 503,
+              "retryAfter": "Wed, 21 Oct 2037 07:28:00 GMT"
+            },
+            {
+              "kind": "text_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [5, 2, 1, 8]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "usage": { "inputTokens": 7, "outputTokens": 5, "totalTokens": 12 },
+            "minRequests": 2,
+            "requiredEventTypes": ["retry.scheduled", "message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "disconnect",
+          "attempts": [
+            { "kind": "disconnect_stream", "lineEnding": "lf", "chunkSizes": [1, 3, 2] }
+          ],
+          "expected": {
+            "terminal": "interrupted",
+            "minRequests": 1,
+            "requiredEventTypes": ["run.interrupted"]
+          }
+        },
+        {
+          "name": "idle_timeout",
+          "attempts": [
+            { "kind": "idle_stream", "idleMs": 400 }
+          ],
+          "expected": {
+            "terminal": "failed",
+            "minRequests": 1,
+            "requiredEventTypes": ["run.failed"]
+          }
+        },
+        {
+          "name": "cancellation",
+          "attempts": [
+            { "kind": "cancel_stream", "idleMs": 3000 }
+          ],
+          "expected": {
+            "terminal": "cancelled",
+            "minRequests": 1,
+            "requiredEventTypes": ["run.cancelled"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "anthropic-messages",
+      "apiFamily": "anthropic-messages",
+      "providerId": "anthropic",
+      "modelId": "mock-anthropic-v1",
+      "endpointEnv": "QXNM_FORGE_ANTHROPIC_ENDPOINT",
+      "credentialEnv": "ANTHROPIC_API_KEY",
+      "authHeaders": [
+        { "name": "x-api-key", "prefix": "" }
+      ],
+      "request": {
+        "requiredHeaders": ["content-type", "anthropic-version"],
+        "requiredJsonPointers": [
+          "/model",
+          "/messages",
+          "/stream",
+          "/max_tokens",
+          "/tools/0/name",
+          "/tools/0/input_schema"
+        ],
+        "equals": {
+          "/model": "mock-anthropic-v1",
+          "/stream": true,
+          "/tools/0/name": "file.read"
+        }
+      },
+      "cases": [
+        {
+          "name": "text_success",
+          "attempts": [
+            {
+              "kind": "text_stream",
+              "lineEnding": "crlf",
+              "multiline": true,
+              "finalEventWithoutBlankLine": true,
+              "chunkSizes": [1, 2, 3, 5, 8]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "usage": { "inputTokens": 7, "outputTokens": 5, "totalTokens": 12 },
+            "minRequests": 1,
+            "requiredEventTypes": ["message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "partial_tool_arguments",
+          "attempts": [
+            {
+              "kind": "tool_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [2, 1, 4, 1, 7]
+            },
+            {
+              "kind": "text_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [3, 1, 5, 2, 8]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "toolCall": {
+              "id": "call_mock_1",
+              "name": "file.read",
+              "arguments": { "path": "README.md" }
+            },
+            "toolResult": {
+              "content": [{ "type": "text", "text": "provider tool continuation fixture\n" }],
+              "isError": false
+            },
+            "usage": { "inputTokens": 14, "outputTokens": 10, "totalTokens": 24 },
+            "minRequests": 2,
+            "exactRequests": 2,
+            "requiredEventTypes": ["tool.requested", "tool.completed", "message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "rate_limit_retry",
+          "attempts": [
+            { "kind": "http_error", "status": 429, "retryAfter": "0" },
+            {
+              "kind": "text_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [3, 1, 6, 2]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "usage": { "inputTokens": 7, "outputTokens": 5, "totalTokens": 12 },
+            "minRequests": 2,
+            "requiredEventTypes": ["retry.scheduled", "message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "server_error_retry",
+          "attempts": [
+            {
+              "kind": "http_error",
+              "status": 503,
+              "retryAfter": "Wed, 21 Oct 2037 07:28:00 GMT"
+            },
+            {
+              "kind": "text_stream",
+              "lineEnding": "lf",
+              "multiline": false,
+              "chunkSizes": [5, 2, 1, 8]
+            }
+          ],
+          "expected": {
+            "terminal": "completed",
+            "text": "你好 👋 from mock.",
+            "usage": { "inputTokens": 7, "outputTokens": 5, "totalTokens": 12 },
+            "minRequests": 2,
+            "requiredEventTypes": ["retry.scheduled", "message.delta", "run.completed"]
+          }
+        },
+        {
+          "name": "disconnect",
+          "attempts": [
+            { "kind": "disconnect_stream", "lineEnding": "lf", "chunkSizes": [1, 3, 2] }
+          ],
+          "expected": {
+            "terminal": "interrupted",
+            "minRequests": 1,
+            "requiredEventTypes": ["run.interrupted"]
+          }
+        },
+        {
+          "name": "idle_timeout",
+          "attempts": [
+            { "kind": "idle_stream", "idleMs": 400 }
+          ],
+          "expected": {
+            "terminal": "failed",
+            "minRequests": 1,
+            "requiredEventTypes": ["run.failed"]
+          }
+        },
+        {
+          "name": "cancellation",
+          "attempts": [
+            { "kind": "cancel_stream", "idleMs": 3000 }
+          ],
+          "expected": {
+            "terminal": "cancelled",
+            "minRequests": 1,
+            "requiredEventTypes": ["run.cancelled"]
+          }
+        }
+      ]
+    }
+  ]
+}

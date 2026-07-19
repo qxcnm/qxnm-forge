@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/executor-cases.schema.json",
+  "title": "qxnm-forge offline executor and terminal conformance cases",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "type": "object",
+  "required": ["schemaVersion", "name", "helper", "safety", "processCases", "shellCases", "treeCases", "terminalCases"],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "helper": { "const": "executor_helper.py" },
+    "safety": {
+      "type": "object",
+      "required": ["workspace", "network", "secretCanary", "maxCaseSeconds", "maxOutputBytes"],
+      "properties": {
+        "workspace": { "const": "temporary_only" },
+        "network": { "const": "forbidden" },
+        "secretCanary": { "$ref": "executor.schema.json#/$defs/environmentName" },
+        "maxCaseSeconds": { "type": "integer", "minimum": 1, "maximum": 60 },
+        "maxOutputBytes": { "$ref": "common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "processCases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/processCase" }
+    },
+    "shellCases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/shellCase" }
+    },
+    "treeCases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/treeCase" }
+    },
+    "terminalCases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/terminalCase" }
+    }
+  },
+  "$defs": {
+    "platform": { "enum": ["linux", "macos", "windows"] },
+    "limits": {
+      "type": "object",
+      "required": ["timeoutMs", "stdoutBytes", "stderrBytes", "totalOutputBytes"],
+      "properties": {
+        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 86400000 },
+        "stdoutBytes": { "$ref": "common.schema.json#/$defs/positiveSafeInteger" },
+        "stderrBytes": { "$ref": "common.schema.json#/$defs/positiveSafeInteger" },
+        "totalOutputBytes": { "$ref": "common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "expected": {
+      "type": "object",
+      "properties": {
+        "terminationReason": { "enum": ["exit", "signal", "timeout", "cancelled", "output_limit"] },
+        "exitCode": { "type": ["integer", "null"] },
+        "stdout": { "type": "string", "maxLength": 1048576 },
+        "stderr": { "type": "string", "maxLength": 1048576 },
+        "stdoutJson": { "type": "array", "items": { "type": "string" } },
+        "stdinEcho": { "type": "string" },
+        "isError": { "type": "boolean" },
+        "secretAbsent": { "type": "boolean" },
+        "truncated": { "type": "boolean" },
+        "markerMustNotExist": { "const": true },
+        "requiredContainment": { "type": "string" },
+        "ptyKinds": { "type": "array", "items": { "enum": ["unix_pty", "windows_conpty"] } },
+        "mustNotBe": { "type": "string" },
+        "resize": { "$ref": "#/$defs/size" },
+        "replayContains": { "type": "string" },
+        "closed": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "processCase": {
+      "type": "object",
+      "required": ["name", "action", "arguments", "limits", "expected"],
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "platforms": { "type": "array", "items": { "$ref": "#/$defs/platform" }, "uniqueItems": true },
+        "action": { "enum": ["emit", "argv", "read-stdin", "sleep", "overflow", "env-probe"] },
+        "arguments": { "type": "array", "items": { "type": "string", "maxLength": 1048576 }, "maxItems": 16 },
+        "stdin": { "type": "string", "maxLength": 1048576 },
+        "limits": { "$ref": "#/$defs/limits" },
+        "control": { "enum": ["none", "cancel_on_started"] },
+        "expected": { "$ref": "#/$defs/expected" }
+      },
+      "additionalProperties": false
+    },
+    "shellCase": {
+      "type": "object",
+      "required": ["name", "platforms", "shell", "script", "limits", "expected"],
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "platforms": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/platform" }, "uniqueItems": true },
+        "shell": { "enum": ["bash", "sh", "pwsh", "powershell", "cmd"] },
+        "script": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+        "limits": { "$ref": "#/$defs/limits" },
+        "expected": { "$ref": "#/$defs/expected" }
+      },
+      "additionalProperties": false
+    },
+    "treeCase": {
+      "type": "object",
+      "required": ["name", "platforms", "action", "arguments", "limits", "settleMs", "expected"],
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "platforms": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/platform" }, "uniqueItems": true },
+        "action": { "const": "descendant" },
+        "arguments": { "type": "array", "items": { "type": "string", "maxLength": 256 }, "minItems": 3, "maxItems": 3 },
+        "limits": { "$ref": "#/$defs/limits" },
+        "settleMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+        "control": { "enum": ["none", "cancel_on_started"] },
+        "expected": { "$ref": "#/$defs/expected" }
+      },
+      "additionalProperties": false
+    },
+    "size": {
+      "type": "object",
+      "required": ["columns", "rows"],
+      "properties": {
+        "columns": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "rows": { "type": "integer", "minimum": 1, "maximum": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "terminalAction": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["await", "write", "resize", "signal", "attach", "backpressure", "close"] },
+        "event": { "enum": ["terminal.output", "terminal.truncated", "terminal.exited", "terminal.closed"] },
+        "contains": { "type": "string", "maxLength": 4096 },
+        "data": { "type": "string", "maxLength": 65536 },
+        "size": { "$ref": "#/$defs/size" },
+        "signal": { "enum": ["interrupt", "terminate", "kill", "hangup"] },
+        "afterSeq": { "$ref": "common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "takeover": { "type": "boolean" },
+        "mode": { "enum": ["detach", "terminate"] }
+      },
+      "additionalProperties": false
+    },
+    "terminalCase": {
+      "type": "object",
+      "required": ["name", "platforms", "action", "initialSize", "actions", "expected"],
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "platforms": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/platform" }, "uniqueItems": true },
+        "action": { "const": "terminal" },
+        "initialSize": { "$ref": "#/$defs/size" },
+        "actions": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/terminalAction" } },
+        "expected": { "$ref": "#/$defs/expected" }
+      },
+      "additionalProperties": false
+    },
+    "caseName": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }
+  },
+  "additionalProperties": false
+}

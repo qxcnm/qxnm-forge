@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/tool.schema.json",
+  "title": "qxnm-forge portable tool declarations and results",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/toolDefinition",
+  "$defs": {
+    "permissionClass": {
+      "enum": ["workspace_read", "workspace_write", "process", "shell", "terminal", "network", "credential", "outside_workspace"]
+    },
+    "toolDefinition": {
+      "type": "object",
+      "required": ["name", "description", "inputSchema", "permissionClass", "idempotent", "maxOutputBytes"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "inputSchema": { "$ref": "tool-parameters.schema.json" },
+        "permissionClass": { "$ref": "#/$defs/permissionClass" },
+        "idempotent": { "type": "boolean" },
+        "maxOutputBytes": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "toolResult": {
+      "type": "object",
+      "required": ["content", "isError"],
+      "properties": {
+        "content": {
+          "type": "array",
+          "items": { "$ref": "content.schema.json#/$defs/toolResultContent" },
+          "minItems": 1,
+          "maxItems": 128
+        },
+        "isError": { "type": "boolean" },
+        "terminationReason": { "enum": ["exit", "signal", "timeout", "cancelled", "output_limit", "denied", "validation_error", "internal_error"] },
+        "execution": { "$ref": "../executor.schema.json#/$defs/executionResult" },
+        "error": { "$ref": "error.schema.json#/$defs/error" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

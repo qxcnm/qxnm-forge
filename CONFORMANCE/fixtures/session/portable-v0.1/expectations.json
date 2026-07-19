@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "0.1",
+  "sessionId": "session-portable-1",
+  "beforeRecovery": {
+    "latestEventSeq": 8,
+    "afterSeq": 4,
+    "returnedEventSeqs": [5, 6, 7, 8],
+    "unfinishedRunIds": ["run-crash-1"],
+    "ambiguousNonIdempotentToolCallIds": ["tool-call-side-effect-1"],
+    "messageContext": [
+      {"role": "user", "content": [{"type": "text", "text": "Remember the token ALPHA."}]},
+      {"role": "assistant", "content": [{"type": "text", "text": "I will remember ALPHA."}]},
+      {"role": "user", "content": [{"type": "text", "text": "Perform the side effect exactly once."}]},
+      {"role": "assistant", "content": [{"type": "tool_call", "toolCallId": "tool-call-side-effect-1", "name": "process.exec", "arguments": {"executable": "side-effect", "args": ["once"]}}]}
+    ]
+  },
+  "afterRecovery": {
+    "latestEventSeq": 9,
+    "afterSeq": 4,
+    "returnedEventSeqs": [5, 6, 7, 8, 9],
+    "activeRunId": null,
+    "interruptedRunIds": ["run-crash-1"],
+    "unknownOutcomeToolCallIds": ["tool-call-side-effect-1"],
+    "automaticReplayToolCallIds": [],
+    "messageContext": [
+      {"role": "user", "content": [{"type": "text", "text": "Remember the token ALPHA."}]},
+      {"role": "assistant", "content": [{"type": "text", "text": "I will remember ALPHA."}]},
+      {"role": "user", "content": [{"type": "text", "text": "Perform the side effect exactly once."}]},
+      {"role": "assistant", "content": [{"type": "tool_call", "toolCallId": "tool-call-side-effect-1", "name": "process.exec", "arguments": {"executable": "side-effect", "args": ["once"]}}]},
+      {"role": "tool", "toolCallId": "tool-call-side-effect-1", "toolName": "process.exec", "isError": true, "content": [{"type": "text", "text": "Tool outcome is unknown after crash; the non-idempotent operation was not replayed."}]}
+    ]
+  },
+  "continuation": {
+    "input": {"role": "user", "content": [{"type": "text", "text": "What token did I ask you to remember?"}]},
+    "responseText": "The recovered token is ALPHA.",
+    "expectedContext": [
+      {"role": "user", "content": [{"type": "text", "text": "Remember the token ALPHA."}]},
+      {"role": "assistant", "content": [{"type": "text", "text": "I will remember ALPHA."}]},
+      {"role": "user", "content": [{"type": "text", "text": "Perform the side effect exactly once."}]},
+      {"role": "assistant", "content": [{"type": "tool_call", "toolCallId": "tool-call-side-effect-1", "name": "process.exec", "arguments": {"executable": "side-effect", "args": ["once"]}}]},
+      {"role": "tool", "toolCallId": "tool-call-side-effect-1", "toolName": "process.exec", "isError": true, "content": [{"type": "text", "text": "Tool outcome is unknown after crash; the non-idempotent operation was not replayed."}]},
+      {"role": "user", "content": [{"type": "text", "text": "What token did I ask you to remember?"}]}
+    ]
+  }
+}

@@ -1,0 +1,3450 @@
+{
+  "$schema": "./schemas/capability-matrix.schema.json",
+  "schemaVersion": "0.1",
+  "project": "qxnm-forge",
+  "author": {
+    "name": "高宏顺",
+    "email": "18272669457@163.com"
+  },
+  "updatedAt": "2026-07-18T12:00:00Z",
+  "defaultStatus": "unsupported",
+  "implementations": [
+    "dotnet",
+    "rust"
+  ],
+  "foundationFeatures": [
+    "domain.portable",
+    "protocol.stdio",
+    "agent.loop",
+    "agent.steering",
+    "agent.follow_up",
+    "session.journal",
+    "session.get",
+    "session.linear_continuation",
+    "session.cross_language",
+    "session.cross_language_writer_lock",
+    "session.branch",
+    "session.compaction",
+    "session.pi_v3_import",
+    "tool.file_read",
+    "tool.file_write",
+    "tool.file_edit",
+    "tool.search",
+    "executor.process",
+    "executor.shell",
+    "executor.process_tree_unix",
+    "executor.process_tree_windows",
+    "terminal.open",
+    "security.approval",
+    "security.path_boundary",
+    "security.hard_sandbox",
+    "cli.text",
+    "provider.sponsored_catalog",
+    "provider.credential_store",
+    "provider.sponsored_route",
+    "storage.application_database",
+    "ui.headless_contract"
+  ],
+  "apiFamilyScope": {
+    "families": [
+      "faux",
+      "openai-completions",
+      "mistral-conversations",
+      "openai-responses",
+      "azure-openai-responses",
+      "openai-codex-responses",
+      "anthropic-messages",
+      "bedrock-converse-stream",
+      "google-generative-ai",
+      "google-vertex",
+      "openrouter-images"
+    ],
+    "features": [
+      "text",
+      "streaming",
+      "tools",
+      "reasoning",
+      "image_input",
+      "image_output",
+      "retry",
+      "cancellation"
+    ]
+  },
+  "providerScope": {
+    "manifest": "providers.v1.json",
+    "features": [
+      "authentication",
+      "text",
+      "streaming",
+      "tools",
+      "reasoning",
+      "image_input",
+      "image_output",
+      "live_smoke"
+    ]
+  },
+  "claims": [
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "domain.portable"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/domain.rs"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "protocol.stdio"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/protocol.rs",
+        "rust/src/daemon.rs",
+        "CONFORMANCE/fixtures/golden/hello.trace.ndjson"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "agent.loop"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/agent.rs",
+        "CONFORMANCE/fixtures/golden/hello.trace.ndjson"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "agent.steering"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/daemon.rs"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "agent.follow_up"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/daemon.rs"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "session.journal"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/session.rs",
+        "CONFORMANCE/session_runner.py",
+        "CONFORMANCE/session_tail_runner.py",
+        "CONFORMANCE/fixtures/session/journal-tail-recovery-cases.json",
+        "SPEC/adr/0020-session-journal-tail-recovery.md"
+      ],
+      "notes": "共同 portable Session 与 ADR 0020 runner 已验证崩溃恢复/续接、no-LF 尾部内容寻址备份与修复、完整 LF 损坏零修改、未知 extensions、event gap、exact-one 恢复及 clean reopen 幂等。本 claim 不覆盖 backup→truncate→diagnostic 中间点崩溃原子性、未实测平台 durability、migration 或 artifact repair。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "session.get"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/session.rs",
+        "rust/src/daemon.rs",
+        "CONFORMANCE/session_runner.py",
+        "CONFORMANCE/fixtures/session/portable-v0.1/expectations.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "session.linear_continuation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/provider/faux.rs",
+        "CONFORMANCE/session_runner.py",
+        "CONFORMANCE/fixtures/session/portable-v0.1/continuation.scenario.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "session.cross_language"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/session.rs",
+        "CONFORMANCE/session_runner.py",
+        "docs/verification.md"
+      ],
+      "notes": "共同 runner 已通过 Rust→.NET→Python→TypeScript→Go 与反向五阶段 handoff；本 claim 仅覆盖 portable v0.1 linear Session，不覆盖 branch、compaction、migration 或 concurrent writer。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.file_read"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/tools.rs",
+        "CONFORMANCE/tool_runner.py",
+        "CONFORMANCE/fixtures/tools/tool-approval-cases.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.file_write"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/tools.rs",
+        "CONFORMANCE/tool_runner.py",
+        "CONFORMANCE/fixtures/tools/tool-approval-cases.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.file_edit"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/tools.rs"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.search"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/tools.rs"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "executor.process"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/executor.rs",
+        "rust/src/tools.rs",
+        "rust/src/agent.rs",
+        "CONFORMANCE/executor_runner.py",
+        "CONFORMANCE/fixtures/executor/executor-cases.json"
+      ],
+      "notes": "Linux 真实 daemon 已通过 argv、双流、bounded stdin、secret 环境隔离、timeout、output limit、非零退出和显式审批案例；Windows/macOS 证据不由本机结果外推。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "executor.shell"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/executor.rs",
+        "rust/src/tools.rs",
+        "CONFORMANCE/executor_runner.py"
+      ],
+      "notes": "Linux 真实 daemon 已通过显式 POSIX sh、分离双流与非零退出；Windows shell 仍待实机 Job Object 门禁。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "executor.process_tree_unix"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/executor.rs",
+        "CONFORMANCE/executor_runner.py",
+        "CONFORMANCE/fixtures/executor/executor_helper.py"
+      ],
+      "notes": "真实 daemon 已清理长期存活的 setsid delayed-write 回归后代；实现依赖毫秒级 `/proc` PPID/start-time 采样，无法封闭首次采样前快速 double-fork/reparent，wire 仅报告 unix_process_group，因此保持 implemented 且不外推到 macOS。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "terminal.open"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/terminal.rs",
+        "rust/src/daemon.rs",
+        "rust/src/executor.rs",
+        "CONFORMANCE/executor_runner.py",
+        "CONFORMANCE/fixtures/executor/executor-cases.json",
+        "CONFORMANCE/fixtures/executor/executor_helper.py"
+      ],
+      "notes": "仅覆盖 Linux 且 QXNM_FORGE_CONFORMANCE=1 与 QXNM_FORGE_TERMINAL_CONFORMANCE_POLICY=fixture-only 双门控的测试专用策略：PTY master/slave 以原子 O_CLOEXEC 创建，解释器绑定 runner parent executable fd identity，helper 经文件身份与冻结 SHA-256 复核后复制到完整 sealing 的 memfd snapshot，并以 Python -I、空 environment 执行；只允许 disconnectPolicy=terminate 与 terminal/close mode=terminate。真实 daemon 已通过 pty_identity_io_resize_signal、attachment_replay_and_cleanup、input_backpressure_and_atomic_rejection 三个增强动态案例。当前证据不覆盖 retain/detach、owner disconnect、daemon SIGKILL、生产 policy、hard sandbox、macOS 或 Windows/ConPTY；/proc 采样也不是强 containment，因此仅为 implemented，不构成 conformant、live-verified 或公开支持。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "security.approval"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/daemon.rs",
+        "rust/src/session.rs",
+        "SPEC/adr/0019-approval-failure-conformance.md",
+        "CONFORMANCE/tool_runner.py",
+        "CONFORMANCE/fixtures/tools/tool-approval-cases.json"
+      ],
+      "notes": "公共 15/15 动态案例通过：正常 allow/deny/取消之外，双门控 100 ms timeout 后两次 late/duplicate 固定 conflict、stdin EOF disconnect deny、success-frame stdout 交付失败保留唯一 client resolution 且零执行、SIGKILL 后重开 Session 追加 deny/disconnect 与 outcome-known 结果；全部保持零目标修改和唯一终态。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "security.path_boundary"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/path_boundary.rs",
+        "rust/src/policy.rs",
+        "rust/src/tools.rs",
+        "SPEC/adr/0021-linux-file-path-race-conformance.md",
+        "CONFORMANCE/path_boundary_runner.py",
+        "CONFORMANCE/fixtures/security/path-boundary-race-cases.json"
+      ],
+      "notes": "Rust 真实 daemon 已通过 ADR 0021 共同 6 个竞态案例与 2 个生产门禁；leaf checkpoint 前验证 1 MiB 硬上限，读取期使用 limit+1 探针，并保留 256 KiB 至 1 MiB 的 artifact 分层。状态仍为 implemented：尚未覆盖 Windows 路径语义、非 Linux fallback、file.list/file.edit/search.text、process cwd 和 mount change。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "cli.text"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/main.rs"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "faux",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/faux.rs",
+        "CONFORMANCE/fixtures/golden/hello.trace.ndjson"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "faux",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/faux.rs",
+        "CONFORMANCE/fixtures/golden/hello.trace.ndjson"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "faux",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/faux.rs",
+        "rust/src/agent.rs",
+        "CONFORMANCE/tool_runner.py",
+        "CONFORMANCE/fixtures/tools/tool-approval-cases.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openai_chat.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openai_chat.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openai_chat.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/provider_mock.py",
+        "CONFORMANCE/fixtures/provider/mock-cases.json"
+      ],
+      "notes": "共同 runner 已验证非空 family-native file.read Schema、partial arguments、唯一工具生命周期、固定成功 ToolResult 回注第二次真实 HTTP、最终文本、累计 usage 与 durable 顺序。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openai_responses.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openai_responses.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openai_responses.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/provider_mock.py",
+        "CONFORMANCE/fixtures/provider/mock-cases.json"
+      ],
+      "notes": "共同 runner 已验证非空 family-native file.read Schema、partial arguments、唯一工具生命周期、固定成功 ToolResult 回注第二次真实 HTTP、最终文本、累计 usage 与 durable 顺序。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/anthropic.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/anthropic.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/anthropic.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/provider_mock.py",
+        "CONFORMANCE/fixtures/provider/mock-cases.json"
+      ],
+      "notes": "共同 runner 已验证非空 family-native file.read Schema、partial input_json、唯一工具生命周期、固定成功 ToolResult 回注第二次真实 HTTP、最终文本、累计 usage 与 durable 顺序。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/agent.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "domain.portable"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Domain/Models.cs"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "protocol.stdio"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Protocol/ProtocolCodec.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "CONFORMANCE/fixtures/golden/hello.trace.ndjson"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "agent.loop"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "CONFORMANCE/fixtures/golden/hello.trace.ndjson"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "session.journal"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Session/PortableSessionJournal.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/PortableSessionJournalTests.cs",
+        "CONFORMANCE/session_runner.py",
+        "CONFORMANCE/session_tail_runner.py",
+        "CONFORMANCE/fixtures/session/journal-tail-recovery-cases.json",
+        "SPEC/adr/0020-session-journal-tail-recovery.md"
+      ],
+      "notes": "共同 portable Session 与 ADR 0020 runner 已验证崩溃恢复/续接、no-LF 尾部内容寻址备份与修复、完整 LF 损坏零修改、未知 extensions、event gap、exact-one 恢复及 clean reopen 幂等。本 claim 不覆盖 backup→truncate→diagnostic 中间点崩溃原子性、未实测平台 durability、migration 或 artifact repair。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "session.get"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Session/PortableSessionJournal.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "CONFORMANCE/session_runner.py",
+        "CONFORMANCE/fixtures/session/portable-v0.1/expectations.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "session.linear_continuation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/src/QxnmForge.Core/Provider/FauxProvider.cs",
+        "CONFORMANCE/session_runner.py",
+        "CONFORMANCE/fixtures/session/portable-v0.1/continuation.scenario.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "session.cross_language"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Session/PortableSessionJournal.cs",
+        "CONFORMANCE/session_runner.py",
+        "docs/verification.md"
+      ],
+      "notes": "共同 runner 已通过 Rust→.NET→Python→TypeScript→Go 与反向五阶段 handoff；本 claim 仅覆盖 portable v0.1 linear Session，不覆盖 branch、compaction、migration 或 concurrent writer。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.file_read"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs",
+        "CONFORMANCE/tool_runner.py",
+        "CONFORMANCE/fixtures/tools/tool-approval-cases.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.file_write"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs",
+        "CONFORMANCE/tool_runner.py",
+        "CONFORMANCE/fixtures/tools/tool-approval-cases.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.file_edit"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.search"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "executor.process"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Executor/ProcessExecutor.cs",
+        "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/ProcessExecutorTests.cs",
+        "CONFORMANCE/executor_runner.py",
+        "CONFORMANCE/fixtures/executor/executor-cases.json"
+      ],
+      "notes": "Linux 真实 daemon 已通过 argv、structured 双流、bounded stdin、secret 环境隔离、timeout、output limit、非零退出及显式审批；Windows/macOS 不由本机证据外推。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "executor.shell"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Executor/ProcessExecutor.cs",
+        "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs",
+        "CONFORMANCE/executor_runner.py"
+      ],
+      "notes": "Linux 真实 daemon 已通过显式 POSIX sh、分离双流和非零退出；Windows shell/Job Object 仍待实机门禁。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "executor.process_tree_unix"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Executor/ProcessExecutor.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/ProcessExecutorTests.cs",
+        "CONFORMANCE/executor_runner.py",
+        "CONFORMANCE/fixtures/executor/executor_helper.py"
+      ],
+      "notes": "真实 daemon 已清理长期存活的 setsid delayed-write 回归后代；实现依赖毫秒级 `/proc` PPID/start-time 采样，无法封闭首次采样前快速 double-fork/reparent，wire 仅报告 unix_process_group，因此保持 implemented 且不外推到 macOS。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "executor.process_tree_windows"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Executor/ProcessExecutor.cs"
+      ],
+      "notes": "当前只有进程启动后的 best-effort Job Object 绑定，尚未实现规范要求的 CREATE_SUSPENDED→配置/绑定 Job→ResumeThread 原子启动序列，wire 因此诚实保持 direct_process；Windows suspended-bind 与整树终止门禁也尚未实机运行。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "security.approval"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/src/QxnmForge.Core/Agent/ApprovalModels.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "dotnet/src/QxnmForge.Core/Session/PortableSessionJournal.cs",
+        "SPEC/adr/0019-approval-failure-conformance.md",
+        "CONFORMANCE/tool_runner.py",
+        "CONFORMANCE/fixtures/tools/tool-approval-cases.json"
+      ],
+      "notes": "公共 15/15 动态案例通过：正常 allow/deny/取消之外，双门控 100 ms timeout 后两次 late/duplicate 固定 conflict、stdin EOF disconnect deny、真实无缓冲 stdout success-frame 交付失败保留唯一 client resolution 且零执行、SIGKILL 后重开 Session 追加 deny/disconnect 与 outcome-known 结果；全部保持零目标修改和唯一终态。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "security.path_boundary"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Executor/WorkspaceBoundary.cs",
+        "dotnet/src/QxnmForge.Core/Executor/LinuxWorkspaceFileAccess.cs",
+        "dotnet/src/QxnmForge.Core/Executor/PathBoundaryConformanceBarrier.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/PathBoundaryConformanceTests.cs",
+        "SPEC/adr/0021-linux-file-path-race-conformance.md",
+        "CONFORMANCE/path_boundary_runner.py",
+        "CONFORMANCE/fixtures/security/path-boundary-race-cases.json"
+      ],
+      "notes": ".NET 真实 daemon 已通过 ADR 0021 共同 6 个竞态案例与 2 个生产门禁，形成 Linux file.read/file.write 的 root/parent/leaf 句柄固定与双门失败关闭证据。状态仍为 implemented：尚未覆盖 Windows 路径语义、非 Linux fallback、file.list/file.edit/search.text、process cwd 和 mount change。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "cli.text"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Cli/Program.cs"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "faux",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/FauxProvider.cs",
+        "CONFORMANCE/fixtures/golden/hello.trace.ndjson"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "faux",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/FauxProvider.cs",
+        "CONFORMANCE/fixtures/golden/hello.trace.ndjson"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "faux",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/FauxProvider.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "CONFORMANCE/tool_runner.py",
+        "CONFORMANCE/fixtures/tools/tool-approval-cases.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/SseDecoder.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "CONFORMANCE/fixtures/provider/mock-cases.json",
+        "CONFORMANCE/provider_mock.py",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "共同 runner 已验证非空 family-native file.read Schema、partial arguments、唯一工具生命周期、固定成功 ToolResult 回注第二次真实 HTTP、最终文本、累计 usage 与 durable 顺序。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/SseDecoder.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "CONFORMANCE/fixtures/provider/mock-cases.json",
+        "CONFORMANCE/provider_mock.py",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "共同 runner 已验证非空 family-native file.read Schema、partial arguments、唯一工具生命周期、固定成功 ToolResult 回注第二次真实 HTTP、最终文本、累计 usage 与 durable 顺序。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/AnthropicMessagesProvider.cs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/SseDecoder.cs",
+        "dotnet/src/QxnmForge.Core/Provider/AnthropicMessagesProvider.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/AnthropicMessagesProvider.cs",
+        "CONFORMANCE/fixtures/provider/mock-cases.json",
+        "CONFORMANCE/provider_mock.py",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "共同 runner 已验证非空 family-native file.read Schema、partial input_json、唯一工具生命周期、固定成功 ToolResult 回注第二次真实 HTTP、最终文本、累计 usage 与 durable 顺序。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "anthropic-messages",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/MistralConversationsProvider.cs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/MistralConversationsProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/SseDecoder.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/MistralConversationsProvider.cs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/AzureOpenAiResponsesProvider.cs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/AzureOpenAiResponsesProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/SseDecoder.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/AzureOpenAiResponsesProvider.cs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/GoogleGenerativeAiProvider.cs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/GoogleGenerativeAiProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/SseDecoder.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/GoogleGenerativeAiProvider.cs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/mistral.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/mistral.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/mistral.rs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/mistral.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "mistral-conversations",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/mistral.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/azure_responses.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/azure_responses.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/azure_responses.rs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/azure_responses.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "azure-openai-responses",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/azure_responses.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/google.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/google.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/google.rs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch2.json",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/google.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-generative-ai",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/google.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "session.cross_language_writer_lock"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/session/writer_lease.rs",
+        "CONFORMANCE/writer_lock_runner.py",
+        "CONFORMANCE/fixtures/session/writer-lock-cases.json"
+      ],
+      "notes": "Linux 本机完整有序 5×5 holder/live-reject/SIGKILL/stale-takeover/recovery/clean-release 矩阵 25/25 通过；Windows 与 macOS 尚未实际运行共同矩阵，因此按平台治理要求保守保持 implemented。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "session.branch"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/session.rs",
+        "rust/src/daemon.rs",
+        "CONFORMANCE/branch_compaction_runner.py",
+        "CONFORMANCE/fixtures/session/branch-compaction-v0.1/journal.jsonl",
+        "docs/verification.md"
+      ],
+      "notes": "公共黑盒 runner 已通过真实 branch mutation、重复 selection、七类固定错误、精确 selected projection 与 append-only continuation；正向和反向五语言 branch handoff 也已通过。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "session.compaction"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/session.rs",
+        "rust/src/agent.rs",
+        "rust/src/daemon.rs",
+        "CONFORMANCE/branch_compaction_runner.py",
+        "CONFORMANCE/fixtures/session/branch-compaction-v0.1/journal.jsonl"
+      ],
+      "notes": "公共黑盒 runner 已通过 durable summary+context.compacted、已有压缩上的第二次压缩、summary-only crash-state、边界/token/corrupt/busy 失败语义及实际 Provider context 续写。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "session.pi_v3_import"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/session/pi_v3_import.rs",
+        "rust/src/main.rs",
+        "CONFORMANCE/pi_v3_import_runner.py",
+        "CONFORMANCE/fixtures/session/pi-v3-import-v0.1/expected.journal.jsonl",
+        "rust/README.md"
+      ],
+      "notes": "共同黑盒 runner 已验证 source 不变、唯一安全 CLI 输出、20-record journal 与 mandatory report artifact 逐字节一致；Linux/glibc 另使用 RENAME_NOREPLACE 防止发布覆盖竞态，Windows/macOS 发布竞态仍待实机矩阵。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "session.cross_language_writer_lock"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Session/WriterLease.cs",
+        "CONFORMANCE/writer_lock_runner.py",
+        "CONFORMANCE/fixtures/session/writer-lock-cases.json"
+      ],
+      "notes": "Linux 本机完整有序 5×5 holder/live-reject/SIGKILL/stale-takeover/recovery/clean-release 矩阵 25/25 通过；Windows 与 macOS 尚未实际运行共同矩阵，因此按平台治理要求保守保持 implemented。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "session.branch"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Session/PortableSessionJournal.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "CONFORMANCE/branch_compaction_runner.py",
+        "CONFORMANCE/fixtures/session/branch-compaction-v0.1/journal.jsonl"
+      ],
+      "notes": "公共黑盒 runner 已通过真实 branch mutation、重复 selection、七类固定错误、精确 selected projection 与 append-only continuation。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "session.compaction"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Session/PortableSessionJournal.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionRepository.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "CONFORMANCE/branch_compaction_runner.py"
+      ],
+      "notes": "公共黑盒 runner 已通过 durable pair、已有压缩上的第二次压缩、summary-only crash-state、固定失败语义及实际 Provider context 续写。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "session.pi_v3_import"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Session/PiV3Importer.cs",
+        "dotnet/src/QxnmForge.Cli/Program.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/PiV3ImporterTests.cs",
+        "CONFORMANCE/pi_v3_import_runner.py",
+        "CONFORMANCE/fixtures/session/pi-v3-import-v0.1/expected.journal.jsonl"
+      ],
+      "notes": "共同黑盒 runner 已验证严格 CLI、source 不变、唯一目标、确定性 journal 与 mandatory report artifact 逐字节一致；.NET 专项测试覆盖严格解析、脱敏、branch/compaction 与不覆盖发布。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/GoogleVertexProvider.cs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/GoogleVertexProvider.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/GoogleVertexProvider.cs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/BedrockConverseStreamProvider.cs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/AwsEventStreamDecoder.cs",
+        "dotnet/src/QxnmForge.Core/Provider/BedrockConverseStreamProvider.cs",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "使用原生二进制 AWS EventStream 与 SigV4，验证大端长度、typed headers、双 CRC、严格 UTF-8/JSON；未用 SSE 冒充。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/BedrockConverseStreamProvider.cs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/BedrockConverseStreamProvider.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/BedrockConverseStreamProvider.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiCodexResponsesProvider.cs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiCodexResponsesProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/SseDecoder.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiCodexResponsesProvider.cs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "image_input"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openrouter_images.rs",
+        "rust/src/session.rs",
+        "CONFORMANCE/provider_image_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-images.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "image_output"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openrouter_images.rs",
+        "rust/src/agent.rs",
+        "rust/src/session.rs",
+        "CONFORMANCE/provider_image_runner.py",
+        "CONFORMANCE/fixtures/golden/openrouter-images.trace.ndjson"
+      ],
+      "notes": "fresh Rust daemon 已由主线程复验 13/13 artifact-first 图像门禁；图像完整验证后才无覆盖发布，durable 顺序固定且不产生 message.delta。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openrouter_images.rs",
+        "CONFORMANCE/provider_image_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openrouter_images.rs",
+        "CONFORMANCE/provider_image_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/openrouter_images.rs",
+        "rust/src/agent.rs",
+        "CONFORMANCE/provider_image_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "image_input"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenRouterImagesProvider.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionArtifactStore.cs",
+        "CONFORMANCE/provider_image_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-images.json"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "image_output"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenRouterImagesProvider.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionArtifactStore.cs",
+        "CONFORMANCE/provider_image_runner.py",
+        "CONFORMANCE/fixtures/golden/openrouter-images.trace.ndjson"
+      ],
+      "notes": "fresh .NET Release daemon 已由主线程复验 13/13 artifact-first 图像门禁；输入使用 no-follow/身份/hash 复核，输出不泄漏 credential、base64、data URL 或宿主路径。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenRouterImagesProvider.cs",
+        "CONFORMANCE/provider_image_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenRouterImagesProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "CONFORMANCE/provider_image_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openrouter-images",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenRouterImagesProvider.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "CONFORMANCE/provider_image_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/vertex.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/vertex.rs",
+        "rust/src/provider/google.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/vertex.rs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/vertex.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "google-vertex",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/vertex.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/bedrock.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/bedrock.rs",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "使用纯 Rust SigV4 与独立 AWS EventStream 增量 decoder，验证大端长度、typed headers、双 CRC、严格 UTF-8/JSON；未用 SSE 冒充。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/bedrock.rs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/bedrock.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "bedrock-converse-stream",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/bedrock.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/codex_responses.rs",
+        "CONFORMANCE/provider_runner.py",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/codex_responses.rs",
+        "rust/src/provider/sse.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/codex_responses.rs",
+        "CONFORMANCE/fixtures/provider/mock-cases-batch3.json"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "retry"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/codex_responses.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-codex-responses",
+        "feature": "cancellation"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider/codex_responses.rs",
+        "CONFORMANCE/provider_runner.py"
+      ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "groq",
+        "apiFamily": "openai-completions",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `groq/openai-completions` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "groq",
+        "apiFamily": "openai-completions",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `groq/openai-completions` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "groq",
+        "apiFamily": "openai-completions",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `groq/openai-completions` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "groq",
+        "apiFamily": "openai-completions",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `groq/openai-completions` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "minimax",
+        "apiFamily": "anthropic-messages",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/AnthropicMessagesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `minimax/anthropic-messages` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "minimax",
+        "apiFamily": "anthropic-messages",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/AnthropicMessagesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `minimax/anthropic-messages` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "minimax",
+        "apiFamily": "anthropic-messages",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/AnthropicMessagesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `minimax/anthropic-messages` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "minimax",
+        "apiFamily": "anthropic-messages",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/AnthropicMessagesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `minimax/anthropic-messages` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "mistral",
+        "apiFamily": "mistral-conversations",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/MistralConversationsProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `mistral/mistral-conversations` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "mistral",
+        "apiFamily": "mistral-conversations",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/MistralConversationsProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `mistral/mistral-conversations` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "mistral",
+        "apiFamily": "mistral-conversations",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/MistralConversationsProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `mistral/mistral-conversations` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "mistral",
+        "apiFamily": "mistral-conversations",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/MistralConversationsProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `mistral/mistral-conversations` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "openai",
+        "apiFamily": "openai-responses",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openai/openai-responses` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "openai",
+        "apiFamily": "openai-responses",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openai/openai-responses` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "openai",
+        "apiFamily": "openai-responses",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openai/openai-responses` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "openai",
+        "apiFamily": "openai-responses",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openai/openai-responses` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "google",
+        "apiFamily": "google-generative-ai",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/GoogleGenerativeAiProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `google/google-generative-ai` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "google",
+        "apiFamily": "google-generative-ai",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/GoogleGenerativeAiProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `google/google-generative-ai` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "google",
+        "apiFamily": "google-generative-ai",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/GoogleGenerativeAiProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `google/google-generative-ai` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "google",
+        "apiFamily": "google-generative-ai",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/GoogleGenerativeAiProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `google/google-generative-ai` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "openrouter",
+        "apiFamily": "openrouter-images",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenRouterImagesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_image_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openrouter/openrouter-images` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "openrouter",
+        "apiFamily": "openrouter-images",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenRouterImagesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_image_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openrouter/openrouter-images` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "openrouter",
+        "apiFamily": "openrouter-images",
+        "feature": "image_input"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenRouterImagesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_image_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openrouter/openrouter-images` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "provider",
+        "id": "openrouter",
+        "apiFamily": "openrouter-images",
+        "feature": "image_output"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderExecutableRouteSnapshot.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderAbstractions.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenRouterImagesProvider.cs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_image_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openrouter/openrouter-images` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "groq",
+        "apiFamily": "openai-completions",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openai_chat.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `groq/openai-completions` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "groq",
+        "apiFamily": "openai-completions",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openai_chat.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `groq/openai-completions` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "groq",
+        "apiFamily": "openai-completions",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openai_chat.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `groq/openai-completions` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "groq",
+        "apiFamily": "openai-completions",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openai_chat.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `groq/openai-completions` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "minimax",
+        "apiFamily": "anthropic-messages",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/anthropic.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `minimax/anthropic-messages` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "minimax",
+        "apiFamily": "anthropic-messages",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/anthropic.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `minimax/anthropic-messages` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "minimax",
+        "apiFamily": "anthropic-messages",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/anthropic.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `minimax/anthropic-messages` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "minimax",
+        "apiFamily": "anthropic-messages",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/anthropic.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `minimax/anthropic-messages` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "mistral",
+        "apiFamily": "mistral-conversations",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/mistral.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `mistral/mistral-conversations` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "mistral",
+        "apiFamily": "mistral-conversations",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/mistral.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `mistral/mistral-conversations` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "mistral",
+        "apiFamily": "mistral-conversations",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/mistral.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `mistral/mistral-conversations` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "mistral",
+        "apiFamily": "mistral-conversations",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/mistral.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `mistral/mistral-conversations` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "openai",
+        "apiFamily": "openai-responses",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openai_responses.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openai/openai-responses` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "openai",
+        "apiFamily": "openai-responses",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openai_responses.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openai/openai-responses` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "openai",
+        "apiFamily": "openai-responses",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openai_responses.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openai/openai-responses` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "openai",
+        "apiFamily": "openai-responses",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openai_responses.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openai/openai-responses` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "google",
+        "apiFamily": "google-generative-ai",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/google.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `google/google-generative-ai` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "google",
+        "apiFamily": "google-generative-ai",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/google.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `google/google-generative-ai` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "google",
+        "apiFamily": "google-generative-ai",
+        "feature": "streaming"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/google.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `google/google-generative-ai` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "google",
+        "apiFamily": "google-generative-ai",
+        "feature": "tools"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/google.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `google/google-generative-ai` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "openrouter",
+        "apiFamily": "openrouter-images",
+        "feature": "authentication"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openrouter_images.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_image_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openrouter/openrouter-images` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "openrouter",
+        "apiFamily": "openrouter-images",
+        "feature": "text"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openrouter_images.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_image_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openrouter/openrouter-images` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "openrouter",
+        "apiFamily": "openrouter-images",
+        "feature": "image_input"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openrouter_images.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_image_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openrouter/openrouter-images` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "provider",
+        "id": "openrouter",
+        "apiFamily": "openrouter-images",
+        "feature": "image_output"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/provider_route.rs",
+        "rust/src/agent.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/provider/openrouter_images.rs",
+        "CONFORMANCE/provider_route_runner.py",
+        "CONFORMANCE/fixtures/provider-route/route-spine-cases.json",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.requests.ndjson",
+        "CONFORMANCE/fixtures/golden/provider-route-groq.trace.ndjson",
+        "CONFORMANCE/provider_image_runner.py"
+      ],
+      "notes": "本 claim 严格限定 ADR 0018 的 `openrouter/openrouter-images` 精确 route、冻结 catalog allowlist 与 Linux offline loopback；不覆盖 sibling route、quirk、真实 credential、真实服务或 live smoke。无原子 no-follow 的平台 fail closed，且不在本 claim 范围。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "security.hard_sandbox"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/hard_sandbox.rs",
+        "rust/src/executor.rs",
+        "rust/src/tools.rs",
+        "rust/README.md",
+        "CONFORMANCE/hard_sandbox_runner.py",
+        "CONFORMANCE/fixtures/security/hard-sandbox-cases.json",
+        "SPEC/adr/0016-linux-bubblewrap-hard-sandbox.md",
+        "docs/verification.md"
+      ],
+      "notes": "本 claim 严格限定 Linux `linux-bwrap-v1`：Rust fresh 原生 daemon 已通过 6 个正例、4 个负例与 2 项生产门禁，覆盖 startup self-test、RO/RW、网络/凭据隔离、审批绑定、整树清理和 `sandbox_unavailable` 无 host fallback。生产依赖固定 `/usr/bin/bwrap` 外部系统组件；Windows/macOS 不由该结果外推。该边界是 OS namespace 而非 VM，不覆盖内核/Bubblewrap 漏洞、资源侧信道或已授权 workspace 内容；未显式请求 sandbox 的调用仍是 host executor。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "security.hard_sandbox"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Executor/HardSandboxBackend.cs",
+        "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs",
+        "dotnet/README.md",
+        "CONFORMANCE/hard_sandbox_runner.py",
+        "CONFORMANCE/fixtures/security/hard-sandbox-cases.json",
+        "SPEC/adr/0016-linux-bubblewrap-hard-sandbox.md",
+        "docs/verification.md"
+      ],
+      "notes": "本 claim 严格限定 Linux `linux-bwrap-v1`：.NET fresh 原生 daemon 已通过 6 个正例、4 个负例与 2 项生产门禁，覆盖 startup self-test、RO/RW、网络/凭据隔离、审批绑定、整树清理和 `sandbox_unavailable` 无 host fallback。生产依赖固定 `/usr/bin/bwrap` 外部系统组件；Windows/macOS 不由该结果外推。该边界是 OS namespace 而非 VM，不覆盖内核/Bubblewrap 漏洞、资源侧信道或已授权 workspace 内容；未显式请求 sandbox 的调用仍是 host executor。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.sponsored_catalog"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/sponsored_catalog.rs",
+        "rust/src/main.rs",
+        "SPEC/sponsored-provider-catalog.md",
+        "SPEC/adr/0022-signed-sponsored-provider-catalog.md",
+        "SPEC/schemas/sponsored-provider-catalog.schema.json",
+        "CONFORMANCE/sponsored_catalog_runner.py",
+        "CONFORMANCE/fixtures/golden/sponsored-catalog.verify.json"
+      ],
+      "notes": "已实现签名发布、HTTPS 获取、内容寻址缓存、离线回退、回滚/同版本冲突拒绝、推广披露与 Rust↔.NET 双向签名兼容。当前共同 runner 只覆盖双向签名、golden 输出和 payload 篡改负例，尚未对 Rust 真实 HTTPS 获取/缓存执行共同黑盒网络门禁，因此保持 implemented，不是公开支持声明；目录也不会自动注册可执行 route。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.sponsored_catalog"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/SponsoredProviderCatalog.cs",
+        "dotnet/src/QxnmForge.Cli/Program.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/SponsoredProviderCatalogTests.cs",
+        "SPEC/sponsored-provider-catalog.md",
+        "SPEC/adr/0022-signed-sponsored-provider-catalog.md",
+        "SPEC/schemas/sponsored-provider-catalog.schema.json",
+        "CONFORMANCE/sponsored_catalog_runner.py",
+        "CONFORMANCE/fixtures/golden/sponsored-catalog.verify.json"
+      ],
+      "notes": "已实现签名发布、HTTPS 获取、内容寻址缓存、离线回退、回滚/同版本冲突拒绝、推广披露与 Rust↔.NET 双向签名兼容。.NET 单测以注入 HTTP 验证 remote→offline cache；共同 runner 尚未覆盖两端真实 HTTPS 网络门禁，因此保持 implemented，不是公开支持声明；目录也不会自动注册可执行 route。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.credential_store"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/commercial_state.rs",
+        "rust/src/provider/mod.rs",
+        "rust/src/main.rs",
+        "SPEC/provider-commercial-state.md",
+        "SPEC/adr/0023-installed-sponsored-routes-and-credentials.md",
+        "SPEC/schemas/provider-credential-store.schema.json",
+        "CONFORMANCE/commercial_state_runner.py",
+        "docs/sponsored-provider-commercialization.md"
+      ],
+      "notes": "已通过双向 JSON 互操作、stdin 零回显、list/remove、Unix 0600、workspace 外边界和缺 credential Session 前拒绝。v0.1 是文件型 store；Windows DPAPI/ACL、恶意并发 writer/reparse 的共同平台门禁和 OS keychain backend 尚未完成，因此保持 implemented。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.credential_store"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderCommercialState.cs",
+        "dotnet/src/QxnmForge.Core/Provider/HttpSseProviderBase.cs",
+        "dotnet/src/QxnmForge.Cli/Program.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/ProviderCommercialStateTests.cs",
+        "SPEC/provider-commercial-state.md",
+        "SPEC/adr/0023-installed-sponsored-routes-and-credentials.md",
+        "SPEC/schemas/provider-credential-store.schema.json",
+        "CONFORMANCE/commercial_state_runner.py"
+      ],
+      "notes": "已通过双向 JSON 互操作、stdin 零回显、list/remove、Unix 0600、workspace 外边界和缺 credential Session 前拒绝。v0.1 是文件型 store；Windows DPAPI/ACL、恶意并发 writer/reparse 的共同平台门禁和 OS keychain backend 尚未完成，因此保持 implemented。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.sponsored_route"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/commercial_state.rs",
+        "rust/src/provider/openai_chat.rs",
+        "rust/src/provider/openai_responses.rs",
+        "rust/src/provider/anthropic.rs",
+        "rust/src/main.rs",
+        "SPEC/schemas/sponsored-provider-installation.schema.json",
+        "CONFORMANCE/fixtures/sponsored-provider-commercial/installed-routes.json",
+        "CONFORMANCE/commercial_state_runner.py"
+      ],
+      "notes": "已实现显式披露确认、本地 route pin、远端更新不静默变更、三种 family 原生 path 和 stored credential 请求期读取。共同 runner 当前为 10 cases/2 directions/0 network requests，尚未以共同本地 HTTPS mock 证明真实请求 header/body/stream 全链路，因此保持 implemented，不是 live 中转站支持声明。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.sponsored_route"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderCommercialState.cs",
+        "dotnet/src/QxnmForge.Core/Provider/SponsoredProviderAdapters.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Cli/Program.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/ProviderCommercialStateTests.cs",
+        "SPEC/schemas/sponsored-provider-installation.schema.json",
+        "CONFORMANCE/fixtures/sponsored-provider-commercial/installed-routes.json",
+        "CONFORMANCE/commercial_state_runner.py"
+      ],
+      "notes": "已实现显式披露确认、本地 route pin、远端更新不静默变更、三种 family 原生 path、stored credential 请求期读取，并移除 run 的 faux-only 硬限制。共同 runner 当前为 10 cases/2 directions/0 network requests，尚未以共同本地 HTTPS mock 证明真实请求 header/body/stream 全链路，因此保持 implemented。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "storage.application_database"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/storage.rs",
+        "rust/Cargo.toml",
+        "SPEC/storage.md",
+        "SPEC/schemas/storage-config.schema.json",
+        "SPEC/adr/0026-open-pro-product-split-and-storage.md"
+      ],
+      "notes": "SeaORM 已实现默认 SQLite application.db、forge_metadata 逻辑版本与远程 provider fail-closed；MySQL/PostgreSQL driver 和共同 migration/CRUD runner 尚未完成，因此只登记 implemented。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "storage.application_database"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Storage/ApplicationDatabase.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/ApplicationDatabaseTests.cs",
+        "dotnet/src/QxnmForge.Core/QxnmForge.Core.csproj",
+        "SPEC/storage.md",
+        "SPEC/schemas/storage-config.schema.json",
+        "SPEC/adr/0026-open-pro-product-split-and-storage.md"
+      ],
+      "notes": "EF Core 已实现默认 SQLite application.db、forge_metadata 逻辑版本与远程 provider fail-closed；MySQL/PostgreSQL adapter 和共同 migration/CRUD runner 尚未完成，因此只登记 implemented。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "ui.headless_contract"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/daemon.rs",
+        "rust/src/protocol.rs",
+        "SPEC/ui.md",
+        "ui/README.md"
+      ],
+      "notes": "现有 JSON-RPC/NDJSON 后端可作为未来 React UI 的 application service 基线；浏览器 HTTP/WebSocket 认证、event replay 与可运行前端尚未实现。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "ui.headless_contract"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "dotnet/src/QxnmForge.Core/Protocol/ProtocolModels.cs",
+        "SPEC/ui.md",
+        "ui/README.md"
+      ],
+      "notes": "现有 JSON-RPC/NDJSON 后端可作为未来 React UI 的 application service 基线；浏览器 HTTP/WebSocket 认证、event replay 与可运行前端尚未实现。"
+    }
+  ]
+}

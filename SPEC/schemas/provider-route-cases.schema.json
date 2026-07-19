@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-conformance:provider-route-spine-cases:0.1",
+  "title": "Provider executable route spine conformance cases",
+  "$comment": "功能：约束六条 canonical executable route、catalog descriptor、原生 request target 与失败关闭案例。作者：高宏顺；邮箱：18272669457@163.com",
+  "type": "object",
+  "required": ["$schema", "schemaVersion", "counts", "routes", "negativeCases"],
+  "properties": {
+    "$schema": { "const": "../../../SPEC/schemas/provider-route-cases.schema.json" },
+    "schemaVersion": { "const": "0.1" },
+    "counts": {
+      "type": "object",
+      "required": ["routes", "textRoutes", "imageRoutes", "negativeCases"],
+      "properties": {
+        "routes": { "const": 6 },
+        "textRoutes": { "const": 5 },
+        "imageRoutes": { "const": 1 },
+        "negativeCases": { "const": 9 }
+      },
+      "additionalProperties": false
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/route" }
+    },
+    "negativeCases": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": { "$ref": "#/$defs/negativeCase" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "maxLength": 128
+    },
+    "providerId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$",
+      "maxLength": 128
+    },
+    "apiFamily": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "maxLength": 128
+    },
+    "requestTarget": {
+      "type": "object",
+      "required": ["pathSuffix", "requiredQuery"],
+      "properties": {
+        "pathSuffix": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._~:/-]+$",
+          "maxLength": 1024
+        },
+        "requiredQuery": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._~-]+$",
+            "maxLength": 64
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._~-]+$",
+            "maxLength": 256
+          },
+          "maxProperties": 4
+        }
+      },
+      "additionalProperties": false
+    },
+    "route": {
+      "type": "object",
+      "required": [
+        "name", "providerId", "apiFamily", "adapterId", "modelId",
+        "credentialEnv", "mockFixture", "mockFamily", "mockCase",
+        "requestTarget", "productionModelCount", "providerFeatures",
+        "expectedDescriptor"
+      ],
+      "properties": {
+        "name": { "$ref": "#/$defs/slug" },
+        "providerId": { "$ref": "#/$defs/providerId" },
+        "apiFamily": { "$ref": "#/$defs/apiFamily" },
+        "adapterId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "maxLength": 128
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "credentialEnv": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{1,127}$"
+        },
+        "mockFixture": {
+          "enum": [
+            "mock-cases.json",
+            "mock-cases-batch2.json",
+            "mock-cases-images.json"
+          ]
+        },
+        "mockFamily": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "maxLength": 128
+        },
+        "mockCase": {
+          "enum": ["text_success", "success_png_text"]
+        },
+        "requestTarget": { "$ref": "#/$defs/requestTarget" },
+        "productionModelCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1076
+        },
+        "providerFeatures": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "authentication",
+              "text",
+              "streaming",
+              "tools",
+              "image_input",
+              "image_output"
+            ]
+          },
+          "minItems": 3,
+          "uniqueItems": true
+        },
+        "expectedDescriptor": {
+          "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/model.schema.json#/$defs/model"
+        }
+      },
+      "additionalProperties": false
+    },
+    "negativeCase": {
+      "type": "object",
+      "required": ["name", "kind", "expected"],
+      "properties": {
+        "name": { "$ref": "#/$defs/slug" },
+        "kind": {
+          "enum": [
+            "missing_credential",
+            "wrong_family",
+            "unknown_model",
+            "unlisted_route_config",
+            "production_presence",
+            "endpoint_non_loopback",
+            "config_unknown_field",
+            "config_duplicate_key",
+            "wire_duplicate_key"
+          ]
+        },
+        "expected": {
+          "type": "object",
+          "properties": {
+            "startupRejected": { "const": true },
+            "errorCode": { "enum": [-32700, -32602, -32005] },
+            "errorKind": {
+              "enum": ["invalid_params", "provider_unavailable"]
+            },
+            "advertised": { "const": false },
+            "sessionCreated": { "const": false }
+          },
+          "minProperties": 1,
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/artifact.schema.json",
+  "title": "qxnm-forge artifact reference",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/artifactReference",
+  "$defs": {
+    "artifactReference": {
+      "type": "object",
+      "required": ["artifactId", "mediaType", "byteLength", "sha256"],
+      "properties": {
+        "artifactId": {
+          "$ref": "../common.schema.json#/$defs/opaqueId"
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"
+        },
+        "byteLength": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "sha256": {
+          "$ref": "../common.schema.json#/$defs/sha256"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "extensions": {
+          "$ref": "../common.schema.json#/$defs/extensions"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

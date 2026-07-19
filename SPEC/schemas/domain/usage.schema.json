@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/usage.schema.json",
+  "title": "qxnm-forge normalized model usage",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/usage",
+  "$defs": {
+    "money": {
+      "type": "object",
+      "required": ["currency", "amount"],
+      "properties": {
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "amount": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,12})?$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "usage": {
+      "type": "object",
+      "required": ["inputTokens", "outputTokens", "totalTokens"],
+      "properties": {
+        "inputTokens": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "outputTokens": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "totalTokens": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "cachedInputTokens": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "cacheWriteTokens": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "reasoningTokens": {
+          "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger"
+        },
+        "cost": {
+          "$ref": "#/$defs/money"
+        },
+        "extensions": {
+          "$ref": "../common.schema.json#/$defs/extensions"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

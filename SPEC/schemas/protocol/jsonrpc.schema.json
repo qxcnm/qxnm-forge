@@ -1,0 +1,607 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json",
+  "title": "qxnm-forge JSON-RPC 2.0 protocol v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/successResponse" },
+    { "$ref": "#/$defs/errorResponse" },
+    { "$ref": "event.schema.json#/$defs/notification" },
+    { "$ref": "terminal.schema.json#/$defs/notification" }
+  ],
+  "$defs": {
+    "client": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "additionalProperties": false
+    },
+    "clientCapabilities": {
+      "type": "object",
+      "properties": {
+        "eventReplay": { "type": "boolean" },
+        "interactiveApprovals": { "type": "boolean" },
+        "terminalEvents": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "implementation": {
+      "type": "object",
+      "required": ["name", "version", "language"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "language": { "enum": ["dotnet", "rust", "go", "typescript", "python"] }
+      },
+      "additionalProperties": false
+    },
+    "providerCapability": {
+      "type": "object",
+      "required": ["id", "models"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
+        "models": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "serverCapabilities": {
+      "type": "object",
+      "required": ["methods", "eventTypes", "providers", "tools", "transports"],
+      "properties": {
+        "methods": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "initialize",
+              "faux/configure",
+              "run/start",
+              "run/cancel",
+              "run/steer",
+              "run/followUp",
+              "approval/respond",
+              "session/get",
+              "session/branch/select",
+              "session/compact",
+              "terminal/open",
+              "terminal/write",
+              "terminal/resize",
+              "terminal/signal",
+              "terminal/attach",
+              "terminal/close",
+              "models/list",
+              "server/shutdown"
+            ]
+          },
+          "contains": { "const": "initialize" },
+          "uniqueItems": true
+        },
+        "eventTypes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "run.started",
+              "turn.started",
+              "turn.completed",
+              "message.started",
+              "message.delta",
+              "message.completed",
+              "tool.requested",
+              "approval.requested",
+              "approval.resolved",
+              "tool.started",
+              "tool.delta",
+              "tool.completed",
+              "retry.scheduled",
+              "context.compacted",
+              "run.completed",
+              "run.failed",
+              "run.cancelled",
+              "run.interrupted"
+            ]
+          },
+          "allOf": [
+            { "contains": { "const": "run.completed" } },
+            { "contains": { "const": "run.failed" } },
+            { "contains": { "const": "run.cancelled" } },
+            { "contains": { "const": "run.interrupted" } }
+          ],
+          "uniqueItems": true
+        },
+        "terminalEventTypes": {
+          "type": "array",
+          "items": {
+            "enum": ["terminal.output", "terminal.truncated", "terminal.exited", "terminal.closed"]
+          },
+          "uniqueItems": true
+        },
+        "providers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/providerCapability" },
+          "minItems": 1,
+          "contains": { "properties": { "id": { "const": "faux" } }, "required": ["id"] }
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+          "uniqueItems": true
+        },
+        "transports": {
+          "type": "array",
+          "items": { "enum": ["stdio", "unix_socket", "named_pipe", "websocket"] },
+          "contains": { "const": "stdio" },
+          "uniqueItems": true
+        },
+        "hardSandbox": { "$ref": "../hard-sandbox.schema.json#/$defs/capability" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": ["maxFrameBytes", "maxEventBytes", "maxArtifactBytes", "maxConcurrentRuns"],
+      "properties": {
+        "maxFrameBytes": { "type": "integer", "minimum": 1024, "maximum": 1073741824 },
+        "maxEventBytes": { "type": "integer", "minimum": 1024, "maximum": 1073741824 },
+        "maxArtifactBytes": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "maxConcurrentRuns": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      },
+      "additionalProperties": false
+    },
+    "initializeParams": {
+      "type": "object",
+      "required": ["protocolVersions", "client", "capabilities"],
+      "properties": {
+        "protocolVersions": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$", "maxLength": 16 },
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true
+        },
+        "client": { "$ref": "#/$defs/client" },
+        "capabilities": { "$ref": "#/$defs/clientCapabilities" }
+      },
+      "additionalProperties": false
+    },
+    "initializeResult": {
+      "type": "object",
+      "required": ["protocolVersion", "implementation", "capabilities", "limits"],
+      "properties": {
+        "protocolVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$", "maxLength": 16 },
+        "implementation": { "$ref": "#/$defs/implementation" },
+        "capabilities": { "$ref": "#/$defs/serverCapabilities" },
+        "limits": { "$ref": "#/$defs/limits" }
+      },
+      "additionalProperties": false
+    },
+    "runStartParams": {
+      "type": "object",
+      "required": ["sessionId", "input", "provider"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "input": { "$ref": "../domain/message.schema.json#/$defs/inputMessage" },
+        "provider": { "$ref": "../domain/model.schema.json#/$defs/providerSelection" },
+        "options": {
+          "type": "object",
+          "properties": {
+            "thinking": { "enum": ["off", "minimal", "low", "medium", "high", "xhigh"] },
+            "toolExecution": { "enum": ["sequential", "parallel"] },
+            "steeringMode": { "enum": ["all", "one_at_a_time"] },
+            "followUpMode": { "enum": ["all", "one_at_a_time"] },
+            "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+          },
+          "additionalProperties": false
+        },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runStartResult": {
+      "type": "object",
+      "required": ["runId"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" }
+      },
+      "additionalProperties": false
+    },
+    "runRef": {
+      "type": "object",
+      "required": ["sessionId", "runId"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" }
+      },
+      "additionalProperties": false
+    },
+    "queueParams": {
+      "type": "object",
+      "required": ["sessionId", "runId", "input"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "input": { "$ref": "../domain/message.schema.json#/$defs/inputMessage" }
+      },
+      "additionalProperties": false
+    },
+    "acceptedResult": {
+      "type": "object",
+      "required": ["accepted"],
+      "properties": {
+        "accepted": { "const": true },
+        "queueItemId": { "$ref": "../common.schema.json#/$defs/opaqueId" }
+      },
+      "additionalProperties": false
+    },
+    "cancelResult": {
+      "type": "object",
+      "required": ["cancellationState"],
+      "properties": {
+        "cancellationState": { "enum": ["requested", "alreadyRequested", "terminal"] }
+      },
+      "additionalProperties": false
+    },
+    "approvalRespondParams": {
+      "type": "object",
+      "required": ["sessionId", "runId", "approvalId", "decision"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "approvalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "decision": { "$ref": "../domain/approval.schema.json#/$defs/approvalDecision" }
+      },
+      "additionalProperties": false
+    },
+    "fauxConfigureParams": {
+      "type": "object",
+      "required": ["sessionId", "scenario"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "scenario": { "$ref": "faux-scenario.schema.json#/$defs/scenario" }
+      },
+      "additionalProperties": false
+    },
+    "fauxConfigureResult": {
+      "type": "object",
+      "required": ["scenarioId"],
+      "properties": {
+        "scenarioId": { "type": "string", "pattern": "^faux:[A-Za-z0-9][A-Za-z0-9._-]*$", "maxLength": 133 }
+      },
+      "additionalProperties": false
+    },
+    "sessionGetParams": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "afterSeq": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "sessionGetResult": {
+      "type": "object",
+      "required": ["sessionId", "latestSeq", "activeRunId", "messages"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "latestSeq": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "activeRunId": {
+          "oneOf": [
+            { "$ref": "../common.schema.json#/$defs/opaqueId" },
+            { "type": "null" }
+          ]
+        },
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "../domain/message.schema.json#/$defs/message" }
+        },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "event.schema.json#/$defs/event" }
+        },
+        "selectedHeadRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "compactionRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "sessionBranchSelectParams": {
+      "type": "object",
+      "required": ["sessionId", "expectedHeadRecordId", "targetLeafRecordId"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "expectedHeadRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "targetLeafRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" }
+      },
+      "additionalProperties": false
+    },
+    "sessionBranchSelectResult": {
+      "type": "object",
+      "required": ["targetLeafRecordId", "selectionRecordId", "selectedHeadRecordId"],
+      "properties": {
+        "targetLeafRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "selectionRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "selectedHeadRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" }
+      },
+      "additionalProperties": false
+    },
+    "sessionCompactParams": {
+      "type": "object",
+      "required": [
+        "sessionId", "expectedHeadRecordId", "firstRetainedRecordId", "summaryText",
+        "provider", "usage", "tokensBefore", "tokensAfter", "strategy"
+      ],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "expectedHeadRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "firstRetainedRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "summaryText": { "type": "string", "minLength": 1, "maxLength": 262144 },
+        "provider": { "$ref": "../domain/model.schema.json#/$defs/providerSelection" },
+        "usage": { "$ref": "../domain/usage.schema.json#/$defs/usage" },
+        "tokensBefore": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "tokensAfter": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "strategy": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "sessionCompactResult": {
+      "type": "object",
+      "required": [
+        "summaryMessageId", "summaryRecordId", "compactionRecordId", "selectedHeadRecordId"
+      ],
+      "properties": {
+        "summaryMessageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "summaryRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "compactionRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "selectedHeadRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" }
+      },
+      "additionalProperties": false
+    },
+    "modelsListParams": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "modelsListResult": {
+      "type": "object",
+      "required": ["models"],
+      "properties": {
+        "models": {
+          "type": "array",
+          "items": { "$ref": "../domain/model.schema.json#/$defs/model" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "shutdownParams": {
+      "type": "object",
+      "required": ["graceful"],
+      "properties": {
+        "graceful": { "type": "boolean" },
+        "timeoutMs": { "type": "integer", "minimum": 0, "maximum": 300000 }
+      },
+      "additionalProperties": false
+    },
+    "shutdownResult": {
+      "type": "object",
+      "required": ["accepted"],
+      "properties": {
+        "accepted": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "terminalOpenRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "terminal/open" },
+        "params": { "$ref": "terminal.schema.json#/$defs/openParams" }
+      }
+    },
+    "terminalWriteRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "terminal/write" },
+        "params": { "$ref": "terminal.schema.json#/$defs/writeParams" }
+      }
+    },
+    "terminalResizeRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "terminal/resize" },
+        "params": { "$ref": "terminal.schema.json#/$defs/resizeParams" }
+      }
+    },
+    "terminalSignalRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "terminal/signal" },
+        "params": { "$ref": "terminal.schema.json#/$defs/signalParams" }
+      }
+    },
+    "terminalAttachRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "terminal/attach" },
+        "params": { "$ref": "terminal.schema.json#/$defs/attachParams" }
+      }
+    },
+    "terminalCloseRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "terminal/close" },
+        "params": { "$ref": "terminal.schema.json#/$defs/closeParams" }
+      }
+    },
+    "terminalOpenResult": { "$ref": "terminal.schema.json#/$defs/openResult" },
+    "terminalWriteResult": { "$ref": "terminal.schema.json#/$defs/writeResult" },
+    "terminalResizeResult": { "$ref": "terminal.schema.json#/$defs/resizeResult" },
+    "terminalAttachResult": { "$ref": "terminal.schema.json#/$defs/attachResult" },
+    "initializeRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "initialize" },
+        "params": { "$ref": "#/$defs/initializeParams" }
+      }
+    },
+    "fauxConfigureRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "faux/configure" },
+        "params": { "$ref": "#/$defs/fauxConfigureParams" }
+      }
+    },
+    "runStartRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "run/start" },
+        "params": { "$ref": "#/$defs/runStartParams" }
+      }
+    },
+    "runCancelRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "run/cancel" },
+        "params": { "$ref": "#/$defs/runRef" }
+      }
+    },
+    "runSteerRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "run/steer" },
+        "params": { "$ref": "#/$defs/queueParams" }
+      }
+    },
+    "runFollowUpRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "run/followUp" },
+        "params": { "$ref": "#/$defs/queueParams" }
+      }
+    },
+    "approvalRespondRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "approval/respond" },
+        "params": { "$ref": "#/$defs/approvalRespondParams" }
+      }
+    },
+    "sessionGetRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "session/get" },
+        "params": { "$ref": "#/$defs/sessionGetParams" }
+      }
+    },
+    "sessionBranchSelectRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "session/branch/select" },
+        "params": { "$ref": "#/$defs/sessionBranchSelectParams" }
+      }
+    },
+    "sessionCompactRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "session/compact" },
+        "params": { "$ref": "#/$defs/sessionCompactParams" }
+      }
+    },
+    "modelsListRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "models/list" },
+        "params": { "$ref": "#/$defs/modelsListParams" }
+      }
+    },
+    "shutdownRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "server/shutdown" },
+        "params": { "$ref": "#/$defs/shutdownParams" }
+      }
+    },
+    "baseRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "../common.schema.json#/$defs/jsonRpcId" },
+        "method": { "$ref": "../common.schema.json#/$defs/methodName" },
+        "params": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "request": {
+      "oneOf": [
+        { "$ref": "#/$defs/initializeRequest" },
+        { "$ref": "#/$defs/fauxConfigureRequest" },
+        { "$ref": "#/$defs/runStartRequest" },
+        { "$ref": "#/$defs/runCancelRequest" },
+        { "$ref": "#/$defs/runSteerRequest" },
+        { "$ref": "#/$defs/runFollowUpRequest" },
+        { "$ref": "#/$defs/approvalRespondRequest" },
+        { "$ref": "#/$defs/sessionGetRequest" },
+        { "$ref": "#/$defs/sessionBranchSelectRequest" },
+        { "$ref": "#/$defs/sessionCompactRequest" },
+        { "$ref": "#/$defs/terminalOpenRequest" },
+        { "$ref": "#/$defs/terminalWriteRequest" },
+        { "$ref": "#/$defs/terminalResizeRequest" },
+        { "$ref": "#/$defs/terminalSignalRequest" },
+        { "$ref": "#/$defs/terminalAttachRequest" },
+        { "$ref": "#/$defs/terminalCloseRequest" },
+        { "$ref": "#/$defs/modelsListRequest" },
+        { "$ref": "#/$defs/shutdownRequest" }
+      ]
+    },
+    "successResult": {
+      "oneOf": [
+        { "$ref": "#/$defs/initializeResult" },
+        { "$ref": "#/$defs/fauxConfigureResult" },
+        { "$ref": "#/$defs/runStartResult" },
+        { "$ref": "#/$defs/acceptedResult" },
+        { "$ref": "#/$defs/cancelResult" },
+        { "$ref": "#/$defs/sessionGetResult" },
+        { "$ref": "#/$defs/sessionBranchSelectResult" },
+        { "$ref": "#/$defs/sessionCompactResult" },
+        { "$ref": "#/$defs/terminalOpenResult" },
+        { "$ref": "#/$defs/terminalWriteResult" },
+        { "$ref": "#/$defs/terminalResizeResult" },
+        { "$ref": "#/$defs/terminalAttachResult" },
+        { "$ref": "#/$defs/modelsListResult" }
+      ]
+    },
+    "successResponse": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "result"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "../common.schema.json#/$defs/jsonRpcId" },
+        "result": { "$ref": "#/$defs/successResult" }
+      },
+      "additionalProperties": false
+    },
+    "errorResponse": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "error"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": {
+          "oneOf": [
+            { "$ref": "../common.schema.json#/$defs/jsonRpcId" },
+            { "type": "null" }
+          ]
+        },
+        "error": { "$ref": "../domain/error.schema.json#/$defs/error" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

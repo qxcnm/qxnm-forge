@@ -1,0 +1,413 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/session/journal.schema.json",
+  "title": "qxnm-forge portable session journal line v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "oneOf": [
+    { "$ref": "#/$defs/header" },
+    { "$ref": "#/$defs/record" }
+  ],
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "required": ["source", "sourceSha256"],
+      "properties": {
+        "source": { "enum": ["native", "pi-session-v3", "migration"] },
+        "sourceSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "sourceSha256": { "$ref": "../common.schema.json#/$defs/sha256" },
+        "referenceCommit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "reportArtifactId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "source": { "const": "pi-session-v3" } },
+            "required": ["source"]
+          },
+          "then": {
+            "required": ["sourceSessionId", "referenceCommit", "reportArtifactId"],
+            "properties": {
+              "referenceCommit": {
+                "const": "3f9aa5d10b35223abf6146f960ff5cb5c68053ee"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "header": {
+      "type": "object",
+      "required": ["kind", "schemaVersion", "sessionId", "createdAt", "workspace"],
+      "properties": {
+        "kind": { "const": "session" },
+        "schemaVersion": { "const": "0.1" },
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "createdAt": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "workspace": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "createdBy": {
+          "type": "object",
+          "required": ["name", "version", "language"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "language": { "enum": ["dotnet", "rust", "go", "typescript", "python"] }
+          },
+          "additionalProperties": false
+        },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runRefData": {
+      "type": "object",
+      "required": ["runId"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "messageData": {
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "message": { "$ref": "../domain/message.schema.json#/$defs/message" },
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "turnId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "eventData": {
+      "type": "object",
+      "required": ["event"],
+      "properties": {
+        "event": { "$ref": "../protocol/event.schema.json#/$defs/event" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runAcceptedData": {
+      "type": "object",
+      "required": ["runId", "inputMessageId", "provider"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "inputMessageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "provider": { "$ref": "../domain/model.schema.json#/$defs/providerSelection" },
+        "fauxScenarioRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runTerminalData": {
+      "type": "object",
+      "required": ["runId", "status"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "status": { "enum": ["completed", "failed", "cancelled", "interrupted"] },
+        "usage": { "$ref": "../domain/usage.schema.json#/$defs/usage" },
+        "error": { "$ref": "../domain/error.schema.json#/$defs/error" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "enum": ["failed", "interrupted"] } } },
+          "then": { "required": ["error"] }
+        },
+        {
+          "if": { "properties": { "status": { "const": "completed" } } },
+          "then": { "required": ["usage"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "turnData": {
+      "type": "object",
+      "required": ["runId", "turnId"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "turnId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "finishReason": { "enum": ["stop", "length", "tool_use", "error", "cancelled", "interrupted"] },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "providerAttemptData": {
+      "type": "object",
+      "required": ["runId", "turnId", "attempt", "status"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "turnId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "status": { "enum": ["started", "completed", "failed", "cancelled", "interrupted"] },
+        "error": { "$ref": "../domain/error.schema.json#/$defs/error" },
+        "retryAfterMs": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "toolIntentData": {
+      "type": "object",
+      "required": ["runId", "turnId", "toolCallId", "name", "arguments", "idempotent", "status"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "turnId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "arguments": { "type": "object" },
+        "idempotent": { "type": "boolean" },
+        "status": { "enum": ["prepared", "awaiting_approval", "approved", "denied", "started", "rejected"] },
+        "operationHash": { "$ref": "../common.schema.json#/$defs/sha256" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "toolResultData": {
+      "type": "object",
+      "required": ["runId", "turnId", "toolCallId", "result", "outcomeKnown"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "turnId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "result": { "$ref": "../domain/tool.schema.json#/$defs/toolResult" },
+        "outcomeKnown": { "type": "boolean" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "outcomeKnown": { "const": false } },
+            "required": ["outcomeKnown"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "allOf": [
+                  {
+                    "properties": {
+                      "isError": { "const": true },
+                      "terminationReason": { "const": "internal_error" }
+                    },
+                    "required": ["isError", "terminationReason"]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "approvalRequestedData": {
+      "type": "object",
+      "required": ["runId", "approval"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "approval": { "$ref": "../domain/approval.schema.json#/$defs/approvalRequest" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "approvalResolvedData": {
+      "type": "object",
+      "required": ["runId", "approvalId", "decision", "resolutionSource"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "approvalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "decision": { "$ref": "../domain/approval.schema.json#/$defs/approvalDecision" },
+        "resolutionSource": { "enum": ["client", "policy", "timeout", "cancellation", "disconnect"] },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runCancellationRequestedData": {
+      "type": "object",
+      "required": ["runId"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "queueAppendedData": {
+      "type": "object",
+      "required": ["runId", "queueItemId", "queue", "input"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "queueItemId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "queue": { "enum": ["steering", "follow_up"] },
+        "input": { "$ref": "../domain/message.schema.json#/$defs/inputMessage" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "queueConsumedData": {
+      "type": "object",
+      "required": ["runId", "queueItemIds", "queue", "turnId"],
+      "properties": {
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "queueItemIds": {
+          "type": "array",
+          "items": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+          "minItems": 1,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "queue": { "enum": ["steering", "follow_up"] },
+        "turnId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "compactionData": {
+      "type": "object",
+      "required": ["sourceLeafRecordId", "summaryMessageId", "firstRetainedRecordId", "tokensBefore", "strategy"],
+      "properties": {
+        "sourceLeafRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "summaryMessageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "firstRetainedRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "tokensBefore": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "tokensAfter": { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "strategy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "modelSelectedData": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": {
+        "provider": { "$ref": "../domain/model.schema.json#/$defs/providerSelection" },
+        "thinking": { "enum": ["off", "minimal", "low", "medium", "high", "xhigh"] },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "sessionMetadataData": {
+      "type": "object",
+      "properties": {
+        "name": { "type": ["string", "null"], "maxLength": 256 },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "branchSelectedData": {
+      "type": "object",
+      "required": ["leafRecordId"],
+      "properties": {
+        "leafRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "artifactCreatedData": {
+      "type": "object",
+      "required": ["artifact"],
+      "properties": {
+        "artifact": { "$ref": "../domain/artifact.schema.json#/$defs/artifactReference" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "fauxConfiguredData": {
+      "type": "object",
+      "required": ["scenarioId", "scenario"],
+      "properties": {
+        "scenarioId": { "type": "string", "pattern": "^faux:[A-Za-z0-9][A-Za-z0-9._-]*$", "maxLength": 133 },
+        "scenario": { "$ref": "../protocol/faux-scenario.schema.json#/$defs/scenario" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "recoveryExtensionValue": {
+      "type": "object",
+      "required": ["action", "discardedBytes", "backupFile", "originalSha256"],
+      "properties": {
+        "action": { "const": "truncate_uncommitted_tail" },
+        "discardedBytes": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "backupFile": {
+          "type": "string",
+          "pattern": "^journal\\.recovery-[a-f0-9]{64}\\.bak$"
+        },
+        "originalSha256": { "$ref": "../common.schema.json#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "extensionData": {
+      "type": "object",
+      "required": ["namespace", "value"],
+      "properties": {
+        "namespace": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9-]+)+$", "maxLength": 256 },
+        "value": true
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "namespace": { "const": "org.agent-session.recovery" } },
+            "required": ["namespace"]
+          },
+          "then": {
+            "properties": { "value": { "$ref": "#/$defs/recoveryExtensionValue" } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "record": {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "recordId", "sessionId", "seq", "parentId", "time", "data"],
+      "properties": {
+        "schemaVersion": { "const": "0.1" },
+        "kind": {
+          "enum": [
+            "message.appended", "event.emitted", "run.accepted", "run.started", "run.cancellation_requested", "run.terminal",
+            "turn.started", "turn.completed", "provider.attempt", "tool.intent",
+            "tool.result", "approval.requested", "approval.resolved", "queue.appended",
+            "queue.consumed", "context.compacted", "model.selected", "session.metadata",
+            "branch.selected", "artifact.created", "faux.configured", "extension"
+          ]
+        },
+        "recordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "seq": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "parentId": {
+          "oneOf": [
+            { "$ref": "../common.schema.json#/$defs/opaqueId" },
+            { "type": "null" }
+          ]
+        },
+        "time": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "data": { "type": "object" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "message.appended" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/messageData" } } } },
+        { "if": { "properties": { "kind": { "const": "event.emitted" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/eventData" } } } },
+        { "if": { "properties": { "kind": { "const": "run.accepted" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/runAcceptedData" } } } },
+        { "if": { "properties": { "kind": { "const": "run.started" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/runRefData" } } } },
+        { "if": { "properties": { "kind": { "const": "run.cancellation_requested" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/runCancellationRequestedData" } } } },
+        { "if": { "properties": { "kind": { "const": "run.terminal" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/runTerminalData" } } } },
+        { "if": { "properties": { "kind": { "enum": ["turn.started", "turn.completed"] } } }, "then": { "properties": { "data": { "$ref": "#/$defs/turnData" } } } },
+        { "if": { "properties": { "kind": { "const": "provider.attempt" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/providerAttemptData" } } } },
+        { "if": { "properties": { "kind": { "const": "tool.intent" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/toolIntentData" } } } },
+        { "if": { "properties": { "kind": { "const": "tool.result" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/toolResultData" } } } },
+        { "if": { "properties": { "kind": { "const": "approval.requested" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/approvalRequestedData" } } } },
+        { "if": { "properties": { "kind": { "const": "approval.resolved" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/approvalResolvedData" } } } },
+        { "if": { "properties": { "kind": { "const": "queue.appended" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/queueAppendedData" } } } },
+        { "if": { "properties": { "kind": { "const": "queue.consumed" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/queueConsumedData" } } } },
+        { "if": { "properties": { "kind": { "const": "context.compacted" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/compactionData" } } } },
+        { "if": { "properties": { "kind": { "const": "model.selected" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/modelSelectedData" } } } },
+        { "if": { "properties": { "kind": { "const": "session.metadata" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/sessionMetadataData" } } } },
+        { "if": { "properties": { "kind": { "const": "branch.selected" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/branchSelectedData" } } } },
+        { "if": { "properties": { "kind": { "const": "artifact.created" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/artifactCreatedData" } } } },
+        { "if": { "properties": { "kind": { "const": "faux.configured" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/fauxConfiguredData" } } } },
+        { "if": { "properties": { "kind": { "const": "extension" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/extensionData" } } } }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

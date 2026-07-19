@@ -1,0 +1,9 @@
+{"jsonrpc":"2.0","id":"init","result":{"protocolVersion":"0.1","implementation":{"name":"<implementation>","version":"<version>","language":"<language>"},"capabilities":{"providers":[{"id":"openrouter","models":[]}]},"limits":{"maxArtifactBytes":1073741824}}}
+{"jsonrpc":"2.0","id":"start","result":{"runId":"<run>"}}
+{"jsonrpc":"2.0","method":"event","params":{"sessionId":"image-session","runId":"<run>","seq":1,"time":"<time>","type":"run.started","data":{}}}
+{"jsonrpc":"2.0","method":"event","params":{"sessionId":"image-session","runId":"<run>","turnId":"<turn>","seq":2,"time":"<time>","type":"turn.started","data":{}}}
+{"jsonrpc":"2.0","method":"event","params":{"sessionId":"image-session","runId":"<run>","turnId":"<turn>","seq":3,"time":"<time>","type":"message.started","data":{"messageId":"<message>","role":"assistant"}}}
+{"journalKind":"artifact.created","before":"message.appended","artifact":{"artifactId":"<artifact>","mediaType":"image/png","byteLength":28,"sha256":"<sha256>"}}
+{"journalKind":"message.appended","assistantContent":[{"type":"text","text":"已生成。"},{"type":"image_ref","artifact":{"artifactId":"<artifact>","mediaType":"image/png","byteLength":28,"sha256":"<sha256>"}}]}
+{"jsonrpc":"2.0","method":"event","params":{"sessionId":"image-session","runId":"<run>","turnId":"<turn>","seq":4,"time":"<time>","type":"message.completed","data":{"messageId":"<message>","finishReason":"stop","usage":{"inputTokens":7,"outputTokens":5,"totalTokens":12}}}}
+{"jsonrpc":"2.0","method":"event","params":{"sessionId":"image-session","runId":"<run>","seq":5,"time":"<time>","type":"run.completed","data":{"status":"completed","usage":{"inputTokens":7,"outputTokens":5,"totalTokens":12}}}}

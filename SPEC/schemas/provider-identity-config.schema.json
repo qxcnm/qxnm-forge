@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-conformance:provider-identity-presence-config:0.1",
+  "title": "Provider identity advertisement presence configuration",
+  "$comment": "功能：约束离线 Provider 身份广告门禁使用的无值 presence 配置；配置仅表达存在性，不承载 credential 或 endpoint 值。作者：高宏顺；邮箱：18272669457@163.com",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "implementedAdapterIds",
+    "capabilityAllowances",
+    "usableAuthProfiles",
+    "configuredEnvironmentNames"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "implementedAdapterIds": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/slug" },
+      "uniqueItems": true
+    },
+    "capabilityAllowances": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/capabilityAllowance" },
+      "uniqueItems": true
+    },
+    "usableAuthProfiles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/authRef" },
+      "uniqueItems": true
+    },
+    "configuredEnvironmentNames": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/envName" },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "maxLength": 128
+    },
+    "providerId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$",
+      "maxLength": 128
+    },
+    "envName": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,127}$"
+    },
+    "routeRef": {
+      "type": "object",
+      "required": ["providerId", "apiFamily"],
+      "properties": {
+        "providerId": { "$ref": "#/$defs/providerId" },
+        "apiFamily": { "$ref": "#/$defs/slug" }
+      },
+      "additionalProperties": false
+    },
+    "authRef": {
+      "type": "object",
+      "required": ["providerId", "authProfileId"],
+      "properties": {
+        "providerId": { "$ref": "#/$defs/providerId" },
+        "authProfileId": { "$ref": "#/$defs/slug" }
+      },
+      "additionalProperties": false
+    },
+    "capabilityAllowance": {
+      "type": "object",
+      "required": ["providerId", "apiFamily", "features"],
+      "properties": {
+        "providerId": { "$ref": "#/$defs/providerId" },
+        "apiFamily": { "$ref": "#/$defs/slug" },
+        "features": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "authentication",
+              "text",
+              "streaming",
+              "tools",
+              "reasoning",
+              "image_input",
+              "image_output"
+            ]
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

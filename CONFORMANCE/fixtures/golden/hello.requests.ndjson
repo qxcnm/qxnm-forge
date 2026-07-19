@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","id":"initialize-1","method":"initialize","params":{"protocolVersions":["0.1"],"client":{"name":"conformance-runner","version":"0.1.0"},"capabilities":{}}}
+{"jsonrpc":"2.0","id":"faux-configure-1","method":"faux/configure","params":{"sessionId":"conformance-session-1","scenario":{"schemaVersion":"0.1","name":"hello-v1","seed":20260710,"steps":[{"type":"text","text":"Hello from faux. 你好，世界。"}],"usage":{"inputTokens":8,"outputTokens":9,"totalTokens":17}}}}
+{"jsonrpc":"2.0","id":"run-start-1","method":"run/start","params":{"sessionId":"conformance-session-1","input":{"role":"user","content":[{"type":"text","text":"Say hello deterministically."}]},"provider":{"id":"faux","modelId":"faux-v1"}}}

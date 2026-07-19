@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/message.schema.json",
+  "title": "qxnm-forge portable messages",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/message",
+  "$defs": {
+    "inputMessage": {
+      "type": "object",
+      "required": ["role", "content"],
+      "properties": {
+        "role": { "const": "user" },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "content.schema.json#/$defs/inputContent" },
+          "minItems": 1,
+          "maxItems": 128
+        },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "userMessage": {
+      "type": "object",
+      "required": ["messageId", "role", "content", "time"],
+      "properties": {
+        "messageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "role": { "const": "user" },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "content.schema.json#/$defs/inputContent" },
+          "minItems": 1,
+          "maxItems": 128
+        },
+        "time": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "assistantMessage": {
+      "type": "object",
+      "required": ["messageId", "role", "content", "provider", "finishReason", "usage", "time"],
+      "properties": {
+        "messageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "role": { "const": "assistant" },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "content.schema.json#/$defs/assistantContent" },
+          "maxItems": 1024
+        },
+        "provider": { "$ref": "model.schema.json#/$defs/providerSelection" },
+        "responseId": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "finishReason": { "enum": ["stop", "length", "tool_use", "error", "cancelled", "interrupted"] },
+        "usage": { "$ref": "usage.schema.json#/$defs/usage" },
+        "error": { "$ref": "error.schema.json#/$defs/error" },
+        "time": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "toolResultMessage": {
+      "type": "object",
+      "required": ["messageId", "role", "toolCallId", "toolName", "content", "isError", "time"],
+      "properties": {
+        "messageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "role": { "const": "tool" },
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "toolName": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "content.schema.json#/$defs/toolResultContent" },
+          "minItems": 1,
+          "maxItems": 128
+        },
+        "isError": { "type": "boolean" },
+        "time": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "message": {
+      "oneOf": [
+        { "$ref": "#/$defs/userMessage" },
+        { "$ref": "#/$defs/assistantMessage" },
+        { "$ref": "#/$defs/toolResultMessage" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/executor.schema.json",
+  "title": "qxnm-forge portable process and shell execution contract",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "oneOf": [
+    { "$ref": "#/$defs/processExec" },
+    { "$ref": "#/$defs/shellExec" },
+    { "$ref": "#/$defs/executionResult" }
+  ],
+  "$defs": {
+    "environmentSetEntry": {
+      "type": "object",
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "$ref": "#/$defs/environmentName" },
+        "value": { "type": "string", "maxLength": 65536 }
+      },
+      "additionalProperties": false
+    },
+    "environmentUnsetEntry": {
+      "type": "object",
+      "required": ["name", "unset"],
+      "properties": {
+        "name": { "$ref": "#/$defs/environmentName" },
+        "unset": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "environmentEntry": {
+      "oneOf": [
+        { "$ref": "#/$defs/environmentSetEntry" },
+        { "$ref": "#/$defs/environmentUnsetEntry" }
+      ]
+    },
+    "environmentName": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "maxLength": 256
+    },
+    "stdin": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": { "type": { "const": "none" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "text"],
+          "properties": {
+            "type": { "const": "text" },
+            "text": { "type": "string", "maxLength": 1048576 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "artifactId"],
+          "properties": {
+            "type": { "const": "artifact" },
+            "artifactId": { "$ref": "common.schema.json#/$defs/opaqueId" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "required": ["timeoutMs", "stdoutBytes", "stderrBytes", "totalOutputBytes"],
+      "properties": {
+        "startTimeoutMs": { "type": "integer", "minimum": 1, "maximum": 300000 },
+        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 86400000 },
+        "terminationGraceMs": { "type": "integer", "minimum": 0, "maximum": 30000 },
+        "stdoutBytes": { "$ref": "common.schema.json#/$defs/positiveSafeInteger" },
+        "stderrBytes": { "$ref": "common.schema.json#/$defs/positiveSafeInteger" },
+        "totalOutputBytes": { "$ref": "common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "common": {
+      "type": "object",
+      "required": ["cwd", "stdin", "environment", "limits"],
+      "properties": {
+        "cwd": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "stdin": { "$ref": "#/$defs/stdin" },
+        "environment": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/environmentEntry" },
+          "maxItems": 1024
+        },
+        "limits": { "$ref": "#/$defs/limits" },
+        "sandbox": { "$ref": "hard-sandbox.schema.json#/$defs/request" },
+        "extensions": { "$ref": "common.schema.json#/$defs/extensions" }
+      }
+    },
+    "processExec": {
+      "$ref": "#/$defs/common",
+      "required": ["type", "executable", "args"],
+      "properties": {
+        "type": { "const": "process.exec" },
+        "executable": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "args": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 1048576 },
+          "maxItems": 4096
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "shellExec": {
+      "$ref": "#/$defs/common",
+      "required": ["type", "shell", "command"],
+      "properties": {
+        "type": { "const": "shell.exec" },
+        "shell": { "enum": ["bash", "sh", "pwsh", "powershell", "cmd"] },
+        "command": { "type": "string", "minLength": 1, "maxLength": 1048576 }
+      },
+      "unevaluatedProperties": false
+    },
+    "streamCapture": {
+      "type": "object",
+      "required": [
+        "encoding", "text", "capturedBytes", "totalBytes", "omittedBytes", "truncated"
+      ],
+      "properties": {
+        "encoding": { "const": "utf-8-replacement" },
+        "text": { "type": "string", "maxLength": 1048576 },
+        "capturedBytes": { "$ref": "common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "totalBytes": { "$ref": "common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "omittedBytes": { "$ref": "common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "truncated": { "type": "boolean" },
+        "artifact": { "$ref": "domain/artifact.schema.json#/$defs/artifactReference" },
+        "extensions": { "$ref": "common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "executionResult": {
+      "type": "object",
+      "required": [
+        "exitCode", "signal", "terminationReason", "durationMs", "containment", "stdout", "stderr"
+      ],
+      "properties": {
+        "exitCode": {
+          "oneOf": [
+            { "type": "integer", "minimum": -2147483648, "maximum": 4294967295 },
+            { "type": "null" }
+          ]
+        },
+        "signal": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+            { "type": "null" }
+          ]
+        },
+        "terminationReason": {
+          "enum": ["exit", "signal", "timeout", "cancelled", "output_limit"]
+        },
+        "durationMs": { "$ref": "common.schema.json#/$defs/nonNegativeSafeInteger" },
+        "containment": {
+          "enum": [
+            "unix_process_group",
+            "unix_process_group_descendant_guard",
+            "windows_job_suspended_bind",
+            "os_isolation",
+            "direct_process"
+          ]
+        },
+        "stdout": { "$ref": "#/$defs/streamCapture" },
+        "stderr": { "$ref": "#/$defs/streamCapture" },
+        "extensions": { "$ref": "common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/domain.schema.json",
+  "title": "qxnm-forge aggregate portable domain object",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>. Consumers should prefer the specific referenced schema when the DTO type is known.",
+  "oneOf": [
+    { "$ref": "content.schema.json#/$defs/content" },
+    { "$ref": "message.schema.json#/$defs/message" },
+    { "$ref": "model.schema.json#/$defs/model" },
+    { "$ref": "tool.schema.json#/$defs/toolDefinition" },
+    { "$ref": "tool.schema.json#/$defs/toolResult" },
+    { "$ref": "approval.schema.json#/$defs/approvalRequest" },
+    { "$ref": "approval.schema.json#/$defs/approvalDecision" },
+    { "$ref": "artifact.schema.json#/$defs/artifactReference" },
+    { "$ref": "usage.schema.json#/$defs/usage" },
+    { "$ref": "error.schema.json#/$defs/error" }
+  ]
+}

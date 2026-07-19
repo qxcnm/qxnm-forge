@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>qxnm-forge-dotnet</AssemblyName>
+    <RootNamespace>QxnmForge.Cli</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../QxnmForge.Core/QxnmForge.Core.csproj" />
+  </ItemGroup>
+</Project>

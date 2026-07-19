@@ -1,0 +1,19 @@
+# Rust and .NET build output
+/rust/target/
+**/bin/
+**/obj/
+
+# Python/test/editor caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.idea/
+.vscode/
+
+# Runtime state, local databases and secrets
+*.db
+*.db-shm
+*.db-wal
+.env
+

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "0.1",
+  "name": "tool-call-v1",
+  "seed": 7,
+  "steps": [
+    {
+      "type": "text",
+      "text": "Inspecting the requested file."
+    },
+    {
+      "type": "tool_call",
+      "toolCallId": "faux-call-1",
+      "name": "file.read",
+      "arguments": {
+        "path": "资料/🙂.txt"
+      }
+    },
+    {
+      "type": "text",
+      "text": "Done."
+    }
+  ],
+  "usage": {
+    "inputTokens": 4,
+    "outputTokens": 11,
+    "totalTokens": 15
+  }
+}

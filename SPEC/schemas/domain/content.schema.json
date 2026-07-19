@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/content.schema.json",
+  "title": "qxnm-forge portable content blocks",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/content",
+  "$defs": {
+    "text": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "reasoning": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "reasoning" },
+        "text": { "type": "string" },
+        "redacted": { "type": "boolean" },
+        "signature": { "type": "string", "maxLength": 1048576 },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "imageReference": {
+      "type": "object",
+      "required": ["type", "artifact"],
+      "properties": {
+        "type": { "const": "image_ref" },
+        "artifact": { "$ref": "artifact.schema.json#/$defs/artifactReference" },
+        "alt": { "type": "string", "maxLength": 4096 },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "artifactContent": {
+      "type": "object",
+      "required": ["type", "artifact"],
+      "properties": {
+        "type": { "const": "artifact_ref" },
+        "artifact": { "$ref": "artifact.schema.json#/$defs/artifactReference" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "toolCall": {
+      "type": "object",
+      "required": ["type", "toolCallId", "name", "arguments"],
+      "properties": {
+        "type": { "const": "tool_call" },
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "arguments": { "type": "object" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "textDelta": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "reasoningDelta": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "reasoning" },
+        "text": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "toolArgumentsDelta": {
+      "type": "object",
+      "required": ["type", "toolCallId", "jsonFragment"],
+      "properties": {
+        "type": { "const": "tool_arguments" },
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "jsonFragment": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "inputContent": {
+      "oneOf": [
+        { "$ref": "#/$defs/text" },
+        { "$ref": "#/$defs/imageReference" },
+        { "$ref": "#/$defs/artifactContent" }
+      ]
+    },
+    "assistantContent": {
+      "oneOf": [
+        { "$ref": "#/$defs/text" },
+        { "$ref": "#/$defs/reasoning" },
+        { "$ref": "#/$defs/imageReference" },
+        { "$ref": "#/$defs/toolCall" }
+      ]
+    },
+    "toolResultContent": {
+      "oneOf": [
+        { "$ref": "#/$defs/text" },
+        { "$ref": "#/$defs/imageReference" },
+        { "$ref": "#/$defs/artifactContent" }
+      ]
+    },
+    "delta": {
+      "oneOf": [
+        { "$ref": "#/$defs/textDelta" },
+        { "$ref": "#/$defs/reasoningDelta" },
+        { "$ref": "#/$defs/toolArgumentsDelta" }
+      ]
+    },
+    "content": {
+      "oneOf": [
+        { "$ref": "#/$defs/inputContent" },
+        { "$ref": "#/$defs/reasoning" },
+        { "$ref": "#/$defs/toolCall" }
+      ]
+    }
+  }
+}

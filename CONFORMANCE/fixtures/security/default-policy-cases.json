@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "0.1",
+  "cases": [
+    {
+      "name": "workspace_read_interactive",
+      "mode": "interactive",
+      "policy": "default",
+      "action": "file.read",
+      "pathScope": "inside_workspace",
+      "expected": "allow"
+    },
+    {
+      "name": "workspace_write_interactive",
+      "mode": "interactive",
+      "policy": "default",
+      "action": "file.write",
+      "pathScope": "inside_workspace",
+      "expected": "ask"
+    },
+    {
+      "name": "process_headless_without_policy",
+      "mode": "headless",
+      "policy": "missing",
+      "action": "process.exec",
+      "pathScope": "inside_workspace",
+      "expected": "deny"
+    },
+    {
+      "name": "shell_headless_without_policy",
+      "mode": "headless",
+      "policy": "missing",
+      "action": "shell.exec",
+      "pathScope": "inside_workspace",
+      "expected": "deny"
+    },
+    {
+      "name": "read_outside_workspace",
+      "mode": "interactive",
+      "policy": "default",
+      "action": "file.read",
+      "pathScope": "outside_workspace",
+      "expected": "deny"
+    }
+  ]
+}

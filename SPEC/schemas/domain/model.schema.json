@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/model.schema.json",
+  "title": "qxnm-forge normalized model descriptor",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/model",
+  "$defs": {
+    "providerSelection": {
+      "type": "object",
+      "required": ["id", "modelId"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
+        "modelId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "apiFamily": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128 },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["input", "output", "streaming", "tools", "reasoning"],
+      "properties": {
+        "input": {
+          "type": "array",
+          "items": { "enum": ["text", "image"] },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "output": {
+          "type": "array",
+          "items": { "enum": ["text", "image"] },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "streaming": { "type": "boolean" },
+        "tools": { "type": "boolean" },
+        "reasoning": { "type": "boolean" },
+        "contextTokens": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "maxOutputTokens": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "required": ["providerId", "modelId", "displayName", "apiFamily", "capabilities"],
+      "properties": {
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
+        "modelId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "apiFamily": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128 },
+        "capabilities": { "$ref": "#/$defs/capabilities" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

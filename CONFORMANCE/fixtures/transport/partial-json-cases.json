@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "0.1",
+  "cases": [
+    {
+      "name": "tool_arguments_split_at_every_kind_of_boundary",
+      "chunksHex": [
+        "7b22617267756d656e7473223a227b5c22706174685c223a5c22",
+        "e8b584e696992ff09f",
+        "99822e7478745c227d227d"
+      ],
+      "expected": [
+        {
+          "arguments": "{\"path\":\"资料/🙂.txt\"}"
+        }
+      ]
+    },
+    {
+      "name": "two_adjacent_values",
+      "chunksHex": [
+        "7b2261223a317d20",
+        "7b2262223a327d"
+      ],
+      "expected": [
+        {
+          "a": 1
+        },
+        {
+          "b": 2
+        }
+      ]
+    },
+    {
+      "name": "incomplete_value",
+      "chunksHex": [
+        "7b2261223a"
+      ],
+      "error": "incomplete JSON value"
+    }
+  ]
+}

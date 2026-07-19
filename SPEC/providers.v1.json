@@ -1,0 +1,1896 @@
+{
+  "$schema": "./schemas/provider-manifest.schema.json",
+  "schemaVersion": "0.2",
+  "manifestDigestAlgorithm": "sha256-canonical-json-excluding-manifest-digest-v1",
+  "manifestSha256": "7b420d7b1ff89248be186525cb6da9cb038a29b16dcb4d5339a68ce5f0e615d1",
+  "project": "qxnm-forge",
+  "author": {
+    "name": "高宏顺",
+    "email": "18272669457@163.com"
+  },
+  "reference": {
+    "project": "PI",
+    "commit": "3f9aa5d10b35223abf6146f960ff5cb5c68053ee",
+    "license": "MIT"
+  },
+  "textApiFamilies": [
+    "openai-completions",
+    "mistral-conversations",
+    "openai-responses",
+    "azure-openai-responses",
+    "openai-codex-responses",
+    "anthropic-messages",
+    "bedrock-converse-stream",
+    "google-generative-ai",
+    "google-vertex"
+  ],
+  "imageApiFamilies": [
+    "openrouter-images"
+  ],
+  "adapters": [
+    {
+      "id": "openai-completions-v1",
+      "apiFamily": "openai-completions"
+    },
+    {
+      "id": "mistral-conversations-v1",
+      "apiFamily": "mistral-conversations"
+    },
+    {
+      "id": "openai-responses-v1",
+      "apiFamily": "openai-responses"
+    },
+    {
+      "id": "azure-openai-responses-v1",
+      "apiFamily": "azure-openai-responses"
+    },
+    {
+      "id": "openai-codex-responses-v1",
+      "apiFamily": "openai-codex-responses"
+    },
+    {
+      "id": "anthropic-messages-v1",
+      "apiFamily": "anthropic-messages"
+    },
+    {
+      "id": "bedrock-converse-stream-v1",
+      "apiFamily": "bedrock-converse-stream"
+    },
+    {
+      "id": "google-generative-ai-v1",
+      "apiFamily": "google-generative-ai"
+    },
+    {
+      "id": "google-vertex-v1",
+      "apiFamily": "google-vertex"
+    },
+    {
+      "id": "openrouter-images-v1",
+      "apiFamily": "openrouter-images"
+    }
+  ],
+  "modelCatalogs": [
+    {
+      "id": "pi-v1-frozen",
+      "path": "./models.v1.json",
+      "sourceCommit": "3f9aa5d10b35223abf6146f960ff5cb5c68053ee"
+    }
+  ],
+  "headerPolicies": [
+    {
+      "id": "api-family-default",
+      "credentialPlacement": "api-family",
+      "fixedHeaders": "none"
+    },
+    {
+      "id": "api-family-default-with-model-headers",
+      "credentialPlacement": "api-family",
+      "fixedHeaders": "model-catalog"
+    },
+    {
+      "id": "cloudflare-ai-gateway",
+      "credentialPlacement": "cloudflare-aig-authorization",
+      "fixedHeaders": "none"
+    }
+  ],
+  "providers": [
+    {
+      "id": "amazon-bedrock",
+      "environment": [
+        {
+          "name": "AWS_ACCESS_KEY_ID",
+          "role": "secret"
+        },
+        {
+          "name": "AWS_BEARER_TOKEN_BEDROCK",
+          "role": "secret"
+        },
+        {
+          "name": "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+          "role": "credential-endpoint"
+        },
+        {
+          "name": "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+          "role": "credential-endpoint"
+        },
+        {
+          "name": "AWS_DEFAULT_REGION",
+          "role": "configuration"
+        },
+        {
+          "name": "AWS_PROFILE",
+          "role": "credential-selector"
+        },
+        {
+          "name": "AWS_REGION",
+          "role": "configuration"
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "role": "secret"
+        },
+        {
+          "name": "AWS_SESSION_TOKEN",
+          "role": "secret"
+        },
+        {
+          "name": "AWS_WEB_IDENTITY_TOKEN_FILE",
+          "role": "credential-file"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "aws-default-chain",
+          "kind": "aws-credential-chain",
+          "environment": [
+            "AWS_ACCESS_KEY_ID",
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+            "AWS_PROFILE",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_WEB_IDENTITY_TOKEN_FILE"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "bedrock-converse-stream",
+          "adapterId": "bedrock-converse-stream-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [
+              "AWS_DEFAULT_REGION",
+              "AWS_REGION"
+            ],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "aws-default-chain"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "ant-ling",
+      "environment": [
+        {
+          "name": "ANT_LING_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "ANT_LING_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "maxTokensField",
+            "supportsDeveloperRole",
+            "supportsLongCacheRetention",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "environment": [
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "role": "secret"
+        },
+        {
+          "name": "ANTHROPIC_OAUTH_TOKEN",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "environment-token",
+          "kind": "api-key",
+          "environment": [
+            "ANTHROPIC_OAUTH_TOKEN",
+            "ANTHROPIC_API_KEY"
+          ]
+        },
+        {
+          "id": "interactive-oauth",
+          "kind": "oauth",
+          "environment": []
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "environment-token",
+            "interactive-oauth"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "forceAdaptiveThinking",
+            "supportsTemperature"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "azure-openai-responses",
+      "environment": [
+        {
+          "name": "AZURE_OPENAI_API_KEY",
+          "role": "secret"
+        },
+        {
+          "name": "AZURE_OPENAI_API_VERSION",
+          "role": "configuration"
+        },
+        {
+          "name": "AZURE_OPENAI_BASE_URL",
+          "role": "configuration"
+        },
+        {
+          "name": "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+          "role": "configuration"
+        },
+        {
+          "name": "AZURE_OPENAI_RESOURCE_NAME",
+          "role": "configuration"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "AZURE_OPENAI_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "azure-openai-responses",
+          "adapterId": "azure-openai-responses-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [
+              "AZURE_OPENAI_BASE_URL",
+              "AZURE_OPENAI_RESOURCE_NAME"
+            ],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "cerebras",
+      "environment": [
+        {
+          "name": "CEREBRAS_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "CEREBRAS_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "supportsDeveloperRole",
+            "supportsStore"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cloudflare-ai-gateway",
+      "environment": [
+        {
+          "name": "CLOUDFLARE_ACCOUNT_ID",
+          "role": "configuration"
+        },
+        {
+          "name": "CLOUDFLARE_API_KEY",
+          "role": "secret"
+        },
+        {
+          "name": "CLOUDFLARE_GATEWAY_ID",
+          "role": "configuration"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "cloudflare-token",
+          "kind": "cloudflare-token",
+          "environment": [
+            "CLOUDFLARE_API_KEY",
+            "CLOUDFLARE_ACCOUNT_ID",
+            "CLOUDFLARE_GATEWAY_ID"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [
+              {
+                "variable": "CLOUDFLARE_ACCOUNT_ID",
+                "environment": [
+                  "CLOUDFLARE_ACCOUNT_ID"
+                ],
+                "valuePattern": "cloudflare-identifier-v1"
+              },
+              {
+                "variable": "CLOUDFLARE_GATEWAY_ID",
+                "environment": [
+                  "CLOUDFLARE_GATEWAY_ID"
+                ],
+                "valuePattern": "cloudflare-identifier-v1"
+              }
+            ],
+            "runtimeEndpointEnv": [
+              "CLOUDFLARE_ACCOUNT_ID",
+              "CLOUDFLARE_GATEWAY_ID"
+            ],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "cloudflare-token"
+          ],
+          "headerPolicyId": "cloudflare-ai-gateway",
+          "quirks": [
+            "forceAdaptiveThinking",
+            "sendSessionAffinityHeaders",
+            "supportsTemperature"
+          ]
+        },
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [
+              {
+                "variable": "CLOUDFLARE_ACCOUNT_ID",
+                "environment": [
+                  "CLOUDFLARE_ACCOUNT_ID"
+                ],
+                "valuePattern": "cloudflare-identifier-v1"
+              },
+              {
+                "variable": "CLOUDFLARE_GATEWAY_ID",
+                "environment": [
+                  "CLOUDFLARE_GATEWAY_ID"
+                ],
+                "valuePattern": "cloudflare-identifier-v1"
+              }
+            ],
+            "runtimeEndpointEnv": [
+              "CLOUDFLARE_ACCOUNT_ID",
+              "CLOUDFLARE_GATEWAY_ID"
+            ],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "cloudflare-token"
+          ],
+          "headerPolicyId": "cloudflare-ai-gateway",
+          "quirks": [
+            "maxTokensField",
+            "sendSessionAffinityHeaders",
+            "supportsDeveloperRole",
+            "supportsLongCacheRetention",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "supportsStrictMode"
+          ]
+        },
+        {
+          "media": "text",
+          "apiFamily": "openai-responses",
+          "adapterId": "openai-responses-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [
+              {
+                "variable": "CLOUDFLARE_ACCOUNT_ID",
+                "environment": [
+                  "CLOUDFLARE_ACCOUNT_ID"
+                ],
+                "valuePattern": "cloudflare-identifier-v1"
+              },
+              {
+                "variable": "CLOUDFLARE_GATEWAY_ID",
+                "environment": [
+                  "CLOUDFLARE_GATEWAY_ID"
+                ],
+                "valuePattern": "cloudflare-identifier-v1"
+              }
+            ],
+            "runtimeEndpointEnv": [
+              "CLOUDFLARE_ACCOUNT_ID",
+              "CLOUDFLARE_GATEWAY_ID"
+            ],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "cloudflare-token"
+          ],
+          "headerPolicyId": "cloudflare-ai-gateway",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "cloudflare-workers-ai",
+      "environment": [
+        {
+          "name": "CLOUDFLARE_ACCOUNT_ID",
+          "role": "configuration"
+        },
+        {
+          "name": "CLOUDFLARE_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "cloudflare-token",
+          "kind": "cloudflare-token",
+          "environment": [
+            "CLOUDFLARE_API_KEY",
+            "CLOUDFLARE_ACCOUNT_ID"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [
+              {
+                "variable": "CLOUDFLARE_ACCOUNT_ID",
+                "environment": [
+                  "CLOUDFLARE_ACCOUNT_ID"
+                ],
+                "valuePattern": "cloudflare-identifier-v1"
+              }
+            ],
+            "runtimeEndpointEnv": [
+              "CLOUDFLARE_ACCOUNT_ID"
+            ],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "cloudflare-token"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "sendSessionAffinityHeaders",
+            "supportsDeveloperRole",
+            "supportsLongCacheRetention",
+            "supportsStore"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "environment": [
+        {
+          "name": "DEEPSEEK_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "DEEPSEEK_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "requiresReasoningContentOnAssistantMessages",
+            "supportsDeveloperRole",
+            "supportsStore",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fireworks",
+      "environment": [
+        {
+          "name": "FIREWORKS_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "FIREWORKS_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "sendSessionAffinityHeaders",
+            "supportsCacheControlOnTools",
+            "supportsEagerToolInputStreaming",
+            "supportsLongCacheRetention"
+          ]
+        },
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "supportsDeveloperRole",
+            "supportsStore"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "github-copilot",
+      "environment": [
+        {
+          "name": "COPILOT_GITHUB_TOKEN",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "environment-token",
+          "kind": "api-key",
+          "environment": [
+            "COPILOT_GITHUB_TOKEN"
+          ]
+        },
+        {
+          "id": "interactive-oauth",
+          "kind": "oauth",
+          "environment": []
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "environment-token",
+            "interactive-oauth"
+          ],
+          "headerPolicyId": "api-family-default-with-model-headers",
+          "quirks": [
+            "forceAdaptiveThinking",
+            "supportsEagerToolInputStreaming",
+            "supportsTemperature"
+          ]
+        },
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "environment-token",
+            "interactive-oauth"
+          ],
+          "headerPolicyId": "api-family-default-with-model-headers",
+          "quirks": [
+            "supportsDeveloperRole",
+            "supportsReasoningEffort",
+            "supportsStore"
+          ]
+        },
+        {
+          "media": "text",
+          "apiFamily": "openai-responses",
+          "adapterId": "openai-responses-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "environment-token",
+            "interactive-oauth"
+          ],
+          "headerPolicyId": "api-family-default-with-model-headers",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "google",
+      "environment": [
+        {
+          "name": "GEMINI_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "GEMINI_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "google-generative-ai",
+          "adapterId": "google-generative-ai-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "google-vertex",
+      "environment": [
+        {
+          "name": "GCLOUD_PROJECT",
+          "role": "configuration"
+        },
+        {
+          "name": "GOOGLE_APPLICATION_CREDENTIALS",
+          "role": "credential-file"
+        },
+        {
+          "name": "GOOGLE_CLOUD_API_KEY",
+          "role": "secret"
+        },
+        {
+          "name": "GOOGLE_CLOUD_LOCATION",
+          "role": "configuration"
+        },
+        {
+          "name": "GOOGLE_CLOUD_PROJECT",
+          "role": "configuration"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "GOOGLE_CLOUD_API_KEY",
+            "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_CLOUD_PROJECT",
+            "GCLOUD_PROJECT"
+          ]
+        },
+        {
+          "id": "application-default",
+          "kind": "google-application-default",
+          "environment": [
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_CLOUD_PROJECT",
+            "GCLOUD_PROJECT"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "google-vertex",
+          "adapterId": "google-vertex-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [
+              {
+                "variable": "location",
+                "environment": [
+                  "GOOGLE_CLOUD_LOCATION"
+                ],
+                "valuePattern": "google-location-v1"
+              }
+            ],
+            "runtimeEndpointEnv": [
+              "GOOGLE_CLOUD_LOCATION"
+            ],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key",
+            "application-default"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "groq",
+      "environment": [
+        {
+          "name": "GROQ_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "GROQ_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "huggingface",
+      "environment": [
+        {
+          "name": "HF_TOKEN",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "HF_TOKEN"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "supportsDeveloperRole"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kimi-coding",
+      "environment": [
+        {
+          "name": "KIMI_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "KIMI_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default-with-model-headers",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "minimax",
+      "environment": [
+        {
+          "name": "MINIMAX_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "MINIMAX_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "minimax-cn",
+      "environment": [
+        {
+          "name": "MINIMAX_CN_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "MINIMAX_CN_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "mistral",
+      "environment": [
+        {
+          "name": "MISTRAL_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "MISTRAL_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "mistral-conversations",
+          "adapterId": "mistral-conversations-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "moonshotai",
+      "environment": [
+        {
+          "name": "MOONSHOT_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "MOONSHOT_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "maxTokensField",
+            "supportsDeveloperRole",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "supportsStrictMode",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "moonshotai-cn",
+      "environment": [
+        {
+          "name": "MOONSHOT_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "MOONSHOT_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "maxTokensField",
+            "supportsDeveloperRole",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "supportsStrictMode",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nvidia",
+      "environment": [
+        {
+          "name": "NVIDIA_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "NVIDIA_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default-with-model-headers",
+          "quirks": [
+            "maxTokensField",
+            "supportsDeveloperRole",
+            "supportsLongCacheRetention",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "supportsStrictMode"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openai",
+      "environment": [
+        {
+          "name": "OPENAI_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "OPENAI_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-responses",
+          "adapterId": "openai-responses-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "openai-codex",
+      "environment": [],
+      "authProfiles": [
+        {
+          "id": "interactive-oauth",
+          "kind": "oauth",
+          "environment": []
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-codex-responses",
+          "adapterId": "openai-codex-responses-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "interactive-oauth"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "opencode",
+      "environment": [
+        {
+          "name": "OPENCODE_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "OPENCODE_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "forceAdaptiveThinking",
+            "supportsTemperature"
+          ]
+        },
+        {
+          "media": "text",
+          "apiFamily": "google-generative-ai",
+          "adapterId": "google-generative-ai-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        },
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "maxTokensField",
+            "requiresReasoningContentOnAssistantMessages",
+            "supportsDeveloperRole",
+            "supportsLongCacheRetention",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "thinkingFormat"
+          ]
+        },
+        {
+          "media": "text",
+          "apiFamily": "openai-responses",
+          "adapterId": "openai-responses-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        }
+      ]
+    },
+    {
+      "id": "opencode-go",
+      "environment": [
+        {
+          "name": "OPENCODE_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "OPENCODE_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        },
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "maxTokensField",
+            "requiresReasoningContentOnAssistantMessages",
+            "supportsDeveloperRole",
+            "supportsLongCacheRetention",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openrouter",
+      "environment": [
+        {
+          "name": "OPENROUTER_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "OPENROUTER_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "image",
+          "apiFamily": "openrouter-images",
+          "adapterId": "openrouter-images-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": []
+        },
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "cacheControlFormat",
+            "requiresReasoningContentOnAssistantMessages",
+            "supportsDeveloperRole",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "together",
+      "environment": [
+        {
+          "name": "TOGETHER_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "TOGETHER_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "maxTokensField",
+            "supportsDeveloperRole",
+            "supportsLongCacheRetention",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "supportsStrictMode",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vercel-ai-gateway",
+      "environment": [
+        {
+          "name": "AI_GATEWAY_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "AI_GATEWAY_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "anthropic-messages",
+          "adapterId": "anthropic-messages-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "forceAdaptiveThinking",
+            "supportsTemperature"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "xai",
+      "environment": [
+        {
+          "name": "XAI_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "XAI_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "supportsDeveloperRole",
+            "supportsReasoningEffort",
+            "supportsStore"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "xiaomi",
+      "environment": [
+        {
+          "name": "XIAOMI_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "XIAOMI_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "requiresReasoningContentOnAssistantMessages",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "xiaomi-token-plan-ams",
+      "environment": [
+        {
+          "name": "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "XIAOMI_TOKEN_PLAN_AMS_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "requiresReasoningContentOnAssistantMessages",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "xiaomi-token-plan-cn",
+      "environment": [
+        {
+          "name": "XIAOMI_TOKEN_PLAN_CN_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "XIAOMI_TOKEN_PLAN_CN_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "requiresReasoningContentOnAssistantMessages",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "xiaomi-token-plan-sgp",
+      "environment": [
+        {
+          "name": "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "XIAOMI_TOKEN_PLAN_SGP_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "requiresReasoningContentOnAssistantMessages",
+            "thinkingFormat"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "zai",
+      "environment": [
+        {
+          "name": "ZAI_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "ZAI_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "supportsDeveloperRole",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "thinkingFormat",
+            "zaiToolStream"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "zai-coding-cn",
+      "environment": [
+        {
+          "name": "ZAI_CODING_CN_API_KEY",
+          "role": "secret"
+        }
+      ],
+      "authProfiles": [
+        {
+          "id": "api-key",
+          "kind": "api-key",
+          "environment": [
+            "ZAI_CODING_CN_API_KEY"
+          ]
+        }
+      ],
+      "routes": [
+        {
+          "media": "text",
+          "apiFamily": "openai-completions",
+          "adapterId": "openai-completions-v1",
+          "modelCatalogId": "pi-v1-frozen",
+          "endpoint": {
+            "source": "model-catalog",
+            "templateBindings": [],
+            "runtimeEndpointEnv": [],
+            "runtimeOverride": "explicit-configuration-only"
+          },
+          "authProfileIds": [
+            "api-key"
+          ],
+          "headerPolicyId": "api-family-default",
+          "quirks": [
+            "supportsDeveloperRole",
+            "supportsReasoningEffort",
+            "supportsStore",
+            "thinkingFormat",
+            "zaiToolStream"
+          ]
+        }
+      ]
+    }
+  ]
+}

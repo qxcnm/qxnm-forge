@@ -1,0 +1,189 @@
+{
+  "$schema": "https://schemas.agentprotocol.local/spec/0.1/schemas/session/pi-v3-import-case.schema.json",
+  "schemaVersion": "0.1",
+  "fixtureId": "pi-v3-import-clean-room",
+  "sourceFile": "source.pi-v3.jsonl",
+  "expectedJournalFile": "expected.journal.jsonl",
+  "reportArtifactFile": "artifacts/import-report.json",
+  "referenceCommit": "3f9aa5d10b35223abf6146f960ff5cb5c68053ee",
+  "sourceSessionId": "pi-v3-fixture-session",
+  "sourceSha256": "f31b9b7a784a3af526fec462e5b16c5bffaaedf45b7a8fa101d946bfd3d02b39",
+  "newSessionId": "session-import-pi-v3-fixture",
+  "reportArtifact": {
+    "artifactId": "artifact-pi-v3-import-report",
+    "mediaType": "application/vnd.qxnm-forge.pi-v3-import-report+json",
+    "byteLength": 2950,
+    "sha256": "c94454bb4cd3194f32cba618d9e3070505d98ced435c288f73534648e5f9e07a",
+    "displayName": "PI Session v3 import report"
+  },
+  "counts": {
+    "sourceEntries": 17,
+    "targetRecords": 20,
+    "mappedSourceEntries": 13,
+    "extensionSourceEntries": 4,
+    "reportedSourceEntries": 5,
+    "redactedValues": 0,
+    "skippedSourceEntries": 0
+  },
+  "sourceMappings": [
+    {
+      "sourceLine": 2,
+      "sourceEntryId": "pi-user-1",
+      "sourceType": "message",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-user-1"]
+    },
+    {
+      "sourceLine": 3,
+      "sourceEntryId": "pi-assistant-1",
+      "sourceType": "message",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-assistant-1"]
+    },
+    {
+      "sourceLine": 4,
+      "sourceEntryId": "pi-model-1",
+      "sourceType": "model_change",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-model-1"]
+    },
+    {
+      "sourceLine": 5,
+      "sourceEntryId": "pi-thinking-1",
+      "sourceType": "thinking_level_change",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-thinking-1"]
+    },
+    {
+      "sourceLine": 6,
+      "sourceEntryId": "pi-user-2",
+      "sourceType": "message",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-user-2"]
+    },
+    {
+      "sourceLine": 7,
+      "sourceEntryId": "pi-assistant-2",
+      "sourceType": "message",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-assistant-2"]
+    },
+    {
+      "sourceLine": 8,
+      "sourceEntryId": "pi-compaction-1",
+      "sourceType": "compaction",
+      "disposition": "mapped_with_loss",
+      "targetRecordIds": [
+        "record-pi-compaction-summary",
+        "record-pi-compaction-1"
+      ]
+    },
+    {
+      "sourceLine": 9,
+      "sourceEntryId": "pi-custom-1",
+      "sourceType": "custom",
+      "disposition": "preserved_extension",
+      "targetRecordIds": ["record-pi-custom-1"]
+    },
+    {
+      "sourceLine": 10,
+      "sourceEntryId": "pi-custom-message-1",
+      "sourceType": "custom_message",
+      "disposition": "quarantined",
+      "targetRecordIds": ["record-pi-custom-message-1"]
+    },
+    {
+      "sourceLine": 11,
+      "sourceEntryId": "pi-main-user",
+      "sourceType": "message",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-main-user"]
+    },
+    {
+      "sourceLine": 12,
+      "sourceEntryId": "pi-main-assistant",
+      "sourceType": "message",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-main-assistant"]
+    },
+    {
+      "sourceLine": 13,
+      "sourceEntryId": "pi-branch-summary",
+      "sourceType": "branch_summary",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-branch-summary"]
+    },
+    {
+      "sourceLine": 14,
+      "sourceEntryId": "pi-branch-user",
+      "sourceType": "message",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-branch-user"]
+    },
+    {
+      "sourceLine": 15,
+      "sourceEntryId": "pi-branch-assistant",
+      "sourceType": "message",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-branch-assistant"]
+    },
+    {
+      "sourceLine": 16,
+      "sourceEntryId": "pi-label-1",
+      "sourceType": "label",
+      "disposition": "preserved_extension",
+      "targetRecordIds": ["record-pi-label-1"]
+    },
+    {
+      "sourceLine": 17,
+      "sourceEntryId": "pi-session-info-1",
+      "sourceType": "session_info",
+      "disposition": "mapped",
+      "targetRecordIds": ["record-pi-session-info-1"]
+    },
+    {
+      "sourceLine": 18,
+      "sourceEntryId": "pi-unknown-1",
+      "sourceType": "future_entry",
+      "disposition": "quarantined",
+      "targetRecordIds": ["record-pi-unknown-1"]
+    }
+  ],
+  "reportedSourceEntryIds": [
+    "pi-compaction-1",
+    "pi-custom-1",
+    "pi-custom-message-1",
+    "pi-label-1",
+    "pi-unknown-1"
+  ],
+  "syntheticRecordIds": [
+    "record-select-pi-user-2",
+    "record-pi-import-report"
+  ],
+  "selectedHeadRecordId": "record-pi-import-report",
+  "selectedMessageIds": [
+    "message-pi-user-1",
+    "message-pi-assistant-1",
+    "message-pi-user-2",
+    "message-pi-branch-summary",
+    "message-pi-branch-user",
+    "message-pi-branch-assistant"
+  ],
+  "forbiddenJournalKinds": [
+    "event.emitted",
+    "run.accepted",
+    "run.started",
+    "run.cancellation_requested",
+    "run.terminal",
+    "turn.started",
+    "turn.completed",
+    "provider.attempt",
+    "tool.intent",
+    "tool.result",
+    "approval.requested",
+    "approval.resolved",
+    "queue.appended",
+    "queue.consumed",
+    "faux.configured"
+  ]
+}

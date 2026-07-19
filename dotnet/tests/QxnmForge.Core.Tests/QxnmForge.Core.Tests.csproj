@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>QxnmForge.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector" Version="6.0.4">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/QxnmForge.Core/QxnmForge.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../CONFORMANCE/fixtures/session/portable-v0.1/journal.before-recovery.jsonl"
+          Link="Fixtures/portable-v0.1/journal.before-recovery.jsonl"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../CONFORMANCE/fixtures/session/portable-v0.1/continuation.scenario.json"
+          Link="Fixtures/portable-v0.1/continuation.scenario.json"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../CONFORMANCE/fixtures/session/branch-compaction-v0.1/journal.jsonl"
+          Link="Fixtures/branch-compaction-v0.1/journal.jsonl"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../CONFORMANCE/fixtures/session/pi-v3-import-v0.1/source.pi-v3.jsonl"
+          Link="Fixtures/pi-v3-import-v0.1/source.pi-v3.jsonl"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../CONFORMANCE/fixtures/session/pi-v3-import-v0.1/expected.journal.jsonl"
+          Link="Fixtures/pi-v3-import-v0.1/expected.journal.jsonl"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../CONFORMANCE/fixtures/session/pi-v3-import-v0.1/artifacts/import-report.json"
+          Link="Fixtures/pi-v3-import-v0.1/artifacts/import-report.json"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../SPEC/providers.v1.json"
+          Link="Fixtures/provider-identity/providers.v1.json"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../SPEC/models.v1.json"
+          Link="Fixtures/provider-identity/models.v1.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":"identity-initialize","method":"initialize","params":{"protocolVersions":["0.1"],"client":{"name":"provider-identity-conformance","version":"0.1.0"},"capabilities":{}}}
+{"jsonrpc":"2.0","id":"models-deepseek","method":"models/list","params":{"providerId":"deepseek"}}

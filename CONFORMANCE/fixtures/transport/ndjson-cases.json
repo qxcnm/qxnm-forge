@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "0.1",
+  "cases": [
+    {
+      "name": "utf8_split_inside_emoji",
+      "chunksHex": [
+        "7b2274657874223a22e4bda0f09f",
+        "9982227d0a"
+      ],
+      "expected": [
+        {
+          "text": "你🙂"
+        }
+      ]
+    },
+    {
+      "name": "crlf_frames",
+      "chunksHex": [
+        "7b2261223a317d0d0a7b2262223a327d0d0a"
+      ],
+      "expected": [
+        {
+          "a": 1
+        },
+        {
+          "b": 2
+        }
+      ]
+    },
+    {
+      "name": "invalid_utf8",
+      "chunksHex": [
+        "7b2278223a22ff227d0a"
+      ],
+      "error": "invalid UTF-8"
+    },
+    {
+      "name": "truncated_json_at_eof",
+      "chunksHex": [
+        "7b2278223a31"
+      ],
+      "error": "unterminated NDJSON frame"
+    },
+    {
+      "name": "complete_final_frame_without_lf",
+      "chunksHex": [
+        "7b2278223a317d"
+      ],
+      "expected": [
+        {
+          "x": 1
+        }
+      ]
+    },
+    {
+      "name": "duplicate_object_key",
+      "chunksHex": [
+        "7b2278223a312c2278223a327d0a"
+      ],
+      "error": "duplicate JSON object key"
+    },
+    {
+      "name": "non_finite_number",
+      "chunksHex": [
+        "7b2278223a4e614e7d0a"
+      ],
+      "error": "non-finite JSON number"
+    },
+    {
+      "name": "blank_frame",
+      "chunksHex": [
+        "0a"
+      ],
+      "error": "blank NDJSON frame"
+    }
+  ]
+}

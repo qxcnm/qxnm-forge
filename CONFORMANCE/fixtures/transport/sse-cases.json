@@ -1,0 +1,88 @@
+{
+  "schemaVersion": "0.1",
+  "cases": [
+    {
+      "name": "crlf_utf8_split",
+      "chunksHex": [
+        "6576656e743a206d6573736167650d0a69643a20370d0a646174613a207b2264656c7461223a22e4bda0f09f",
+        "9982227d0d",
+        "0a0d0a"
+      ],
+      "expected": [
+        {
+          "event": "message",
+          "id": "7",
+          "data": "{\"delta\":\"你🙂\"}"
+        }
+      ]
+    },
+    {
+      "name": "multiline_data_and_comment",
+      "chunksHex": [
+        "3a206b656570616c6976650a646174613a206f6e650a646174613a2074776f0a0a"
+      ],
+      "expected": [
+        {
+          "event": "message",
+          "data": "one\ntwo"
+        }
+      ]
+    },
+    {
+      "name": "bare_cr_line_endings",
+      "chunksHex": [
+        "646174613a206f6b0d0d"
+      ],
+      "expected": [
+        {
+          "event": "message",
+          "data": "ok"
+        }
+      ]
+    },
+    {
+      "name": "last_event_id_persists",
+      "chunksHex": [
+        "69643a2034320a646174613a206f6e650a0a646174613a2074776f0a0a"
+      ],
+      "expected": [
+        {
+          "event": "message",
+          "id": "42",
+          "data": "one"
+        },
+        {
+          "event": "message",
+          "id": "42",
+          "data": "two"
+        }
+      ]
+    },
+    {
+      "name": "invalid_utf8",
+      "chunksHex": [
+        "646174613a20ff0a0a"
+      ],
+      "error": "invalid UTF-8"
+    },
+    {
+      "name": "eof_does_not_dispatch_partial_event",
+      "chunksHex": [
+        "646174613a207061727469616c"
+      ],
+      "expected": []
+    },
+    {
+      "name": "eof_dispatches_complete_field_line",
+      "chunksHex": [
+        "646174613a20636f6d706c6574650a"
+      ],
+      "expected": [
+        {
+          "event": "message",
+          "data": "complete"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://schemas.agentprotocol.local/spec/0.1/schemas/session/writer-lock-cases.schema.json",
+  "schemaVersion": "0.1",
+  "cases": [
+    {
+      "name": "live_owner",
+      "probe": "connected",
+      "expected": "locked",
+      "owner": {
+        "schemaVersion": "0.1",
+        "protocol": "tcp-loopback-writer-lease-v1",
+        "sessionId": "session-lock-fixture",
+        "token": "1111111111111111111111111111111111111111111111111111111111111111",
+        "endpoint": { "host": "127.0.0.1", "port": 43101 },
+        "pid": 101,
+        "createdAt": "2026-07-14T00:00:00Z",
+        "implementation": { "name": "qxnm-forge-rust", "version": "0.1.0", "language": "rust" }
+      }
+    },
+    {
+      "name": "live_unresponsive_owner",
+      "probe": "connected_without_response",
+      "expected": "locked",
+      "owner": {
+        "schemaVersion": "0.1",
+        "protocol": "tcp-loopback-writer-lease-v1",
+        "sessionId": "session-lock-fixture",
+        "token": "2222222222222222222222222222222222222222222222222222222222222222",
+        "endpoint": { "host": "127.0.0.1", "port": 43102 },
+        "pid": 102,
+        "createdAt": "2026-07-14T00:00:01Z",
+        "implementation": { "name": "qxnm-forge-dotnet", "version": "0.1.0", "language": "dotnet" }
+      }
+    },
+    {
+      "name": "ambiguous_probe_timeout",
+      "probe": "timeout",
+      "expected": "locked",
+      "owner": {
+        "schemaVersion": "0.1",
+        "protocol": "tcp-loopback-writer-lease-v1",
+        "sessionId": "session-lock-fixture",
+        "token": "3333333333333333333333333333333333333333333333333333333333333333",
+        "endpoint": { "host": "127.0.0.1", "port": 43103 },
+        "pid": 103,
+        "createdAt": "2026-07-14T00:00:02Z",
+        "implementation": { "name": "qxnm-forge-go", "version": "0.1.0", "language": "go" }
+      }
+    },
+    {
+      "name": "dead_owner",
+      "probe": "connection_refused",
+      "expected": "stale_candidate",
+      "owner": {
+        "schemaVersion": "0.1",
+        "protocol": "tcp-loopback-writer-lease-v1",
+        "sessionId": "session-lock-fixture",
+        "token": "4444444444444444444444444444444444444444444444444444444444444444",
+        "endpoint": { "host": "127.0.0.1", "port": 43104 },
+        "pid": 104,
+        "createdAt": "2026-07-14T00:00:03Z",
+        "implementation": { "name": "qxnm-forge-typescript", "version": "0.1.0", "language": "typescript" }
+      }
+    },
+    { "name": "metadata_initializing", "probe": "metadata_missing_within_grace", "expected": "wait" },
+    { "name": "metadata_abandoned", "probe": "metadata_missing_after_grace", "expected": "stale_candidate" },
+    { "name": "external_host_injection", "probe": "invalid_external_host", "expected": "invalid" },
+    { "name": "stale_takeover_race_lost", "probe": "atomic_rename_lost", "expected": "retry" },
+    { "name": "release_token_changed", "probe": "release_token_mismatch", "expected": "preserve" }
+  ]
+}

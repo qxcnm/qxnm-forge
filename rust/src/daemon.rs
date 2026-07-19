@@ -1,0 +1,848 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde::Deserialize;
+use serde_json::{Value, json};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::{Mutex, mpsc};
+use uuid::Uuid;
+
+use crate::agent::{Agent, ApprovalResume, QueueKind, RunRequest};
+use crate::error::{AgentError, ErrorCode};
+use crate::protocol::{
+    ApprovalRespondParams, InitializeParams, InitializeResult, JsonRpcNotification, JsonRpcRequest,
+    JsonRpcResponse, PROTOCOL_VERSION, PeerInfo, QueueParams, RunCancelParams, RunStartParams,
+    SessionBranchSelectParams, SessionCompactParams, SessionGetParams, is_valid_request_id,
+    parse_strict_request,
+};
+use crate::provider::{FauxProvider, FauxScenario};
+use crate::provider_identity::{ProviderIdentityAdvertisement, default_models, is_provider_id};
+use crate::provider_route::ProviderRouteSnapshot;
+use crate::terminal::{TerminalAfterResponse, TerminalManager, TerminalNotification};
+
+const MAX_FRAME_BYTES: usize = 1_048_576;
+const MAX_EVENT_BYTES: usize = 262_144;
+const MAX_ARTIFACT_BYTES: usize = 1_073_741_824;
+const OUTBOUND_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// stdio daemon 的一次请求处理结果；`after_response` 用于强制响应先于后续事件。
+struct DispatchResult {
+    response: JsonRpcResponse,
+    after_response: Option<AfterResponse>,
+    close_after_response: bool,
+}
+
+enum AfterResponse {
+    StartRun(RunRequest),
+    ResumeApproval(ApprovalResume),
+    Terminal(TerminalAfterResponse),
+}
+
+enum InboundFrame {
+    Data(Vec<u8>),
+    Oversized,
+}
+
+/// `faux/configure` 的严格参数对象。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FauxConfigureParams {
+    session_id: String,
+    scenario: FauxScenario,
+}
+
+/// `models/list` 的严格可选 Provider 过滤参数。
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ModelsListParams {
+    #[serde(default)]
+    provider_id: Option<Value>,
+}
+
+/// qxnm-forge Rust 的 UTF-8 NDJSON JSON-RPC daemon。
+pub struct Daemon {
+    agent: Arc<Agent>,
+    faux: FauxProvider,
+    initialized: bool,
+    interactive_approvals: bool,
+    terminal_events: bool,
+    conformance_mode: bool,
+    provider_identity: Option<ProviderIdentityAdvertisement>,
+    provider_route: Option<ProviderRouteSnapshot>,
+    terminal: TerminalManager,
+    event_sender: mpsc::Sender<crate::domain::EventEnvelope>,
+    event_receiver: Option<mpsc::Receiver<crate::domain::EventEnvelope>>,
+    terminal_event_receiver: Option<mpsc::Receiver<TerminalNotification>>,
+}
+
+impl Daemon {
+    /// 功能：创建 stdio daemon，并建立 Agent/terminal 两条有界事件通道。
+    ///
+    /// 输入：完整 Agent、faux provider、互斥的可选 identity/route 快照和 CLI 选定 workspace。
+    /// 输出：初始化前的连接状态；terminal 只有 conformance + fixture-only 双门控时可用。
+    /// 不变量：identity 广告不注册 adapter；route 广告与 Agent adapter 来自同一启动快照；构造不启动 Provider、工具或 PTY；
+    /// `QXNM_FORGE_CONFORMANCE=1` 单独不授权 terminal。
+    /// 失败：terminal workspace 无法 canonicalize 时返回结构化参数错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub fn new(
+        agent: Arc<Agent>,
+        faux: FauxProvider,
+        provider_identity: Option<ProviderIdentityAdvertisement>,
+        provider_route: Option<ProviderRouteSnapshot>,
+        workspace: impl AsRef<std::path::Path>,
+    ) -> Result<Self, AgentError> {
+        let conformance_mode = std::env::var("QXNM_FORGE_CONFORMANCE").as_deref() == Ok("1");
+        let (event_sender, event_receiver) = mpsc::channel(256);
+        let (terminal, terminal_event_receiver) =
+            TerminalManager::new(workspace, conformance_mode)?;
+        Ok(Self {
+            agent,
+            faux,
+            initialized: false,
+            interactive_approvals: false,
+            terminal_events: false,
+            conformance_mode,
+            provider_identity,
+            provider_route,
+            terminal,
+            event_sender,
+            event_receiver: Some(event_receiver),
+            terminal_event_receiver: Some(terminal_event_receiver),
+        })
+    }
+
+    /// 功能：通过 stdin/stdout 运行协议循环，并保持 stdout 仅包含 NDJSON 帧。
+    ///
+    /// 输入：进程 stdin 上的 UTF-8 NDJSON JSON-RPC 请求帧。
+    /// 输出：stdout 上互斥写入并 flush 的响应/事件帧；诊断不进入协议流。
+    /// 不变量：帧解析前受大小限制；terminal wire ack 只在 stdout flush 后推进；run/审批/terminal after-response 动作只能发生在对应成功响应后；fatal terminal delivery 优先终止 transport。
+    /// 失败：输入/输出 I/O、terminal fatal watch、事件任务、协议或 Agent 基础设施失败时统一进入有界断连清理。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub async fn run_stdio(mut self) -> Result<(), AgentError> {
+        let stdout = Arc::new(Mutex::new(tokio::io::stdout()));
+        let mut events = self.event_receiver.take().ok_or_else(|| {
+            AgentError::new(ErrorCode::InternalError, "event receiver already consumed")
+        })?;
+        let mut terminal_events = self.terminal_event_receiver.take().ok_or_else(|| {
+            AgentError::new(
+                ErrorCode::InternalError,
+                "terminal event receiver already consumed",
+            )
+        })?;
+        let event_stdout = Arc::clone(&stdout);
+        let terminal_delivery = self.terminal.clone();
+        let mut terminal_failure = self.terminal.subscribe_delivery_failure();
+        let mut event_task = tokio::spawn(async move {
+            let mut agent_open = true;
+            let mut terminal_open = true;
+            while agent_open || terminal_open {
+                tokio::select! {
+                    biased;
+                    failure = terminal_failure.changed(), if terminal_open => {
+                        match failure {
+                            Ok(()) if *terminal_failure.borrow_and_update() => {
+                                return Err(AgentError::new(
+                                    ErrorCode::InternalError,
+                                    "terminal event delivery failed",
+                                )
+                                .with_details(json!({"kind":"terminal_io"})));
+                            }
+                            Ok(()) => {}
+                            Err(_) => terminal_open = false,
+                        }
+                    },
+                    event = events.recv(), if agent_open => match event {
+                        Some(event) => {
+                            write_frame(&event_stdout, &JsonRpcNotification::from(&event)).await?;
+                        }
+                        None => agent_open = false,
+                    },
+                    event = terminal_events.recv(), if terminal_open => match event {
+                        Some(event) => {
+                            write_frame(&event_stdout, &event).await?;
+                            terminal_delivery.acknowledge_written(&event).await;
+                        }
+                        None => terminal_open = false,
+                    },
+                }
+            }
+            Ok::<(), AgentError>(())
+        });
+
+        let (protocol_result, early_event_result) = {
+            let protocol = async {
+                let mut input = BufReader::new(tokio::io::stdin());
+                while let Some(frame) = read_bounded_frame(&mut input, MAX_FRAME_BYTES).await? {
+                    let InboundFrame::Data(bytes) = frame else {
+                        write_frame(
+                            &stdout,
+                            &JsonRpcResponse::failure(
+                                Value::Null,
+                                AgentError::new(
+                                    ErrorCode::OutputLimitExceeded,
+                                    "RPC frame exceeds limit",
+                                ),
+                            ),
+                        )
+                        .await?;
+                        continue;
+                    };
+                    let line = match String::from_utf8(bytes) {
+                        Ok(line) => line,
+                        Err(error) => {
+                            write_frame(
+                                &stdout,
+                                &JsonRpcResponse::failure(
+                                    Value::Null,
+                                    AgentError::new(ErrorCode::ParseError, error.to_string()),
+                                ),
+                            )
+                            .await?;
+                            continue;
+                        }
+                    };
+                    if line.trim().is_empty() {
+                        write_frame(
+                            &stdout,
+                            &JsonRpcResponse::failure(
+                                Value::Null,
+                                AgentError::new(
+                                    ErrorCode::InvalidRequest,
+                                    "blank RPC frame is invalid",
+                                ),
+                            ),
+                        )
+                        .await?;
+                        continue;
+                    }
+                    let request: JsonRpcRequest = match parse_strict_request(&line) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            write_frame(
+                                &stdout,
+                                &JsonRpcResponse::failure(
+                                    Value::Null,
+                                    AgentError::new(ErrorCode::ParseError, error.to_string()),
+                                ),
+                            )
+                            .await?;
+                            continue;
+                        }
+                    };
+                    let dispatched = self.handle(request).await;
+                    write_frame(&stdout, &dispatched.response).await?;
+                    if let Some(action) = dispatched.after_response {
+                        match action {
+                            AfterResponse::StartRun(request) => {
+                                self.agent
+                                    .start_run(request, self.event_sender.clone())
+                                    .await;
+                            }
+                            AfterResponse::ResumeApproval(resume) => resume.resume(),
+                            AfterResponse::Terminal(action) => {
+                                self.terminal.after_response(action).await?;
+                            }
+                        }
+                    }
+                    if dispatched.close_after_response {
+                        break;
+                    }
+                }
+                Ok::<(), AgentError>(())
+            };
+            tokio::pin!(protocol);
+            tokio::select! {
+                result = &mut protocol => (result, None),
+                result = &mut event_task => {
+                    let result = result
+                        .map_err(|error| AgentError::new(ErrorCode::InternalError, error.to_string()))
+                        .and_then(|result| result);
+                    (Ok(()), Some(result))
+                }
+            }
+        };
+        self.terminal.shutdown().await;
+        let disconnect_result = self.agent.resolve_disconnected_approvals().await;
+        let _ = self
+            .agent
+            .wait_for_started_runs(Duration::from_secs(5))
+            .await;
+        drop(self.event_sender);
+        let event_result = if let Some(result) = early_event_result {
+            result
+        } else {
+            match tokio::time::timeout(Duration::from_secs(1), &mut event_task).await {
+                Ok(result) => result.map_err(|error| {
+                    AgentError::new(ErrorCode::InternalError, error.to_string())
+                })?,
+                Err(_) => {
+                    event_task.abort();
+                    let _ = event_task.await;
+                    Ok(())
+                }
+            }
+        };
+        protocol_result?;
+        disconnect_result?;
+        event_result
+    }
+
+    /// 功能：将一个已解析请求转换为响应以及可选的“响应后启动”动作。
+    ///
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    async fn handle(&mut self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+        let was_initialized = self.initialized;
+        match self.dispatch(request).await {
+            Ok((result, after_response)) => DispatchResult {
+                response: JsonRpcResponse::success(id, result),
+                after_response,
+                close_after_response: false,
+            },
+            Err(error) => DispatchResult {
+                response: JsonRpcResponse::failure(id, error),
+                after_response: None,
+                close_after_response: !was_initialized,
+            },
+        }
+    }
+
+    /// 功能：校验连接生命周期并分派一个 JSON-RPC 方法。
+    ///
+    /// 输入：已经 strict JSON 解码、但尚未执行方法级验证的请求。
+    /// 输出：语言中立结果和可选响应后动作。
+    /// 不变量：initialize 必须首发；所有 accepted mutation 返回前 durable；工具执行与审批恢复不在响应前发生。
+    /// 失败：协议生命周期、ID、参数、未知方法或底层 Agent 操作失败时返回公共结构化错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    async fn dispatch(
+        &mut self,
+        request: JsonRpcRequest,
+    ) -> Result<(Value, Option<AfterResponse>), AgentError> {
+        if request.jsonrpc != "2.0" {
+            return Err(AgentError::new(
+                ErrorCode::InvalidRequest,
+                "jsonrpc must equal '2.0'",
+            ));
+        }
+        if !is_valid_request_id(&request.id) {
+            return Err(AgentError::new(
+                ErrorCode::InvalidRequest,
+                "request id must be an opaque string or safe non-negative integer",
+            ));
+        }
+        if !self.initialized && request.method != "initialize" {
+            return Err(AgentError::new(
+                ErrorCode::NotInitialized,
+                "initialize must be the first request",
+            ));
+        }
+        match request.method.as_str() {
+            "initialize" => Ok((self.initialize(request.params)?, None)),
+            "faux/configure" => {
+                if !self.conformance_mode {
+                    return Err(AgentError::new(
+                        ErrorCode::MethodNotFound,
+                        "faux/configure is available only in conformance mode",
+                    ));
+                }
+                let params: FauxConfigureParams = parse_params(request.params)?;
+                if params.scenario.schema_version != PROTOCOL_VERSION {
+                    return Err(AgentError::new(
+                        ErrorCode::InvalidParams,
+                        "unsupported faux scenario version",
+                    ));
+                }
+                let scenario_id = format!("faux:{}", params.scenario.name);
+                self.agent
+                    .record_faux_configuration(&params.session_id, &params.scenario)
+                    .await?;
+                let scripts = params.scenario.into_scripts();
+                self.faux.configure(&params.session_id, scripts).await;
+                Ok((json!({"scenarioId":scenario_id}), None))
+            }
+            "models/list" => {
+                let params: ModelsListParams = parse_params(request.params)?;
+                let provider_id = match params.provider_id {
+                    None => None,
+                    Some(Value::String(provider_id)) if is_provider_id(&provider_id) => {
+                        Some(provider_id)
+                    }
+                    Some(_) => {
+                        return Err(AgentError::new(
+                            ErrorCode::InvalidParams,
+                            "models/list providerId is invalid",
+                        ));
+                    }
+                };
+                let models = if let Some(advertisement) = &self.provider_identity {
+                    advertisement.models(provider_id.as_deref())
+                } else if let Some(snapshot) = &self.provider_route {
+                    snapshot.models(provider_id.as_deref())
+                } else {
+                    default_models(provider_id.as_deref())
+                };
+                Ok((json!({"models":models}), None))
+            }
+            "run/start" => {
+                let mut params: RunStartParams = parse_params(request.params)?;
+                if let Some(tool_execution) = params
+                    .options
+                    .as_ref()
+                    .and_then(|options| options.tool_execution.as_deref())
+                    && tool_execution != "sequential"
+                {
+                    return Err(AgentError::new(
+                        ErrorCode::InvalidParams,
+                        "this implementation currently supports only sequential tool execution",
+                    )
+                    .with_details(json!({
+                        "kind":"invalid_params",
+                        "field":"options.toolExecution"
+                    })));
+                }
+                if params.provider.id != "faux"
+                    && let Some(advertisement) = &self.provider_identity
+                {
+                    let matching_routes = advertisement.matching_route_count(
+                        &params.provider.id,
+                        &params.provider.model_id,
+                        params.provider.api_family.as_deref(),
+                    );
+                    if matching_routes > 1 && params.provider.api_family.is_none() {
+                        return Err(AgentError::new(
+                            ErrorCode::InvalidParams,
+                            "provider selection requires an explicit API family",
+                        )
+                        .with_details(json!({
+                            "kind":"invalid_params",
+                            "field":"provider.apiFamily"
+                        })));
+                    }
+                    if matching_routes == 1 {
+                        return Err(AgentError::new(
+                            ErrorCode::ProviderUnavailable,
+                            "identity-only Provider route is not executable",
+                        ));
+                    }
+                }
+                if params.provider.id != "faux"
+                    && let Some(snapshot) = &self.provider_route
+                    && let Some(family) = snapshot.resolve(
+                        &params.provider.id,
+                        &params.provider.model_id,
+                        params.provider.api_family.as_deref(),
+                    )?
+                {
+                    params.provider.api_family = Some(family);
+                }
+                if params.provider.id != "faux"
+                    && !matches!(
+                        params.provider.id.as_str(),
+                        "openai-compatible"
+                            | "groq"
+                            | "minimax"
+                            | "openai"
+                            | "openai-responses"
+                            | "anthropic"
+                            | "mistral"
+                            | "azure-openai-responses"
+                            | "google"
+                            | "google-vertex"
+                            | "amazon-bedrock"
+                            | "openai-codex"
+                            | "openrouter"
+                    )
+                {
+                    return Err(AgentError::new(
+                        ErrorCode::InvalidParams,
+                        "unknown provider id",
+                    ));
+                }
+                let content = params.input.content_blocks()?;
+                let prompt = content
+                    .iter()
+                    .filter_map(|block| match block {
+                        crate::domain::ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let run_id = format!("run-{}", Uuid::new_v4());
+                let run = RunRequest {
+                    session_id: params.session_id,
+                    run_id: run_id.clone(),
+                    prompt,
+                    provider_id: params.provider.id,
+                    api_family: params.provider.api_family,
+                    model: params.provider.model_id,
+                    interactive_approvals: self.interactive_approvals,
+                };
+                self.agent.accept_run_content(&run, content).await?;
+                Ok((json!({"runId":run_id}), Some(AfterResponse::StartRun(run))))
+            }
+            "run/cancel" => {
+                let params: RunCancelParams = parse_params(request.params)?;
+                let cancellation_state = self
+                    .agent
+                    .cancel(&params.session_id, &params.run_id)
+                    .await?;
+                Ok((json!({"cancellationState":cancellation_state}), None))
+            }
+            "approval/respond" => {
+                let params: ApprovalRespondParams = parse_params(request.params)?;
+                let resume = self
+                    .agent
+                    .accept_approval(
+                        &params.session_id,
+                        &params.run_id,
+                        &params.approval_id,
+                        params.decision,
+                    )
+                    .await?;
+                Ok((
+                    json!({"accepted":true}),
+                    Some(AfterResponse::ResumeApproval(resume)),
+                ))
+            }
+            "run/steer" | "run/followUp" => {
+                let method = request.method.clone();
+                let params: QueueParams = parse_params(request.params)?;
+                let text = params.input.text()?;
+                let kind = if method == "run/steer" {
+                    QueueKind::Steering
+                } else {
+                    QueueKind::FollowUp
+                };
+                let queue_item_id = self
+                    .agent
+                    .enqueue(&params.session_id, &params.run_id, text, kind)
+                    .await?;
+                Ok((json!({"accepted":true,"queueItemId":queue_item_id}), None))
+            }
+            "session/get" => {
+                let params: SessionGetParams = parse_params(request.params)?;
+                let snapshot = self
+                    .agent
+                    .session_get(&params.session_id, params.after_seq)
+                    .await?;
+                let value = serde_json::to_value(snapshot).map_err(|error| {
+                    AgentError::new(ErrorCode::InternalError, error.to_string())
+                })?;
+                Ok((value, None))
+            }
+            "session/branch/select" => {
+                let params: SessionBranchSelectParams = parse_params(request.params)?;
+                let result = self.agent.select_session_branch(params).await?;
+                let value = serde_json::to_value(result).map_err(|error| {
+                    AgentError::new(ErrorCode::InternalError, error.to_string())
+                })?;
+                Ok((value, None))
+            }
+            "session/compact" => {
+                let params: SessionCompactParams = parse_params(request.params)?;
+                let result = self.agent.compact_session(params).await?;
+                let value = serde_json::to_value(result).map_err(|error| {
+                    AgentError::new(ErrorCode::InternalError, error.to_string())
+                })?;
+                Ok((value, None))
+            }
+            "terminal/open" => {
+                self.require_terminal_events()?;
+                let (result, action) = self.terminal.open(request.params).await?;
+                Ok((result, Some(AfterResponse::Terminal(action))))
+            }
+            "terminal/write" => {
+                self.require_terminal_events()?;
+                Ok((self.terminal.write(request.params).await?, None))
+            }
+            "terminal/resize" => {
+                self.require_terminal_events()?;
+                Ok((self.terminal.resize(request.params).await?, None))
+            }
+            "terminal/signal" => {
+                self.require_terminal_events()?;
+                Ok((self.terminal.signal(request.params).await?, None))
+            }
+            "terminal/attach" => {
+                self.require_terminal_events()?;
+                let (result, action) = self.terminal.attach(request.params).await?;
+                Ok((result, Some(AfterResponse::Terminal(action))))
+            }
+            "terminal/close" => {
+                self.require_terminal_events()?;
+                let (result, action) = self.terminal.close(request.params).await?;
+                Ok((result, action.map(AfterResponse::Terminal)))
+            }
+            _ => Err(AgentError::new(
+                ErrorCode::MethodNotFound,
+                format!("unknown RPC method: {}", request.method),
+            )),
+        }
+    }
+
+    /// 功能：在分派 terminal RPC 前验证客户端事件协商与宿主 PTY 策略能力。
+    ///
+    /// 输入：当前连接 initialize 后保存的 terminalEvents 协商状态。
+    /// 输出：客户端可接收通知且 fixture-only Unix PTY 可用时成功。
+    /// 不变量：未广告的方法始终返回 method_not_found，不以 pipe 或无事件模式降级。
+    /// 失败：任一门控缺失返回 `-32601/method_not_found`。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn require_terminal_events(&self) -> Result<(), AgentError> {
+        if self.terminal_events && self.terminal.enabled() {
+            Ok(())
+        } else {
+            Err(AgentError::new(
+                ErrorCode::MethodNotFound,
+                "terminal methods are not enabled",
+            ))
+        }
+    }
+
+    /// 功能：协商协议版本并返回当前 daemon 的真实能力与限制。
+    ///
+    /// 输入：strict initialize 参数，包括候选版本、客户端交互审批和 terminal event 能力。
+    /// 输出：选定版本、实现标识、实际 methods/events/providers/tools 与资源限制。
+    /// 不变量：同一连接只成功初始化一次；terminal methods 只有客户端协商、真 PTY 与窄宿主策略同时存在时广告。
+    /// 失败：重复初始化、参数/版本、路径 conformance 配置或 hard-sandbox 启动状态无效时返回结构化错误且不伪报能力。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn initialize(&mut self, params: Value) -> Result<Value, AgentError> {
+        if self.initialized {
+            return Err(AgentError::new(
+                ErrorCode::AlreadyInitialized,
+                "connection is already initialized",
+            ));
+        }
+        let params: InitializeParams = parse_params(params)?;
+        if !params
+            .protocol_versions
+            .iter()
+            .any(|version| version == PROTOCOL_VERSION)
+        {
+            return Err(AgentError::new(
+                ErrorCode::ProtocolVersionUnsupported,
+                "no mutually supported protocol version",
+            )
+            .with_details(json!({"supported":[PROTOCOL_VERSION]})));
+        }
+        let hard_sandbox = self.agent.hard_sandbox_capability()?;
+        self.interactive_approvals = params.capabilities.interactive_approvals;
+        self.terminal_events = params.capabilities.terminal_events && self.terminal.enabled();
+        self.initialized = true;
+        let providers = if let Some(advertisement) = &self.provider_identity {
+            advertisement.provider_capabilities()
+        } else if let Some(snapshot) = &self.provider_route {
+            snapshot.merged_provider_capabilities(self.agent.provider_capabilities())
+        } else {
+            self.agent.provider_capabilities()
+        };
+        let tools = self.agent.tool_capabilities();
+        let mut methods = vec![
+            "initialize",
+            "faux/configure",
+            "models/list",
+            "run/start",
+            "run/cancel",
+            "run/steer",
+            "run/followUp",
+            "approval/respond",
+            "session/get",
+            "session/branch/select",
+            "session/compact",
+        ];
+        let (_, terminal_event_types) = if self.terminal_events {
+            let (terminal_methods, terminal_event_types) = self.terminal.capabilities();
+            methods.extend(terminal_methods);
+            (true, terminal_event_types)
+        } else {
+            (false, Vec::new())
+        };
+        let mut capabilities = json!({
+            "methods":methods,
+            "eventTypes":[
+                "run.started","turn.started","turn.completed","message.started",
+                "message.delta","message.completed","tool.requested","approval.requested",
+                "approval.resolved","tool.started","tool.delta","tool.completed",
+                "retry.scheduled","context.compacted","run.completed","run.failed",
+                "run.cancelled","run.interrupted"
+            ],
+            "providers":providers,
+            "tools":tools,
+            "transports":["stdio"]
+        });
+        if let Some(hard_sandbox) = hard_sandbox
+            && let Some(object) = capabilities.as_object_mut()
+        {
+            object.insert("hardSandbox".to_owned(), hard_sandbox);
+        }
+        if !terminal_event_types.is_empty()
+            && let Some(object) = capabilities.as_object_mut()
+        {
+            object.insert(
+                "terminalEventTypes".to_owned(),
+                serde_json::to_value(terminal_event_types).map_err(|error| {
+                    AgentError::new(ErrorCode::InternalError, error.to_string())
+                })?,
+            );
+        }
+        serde_json::to_value(InitializeResult {
+            protocol_version: PROTOCOL_VERSION,
+            implementation: PeerInfo {
+                name: "qxnm-forge-rust".to_owned(),
+                version: env!("CARGO_PKG_VERSION").to_owned(),
+                language: "rust".to_owned(),
+            },
+            capabilities,
+            limits: json!({
+                "maxFrameBytes":MAX_FRAME_BYTES,
+                "maxEventBytes":MAX_EVENT_BYTES,
+                "maxArtifactBytes":MAX_ARTIFACT_BYTES,
+                "maxConcurrentRuns":1
+            }),
+        })
+        .map_err(|error| AgentError::new(ErrorCode::InternalError, error.to_string()))
+    }
+}
+
+/// 功能：增量读取一个有界 LF/CRLF NDJSON 帧，超限后持续排空到下一帧边界。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+///
+/// 任意 UTF-8 字节分片在完整帧后统一解码；EOF 时接受完整的无 LF 最后一帧。
+async fn read_bounded_frame<R>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> Result<Option<InboundFrame>, AgentError>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut output = Vec::new();
+    let mut oversized = false;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            if output.is_empty() && !oversized {
+                return Ok(None);
+            }
+            return Ok(Some(if oversized {
+                InboundFrame::Oversized
+            } else {
+                if output.last() == Some(&b'\r') {
+                    output.pop();
+                }
+                InboundFrame::Data(output)
+            }));
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let take = newline.unwrap_or(available.len());
+        if !oversized {
+            if output.len().saturating_add(take) > max_bytes {
+                oversized = true;
+                output.clear();
+            } else {
+                output.extend_from_slice(&available[..take]);
+            }
+        }
+        let consumed = take + usize::from(newline.is_some());
+        reader.consume(consumed);
+        if newline.is_some() {
+            if oversized {
+                return Ok(Some(InboundFrame::Oversized));
+            }
+            if output.last() == Some(&b'\r') {
+                output.pop();
+            }
+            return Ok(Some(InboundFrame::Data(output)));
+        }
+    }
+}
+
+/// 功能：将 JSON 参数严格反序列化为方法 DTO，并统一映射参数错误。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn parse_params<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, AgentError> {
+    serde_json::from_value(value)
+        .map_err(|error| AgentError::new(ErrorCode::InvalidParams, error.to_string()))
+}
+
+/// 功能：原子序列化并写出一个 NDJSON 帧，禁止并发写入交错。
+///
+/// 输入：共享 stdout 锁与可序列化协议值。
+/// 输出：完整 JSON、换行和 flush 在一秒边界内完成后返回。
+/// 不变量：序列化后的 JSON 不超过帧上限；同一帧的 write/flush 持有唯一 stdout 锁。
+/// 失败：序列化、超限、stdout I/O 或锁等待/写入超时返回结构化错误；超时后不继续阻塞 daemon shutdown。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+async fn write_frame(
+    stdout: &Arc<Mutex<tokio::io::Stdout>>,
+    value: &impl serde::Serialize,
+) -> Result<(), AgentError> {
+    let mut encoded = serde_json::to_vec(value)
+        .map_err(|error| AgentError::new(ErrorCode::InternalError, error.to_string()))?;
+    if encoded.len() > MAX_FRAME_BYTES {
+        return Err(AgentError::new(
+            ErrorCode::OutputLimitExceeded,
+            "outbound RPC frame exceeds limit",
+        ));
+    }
+    encoded.push(b'\n');
+    tokio::time::timeout(OUTBOUND_WRITE_TIMEOUT, async {
+        let mut stdout = stdout.lock().await;
+        stdout.write_all(&encoded).await?;
+        stdout.flush().await?;
+        Ok::<(), AgentError>(())
+    })
+    .await
+    .map_err(|_| AgentError::new(ErrorCode::InternalError, "outbound RPC write timed out"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::BufReader;
+
+    use super::{InboundFrame, read_bounded_frame};
+
+    /// 功能：验证有界读取器接受 CRLF 与无 LF 的最终完整帧。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn bounded_reader_handles_crlf_and_final_frame() -> Result<(), crate::error::AgentError> {
+        let input = b"{\"a\":1}\r\n{\"b\":2}";
+        let mut reader = BufReader::new(input.as_slice());
+        let Some(InboundFrame::Data(first)) = read_bounded_frame(&mut reader, 64).await? else {
+            panic!("first frame must be data");
+        };
+        let Some(InboundFrame::Data(second)) = read_bounded_frame(&mut reader, 64).await? else {
+            panic!("second frame must be data");
+        };
+        assert_eq!(first, br#"{"a":1}"#);
+        assert_eq!(second, br#"{"b":2}"#);
+        assert!(read_bounded_frame(&mut reader, 64).await?.is_none());
+        Ok(())
+    }
+
+    /// 功能：验证超限帧被完整排空且不会吞掉下一条合法帧。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn oversized_frame_resynchronizes_at_lf() -> Result<(), crate::error::AgentError> {
+        let input = b"123456789\nok\n";
+        let mut reader = BufReader::new(input.as_slice());
+        assert!(matches!(
+            read_bounded_frame(&mut reader, 4).await?,
+            Some(InboundFrame::Oversized)
+        ));
+        let Some(InboundFrame::Data(next)) = read_bounded_frame(&mut reader, 4).await? else {
+            panic!("next frame must remain available");
+        };
+        assert_eq!(next, b"ok");
+        Ok(())
+    }
+}

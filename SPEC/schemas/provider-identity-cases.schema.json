@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-conformance:provider-identity-advertisement-cases:0.1",
+  "title": "Provider identity advertisement conformance cases",
+  "$comment": "功能：约束 35 Provider、45 route 的 manifest-driven 离线广告案例和严格输入负例。作者：高宏顺；邮箱：18272669457@163.com",
+  "type": "object",
+  "required": ["schemaVersion", "counts", "cases", "negativeCases"],
+  "properties": {
+    "$schema": { "const": "../../../SPEC/schemas/provider-identity-cases.schema.json" },
+    "schemaVersion": { "const": "0.1" },
+    "counts": {
+      "type": "object",
+      "required": ["providers", "routes", "models", "initializeModelIds", "ambiguousProviderModelPairs"],
+      "properties": {
+        "providers": { "const": 35 },
+        "routes": { "const": 45 },
+        "models": { "const": 1076 },
+        "initializeModelIds": { "const": 1074 },
+        "ambiguousProviderModelPairs": { "const": 2 }
+      },
+      "additionalProperties": false
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/case" }
+    },
+    "negativeCases": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/negativeCase" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "maxLength": 128
+    },
+    "providerId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$",
+      "maxLength": 128
+    },
+    "apiFamily": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "maxLength": 128
+    },
+    "routeRef": {
+      "type": "object",
+      "required": ["providerId", "apiFamily"],
+      "properties": {
+        "providerId": { "$ref": "#/$defs/providerId" },
+        "apiFamily": { "$ref": "#/$defs/apiFamily" }
+      },
+      "additionalProperties": false
+    },
+    "authRef": {
+      "type": "object",
+      "required": ["providerId", "authProfileId"],
+      "properties": {
+        "providerId": { "$ref": "#/$defs/providerId" },
+        "authProfileId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "gates": {
+      "type": "object",
+      "required": ["adapter", "authentication", "endpoint", "capability"],
+      "properties": {
+        "adapter": { "enum": ["available", "missing"] },
+        "authentication": { "enum": ["available", "missing"] },
+        "endpoint": { "enum": ["configured", "absent"] },
+        "capability": { "enum": ["allowed", "denied"] }
+      },
+      "additionalProperties": false
+    },
+    "expected": {
+      "type": "object",
+      "required": ["providers", "routes", "models", "initializeModelIds"],
+      "properties": {
+        "providers": { "type": "integer", "minimum": 0, "maximum": 35 },
+        "routes": { "type": "integer", "minimum": 0, "maximum": 45 },
+        "models": { "type": "integer", "minimum": 0, "maximum": 1076 },
+        "initializeModelIds": { "type": "integer", "minimum": 0, "maximum": 1074 }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": ["name", "routes", "gates", "expected"],
+      "properties": {
+        "name": { "$ref": "#/$defs/slug" },
+        "routes": {
+          "oneOf": [
+            { "const": "all" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/routeRef" },
+              "uniqueItems": true
+            }
+          ]
+        },
+        "usableAuthProfiles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/authRef" },
+          "uniqueItems": true
+        },
+        "capabilityFeatures": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "authentication",
+              "text",
+              "streaming",
+              "tools",
+              "reasoning",
+              "image_input",
+              "image_output"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "gates": { "$ref": "#/$defs/gates" },
+        "expected": { "$ref": "#/$defs/expected" }
+      },
+      "additionalProperties": false
+    },
+    "negativeCase": {
+      "type": "object",
+      "required": ["name", "kind", "expected"],
+      "properties": {
+        "name": { "$ref": "#/$defs/slug" },
+        "kind": {
+          "enum": [
+            "wire_unknown_field",
+            "wire_duplicate_key",
+            "config_unknown_field",
+            "config_duplicate_key"
+          ]
+        },
+        "expected": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["errorCode"],
+              "properties": { "errorCode": { "enum": [-32700, -32602] } },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["startupRejected"],
+              "properties": { "startupRejected": { "const": true } },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/session/pi-v3-import-case.schema.json",
+  "title": "qxnm-forge PI Session v3 clean-room conformance case v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/case",
+  "$defs": {
+    "mapping": {
+      "type": "object",
+      "required": [
+        "sourceLine",
+        "sourceEntryId",
+        "sourceType",
+        "disposition",
+        "targetRecordIds"
+      ],
+      "properties": {
+        "sourceLine": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 1000000
+        },
+        "sourceEntryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "disposition": {
+          "enum": [
+            "mapped",
+            "mapped_with_loss",
+            "preserved_extension",
+            "quarantined"
+          ]
+        },
+        "targetRecordIds": {
+          "type": "array",
+          "items": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "fixtureId",
+        "sourceFile",
+        "expectedJournalFile",
+        "reportArtifactFile",
+        "referenceCommit",
+        "sourceSessionId",
+        "sourceSha256",
+        "newSessionId",
+        "reportArtifact",
+        "counts",
+        "sourceMappings",
+        "reportedSourceEntryIds",
+        "syntheticRecordIds",
+        "selectedHeadRecordId",
+        "selectedMessageIds",
+        "forbiddenJournalKinds"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://schemas.agentprotocol.local/spec/0.1/schemas/session/pi-v3-import-case.schema.json"
+        },
+        "schemaVersion": { "const": "0.1" },
+        "fixtureId": {
+          "type": "string",
+          "pattern": "^pi-v3-import-[a-z0-9][a-z0-9-]*$",
+          "maxLength": 128
+        },
+        "sourceFile": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]+$",
+          "maxLength": 256
+        },
+        "expectedJournalFile": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]+$",
+          "maxLength": 256
+        },
+        "reportArtifactFile": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]+$",
+          "maxLength": 256
+        },
+        "referenceCommit": {
+          "const": "3f9aa5d10b35223abf6146f960ff5cb5c68053ee"
+        },
+        "sourceSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceSha256": {
+          "$ref": "../common.schema.json#/$defs/sha256"
+        },
+        "newSessionId": {
+          "$ref": "../common.schema.json#/$defs/opaqueId"
+        },
+        "reportArtifact": {
+          "$ref": "../domain/artifact.schema.json#/$defs/artifactReference"
+        },
+        "counts": {
+          "$ref": "pi-v3-import-report.schema.json#/$defs/counts"
+        },
+        "sourceMappings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mapping" },
+          "minItems": 1,
+          "maxItems": 100000
+        },
+        "reportedSourceEntryIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "uniqueItems": true,
+          "maxItems": 100000
+        },
+        "syntheticRecordIds": {
+          "type": "array",
+          "items": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+          "uniqueItems": true,
+          "maxItems": 100000
+        },
+        "selectedHeadRecordId": {
+          "$ref": "../common.schema.json#/$defs/opaqueId"
+        },
+        "selectedMessageIds": {
+          "type": "array",
+          "items": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+          "uniqueItems": true,
+          "maxItems": 100000
+        },
+        "forbiddenJournalKinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "event.emitted",
+              "run.accepted",
+              "run.started",
+              "run.cancellation_requested",
+              "run.terminal",
+              "turn.started",
+              "turn.completed",
+              "provider.attempt",
+              "tool.intent",
+              "tool.result",
+              "approval.requested",
+              "approval.resolved",
+              "queue.appended",
+              "queue.consumed",
+              "faux.configured"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

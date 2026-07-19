@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schemas.agentprotocol.local/spec/0.1/schemas/hard-sandbox-cases.schema.json",
+  "schemaVersion": "0.1",
+  "profile": "linux-bwrap-v1",
+  "platforms": ["linux"],
+  "safety": {
+    "network": "loopback_listener_only",
+    "networkProbe": "python_socket_connect",
+    "workspace": "temporary_only",
+    "outsideCanary": "random_per_run",
+    "credentialCanary": "random_per_run",
+    "descendantProbe": "fork_setsid",
+    "failureMode": "fail_closed_no_host_fallback",
+    "execution": {
+      "overallTimeoutMs": 20000,
+      "caseTimeoutMs": 3000,
+      "treeProbeTimeoutMs": 750,
+      "maxOutputBytes": 65536,
+      "terminationGraceMs": 250,
+      "cleanupTimeoutMs": 2000,
+      "socketConnectTimeoutMs": 500
+    }
+  },
+  "daemon": {
+    "tool": "process.exec",
+    "profileEnvironment": "AGENT_HARD_SANDBOX_PROFILE",
+    "profile": "linux-bwrap-v1",
+    "productionBackend": "/usr/bin/bwrap",
+    "conformanceBackendEnvironment": "AGENT_HARD_SANDBOX_CONFORMANCE_BACKEND",
+    "conformanceGate": {
+      "cliArgument": "--conformance",
+      "environment": {"name":"QXNM_FORGE_CONFORMANCE","value":"1"}
+    },
+    "sandboxRequest": {"profile":"linux-bwrap-v1","workspaceAccess":"read_only","network":"isolated"},
+    "execution": {"caseTimeoutMs":12000,"readyTimeoutMs":2000,"descendantDelayMs":1200,"descendantSettleMs":1600},
+    "positiveCases": [
+      {"name":"daemon_read_only_isolation","kind":"isolation","workspaceAccess":"read_only","expected":{"terminationReason":"exit","containment":"os_isolation"}},
+      {"name":"daemon_read_write_isolation","kind":"isolation","workspaceAccess":"read_write","expected":{"terminationReason":"exit","containment":"os_isolation"}},
+      {"name":"daemon_timeout_descendant_cleanup","kind":"timeout","workspaceAccess":"read_write","expected":{"terminationReason":"timeout","containment":"os_isolation","escapedMarker":false}},
+      {"name":"daemon_output_descendant_cleanup","kind":"output","workspaceAccess":"read_write","expected":{"terminationReason":"output_limit","containment":"os_isolation","escapedMarker":false}},
+      {"name":"daemon_cancel_descendant_cleanup","kind":"cancel","workspaceAccess":"read_write","expected":{"terminationReason":"cancelled","containment":"os_isolation","escapedMarker":false}},
+      {"name":"daemon_exit_descendant_cleanup","kind":"daemon_exit","workspaceAccess":"read_write","expected":{"escapedMarker":false}}
+    ],
+    "negativeCases": [
+      {"name":"unconfigured_request_fails_closed","kind":"unconfigured_request","expected":{"failureKind":"sandbox_unavailable","childStarted":false,"hostFallback":false}},
+      {"name":"missing_backend_startup_fails_closed","kind":"missing_backend","expected":{"failureKind":"sandbox_unavailable","childStarted":false,"hostFallback":false}},
+      {"name":"writable_backend_startup_fails_closed","kind":"user_writable_backend","expected":{"failureKind":"sandbox_unavailable","childStarted":false,"hostFallback":false}},
+      {"name":"setup_self_test_startup_fails_closed","kind":"setup_non_sandbox_backend","expected":{"failureKind":"sandbox_unavailable","childStarted":false,"hostFallback":false}}
+    ],
+    "productionGates": [
+      {"name":"fixed_backend_advertises","kind":"fixed_backend","expected":{"advertised":true}},
+      {"name":"conformance_backend_presence_fails_closed","kind":"override_presence","expected":{"failureKind":"sandbox_unavailable","advertised":false}}
+    ]
+  },
+  "cases": [
+    {"name":"read_only_isolation","workspaceAccess":"read_only","network":"isolated","expected":{"workspaceReadable":true,"workspaceWritable":false,"outsideInvisible":true,"systemReadOnly":true,"networkIsolated":true,"networkProbeExecuted":true,"credentialAbsent":true,"executionCompleted":true,"overallExecutionBounded":true,"timeoutBounded":true,"outputBounded":true,"cancelDescendantsTerminated":true,"parentExitDescendantsTerminated":true,"containment":"os_isolation"}},
+    {"name":"read_write_isolation","workspaceAccess":"read_write","network":"isolated","expected":{"workspaceReadable":true,"workspaceWritable":true,"outsideInvisible":true,"systemReadOnly":true,"networkIsolated":true,"networkProbeExecuted":true,"credentialAbsent":true,"executionCompleted":true,"overallExecutionBounded":true,"timeoutBounded":true,"outputBounded":true,"cancelDescendantsTerminated":true,"parentExitDescendantsTerminated":true,"containment":"os_isolation"}},
+    {"name":"missing_backend_fails_closed","workspaceAccess":"read_only","network":"isolated","backendOverride":"missing","expected":{"failureKind":"sandbox_unavailable","childStarted":false,"hostFallback":false}},
+    {"name":"writable_backend_fails_closed","workspaceAccess":"read_only","network":"isolated","backendOverride":"user_writable","expected":{"failureKind":"sandbox_unavailable","setupFailureKind":"sandbox_unavailable","childStarted":false,"hostFallback":false}}
+  ]
+}

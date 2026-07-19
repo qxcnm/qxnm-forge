@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/capability-matrix.schema.json",
+  "title": "qxnm-forge sparse capability matrix",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>. Missing Cartesian cells resolve to defaultStatus.",
+  "type": "object",
+  "required": ["schemaVersion", "project", "author", "updatedAt", "defaultStatus", "implementations", "foundationFeatures", "apiFamilyScope", "providerScope", "claims"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": "0.1" },
+    "project": { "const": "qxnm-forge" },
+    "author": {
+      "type": "object",
+      "required": ["name", "email"],
+      "properties": {
+        "name": { "const": "高宏顺" },
+        "email": { "const": "18272669457@163.com" }
+      },
+      "additionalProperties": false
+    },
+    "updatedAt": { "$ref": "common.schema.json#/$defs/utcTime" },
+    "defaultStatus": { "const": "unsupported" },
+    "implementations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/implementation" },
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true
+    },
+    "foundationFeatures": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/featureId" },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "apiFamilyScope": {
+      "type": "object",
+      "required": ["families", "features"],
+      "properties": {
+        "families": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "features": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/shortFeatureId" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "providerScope": {
+      "type": "object",
+      "required": ["manifest", "features"],
+      "properties": {
+        "manifest": { "const": "providers.v1.json" },
+        "features": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/shortFeatureId" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "claims": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/claim" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "implementation": { "enum": ["dotnet", "rust"] },
+    "status": { "enum": ["unsupported", "implemented", "conformant", "live-verified"] },
+    "featureId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
+    "shortFeatureId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 64 },
+    "foundationTarget": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "const": "foundation" },
+        "id": { "$ref": "#/$defs/featureId" }
+      },
+      "additionalProperties": false
+    },
+    "apiFamilyTarget": {
+      "type": "object",
+      "required": ["kind", "id", "feature"],
+      "properties": {
+        "kind": { "const": "api_family" },
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128 },
+        "feature": { "$ref": "#/$defs/shortFeatureId" }
+      },
+      "additionalProperties": false
+    },
+    "providerTarget": {
+      "type": "object",
+      "required": ["kind", "id", "apiFamily", "feature"],
+      "properties": {
+        "kind": { "const": "provider" },
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128 },
+        "apiFamily": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128 },
+        "feature": { "$ref": "#/$defs/shortFeatureId" }
+      },
+      "additionalProperties": false
+    },
+    "claim": {
+      "type": "object",
+      "required": ["implementation", "target", "status", "evidence"],
+      "properties": {
+        "implementation": { "$ref": "#/$defs/implementation" },
+        "target": {
+          "oneOf": [
+            { "$ref": "#/$defs/foundationTarget" },
+            { "$ref": "#/$defs/apiFamilyTarget" },
+            { "$ref": "#/$defs/providerTarget" }
+          ]
+        },
+        "status": { "$ref": "#/$defs/status" },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "notes": { "type": "string", "maxLength": 4096 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

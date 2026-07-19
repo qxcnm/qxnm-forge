@@ -1,0 +1,99 @@
+{
+  "schemaVersion": "0.1",
+  "scenarios": [
+    {
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "retryable-429",
+        "seed": 429,
+        "steps": [
+          {
+            "type": "error",
+            "error": {
+              "code": -32005,
+              "message": "Synthetic rate limit",
+              "retryable": true,
+              "details": {
+                "kind": "provider_rate_limit",
+                "httpStatus": 429,
+                "retryAfterMs": 25
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "idle-timeout",
+        "seed": 408,
+        "steps": [
+          {
+            "type": "delay",
+            "durationMs": 1000
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "retryable-503",
+        "seed": 503,
+        "steps": [
+          {
+            "type": "error",
+            "error": {
+              "code": -32005,
+              "message": "Synthetic upstream failure",
+              "retryable": true,
+              "details": {
+                "kind": "provider_unavailable",
+                "httpStatus": 503
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "cancel-during-delay",
+        "seed": 499,
+        "steps": [
+          {
+            "type": "delay",
+            "durationMs": 1000
+          },
+          {
+            "type": "text",
+            "text": "This step must not be emitted after cancellation."
+          }
+        ]
+      },
+      "control": {
+        "cancelAfterMs": 10,
+        "expectedTerminalEvent": "run.cancelled"
+      }
+    },
+    {
+      "scenario": {
+        "schemaVersion": "0.1",
+        "name": "disconnect-after-partial",
+        "seed": 503,
+        "steps": [
+          {
+            "type": "text",
+            "text": "partial"
+          },
+          {
+            "type": "disconnect",
+            "reason": "Synthetic provider disconnect"
+          }
+        ]
+      }
+    }
+  ]
+}

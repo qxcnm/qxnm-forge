@@ -1,0 +1,299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/tool-approval-cases.schema.json",
+  "title": "qxnm-forge tool and approval conformance cases v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "type": "object",
+  "required": ["schemaVersion", "cases"],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "cases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/case" },
+      "minItems": 16,
+      "maxItems": 128
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "seedFile": {
+      "type": "object",
+      "required": ["path", "content"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "content": { "type": "string", "maxLength": 65536 }
+      },
+      "additionalProperties": false
+    },
+    "control": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["action"],
+          "properties": { "action": { "const": "none" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action", "decision"],
+          "properties": {
+            "action": { "const": "respond" },
+            "decision": { "enum": ["allow_once", "deny"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action"],
+          "properties": { "action": { "const": "cancel_on_approval" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "toolExpectation": {
+      "type": "object",
+      "required": ["toolCallId", "name", "executed", "isError"],
+      "properties": {
+        "toolCallId": { "$ref": "common.schema.json#/$defs/opaqueId" },
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "executed": { "type": "boolean" },
+        "isError": { "type": "boolean" },
+        "terminationReason": { "enum": ["cancelled", "denied", "validation_error"] },
+        "errorKind": { "enum": ["cancelled", "permission_denied", "tool_not_found", "tool_arguments_invalid"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "isError": { "const": true } }, "required": ["isError"] },
+          "then": { "required": ["terminationReason", "errorKind"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "workspaceExpectation": {
+      "type": "object",
+      "required": ["path", "state"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "state": { "enum": ["file", "absent"] },
+        "content": { "type": "string", "maxLength": 65536 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "file" } }, "required": ["state"] },
+          "then": { "required": ["content"] },
+          "else": { "not": { "required": ["content"] } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "semanticEventType": {
+      "enum": [
+        "run.started", "turn.started", "turn.completed", "tool.requested",
+        "approval.requested", "approval.resolved", "tool.started",
+        "tool.completed", "run.completed", "run.failed", "run.cancelled",
+        "run.interrupted"
+      ]
+    },
+    "journalExpectation": {
+      "type": "object",
+      "required": ["toolIntentCount", "toolResultCount", "durabilityEvents"],
+      "properties": {
+        "toolIntentCount": { "type": "integer", "minimum": 0, "maximum": 128 },
+        "toolResultCount": { "type": "integer", "minimum": 0, "maximum": 128 },
+        "approvalRequestedCount": { "type": "integer", "minimum": 0, "maximum": 128 },
+        "approvalResolvedCount": { "type": "integer", "minimum": 0, "maximum": 128 },
+        "cancellationRequestedCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "durabilityEvents": {
+          "type": "array",
+          "items": {
+            "enum": ["tool.requested", "approval.requested", "approval.resolved", "tool.completed"]
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "daemonExpected": {
+      "type": "object",
+      "required": ["terminal", "providerTurnCount", "semanticEventOrder", "approvalCount", "toolCalls", "workspace", "journal"],
+      "properties": {
+        "terminal": { "enum": ["completed", "cancelled"] },
+        "providerTurnCount": { "type": "integer", "minimum": 1, "maximum": 101 },
+        "semanticEventOrder": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/semanticEventType" },
+          "minItems": 1,
+          "maxItems": 1024
+        },
+        "approvalCount": { "type": "integer", "minimum": 0, "maximum": 128 },
+        "toolCalls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolExpectation" },
+          "minItems": 1,
+          "maxItems": 128
+        },
+        "workspace": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workspaceExpectation" },
+          "maxItems": 128
+        },
+        "journal": { "$ref": "#/$defs/journalExpectation" }
+      },
+      "additionalProperties": false
+    },
+    "daemonCase": {
+      "type": "object",
+      "required": ["name", "kind", "mode", "seedFiles", "scenario", "control", "expected"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 128 },
+        "kind": { "const": "daemon" },
+        "mode": { "enum": ["headless", "interactive"] },
+        "seedFiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/seedFile" },
+          "maxItems": 128
+        },
+        "scenario": { "$ref": "protocol/faux-scenario.schema.json#/$defs/scenario" },
+        "control": { "$ref": "#/$defs/control" },
+        "expected": { "$ref": "#/$defs/daemonExpected" }
+      },
+      "additionalProperties": false
+    },
+    "approvalFailureFault": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["action", "timeoutMs", "lateResponseCount"],
+          "properties": {
+            "action": { "const": "timeout" },
+            "timeoutMs": { "const": 100 },
+            "lateResponseCount": { "const": 2 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action"],
+          "properties": { "action": { "const": "stdin_eof" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action", "decision"],
+          "properties": {
+            "action": { "const": "response_delivery_failure" },
+            "decision": { "const": "allow_once" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action"],
+          "properties": { "action": { "const": "force_kill_recovery" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "approvalFailureExpected": {
+      "type": "object",
+      "required": [
+        "resolution", "conflictResponses", "toolIntentCount", "toolResultCount",
+        "toolStartedCount", "outcomeKnown", "terminalStatuses", "workspace"
+      ],
+      "properties": {
+        "resolution": {
+          "type": "object",
+          "required": ["count", "decision", "source"],
+          "properties": {
+            "count": { "const": 1 },
+            "decision": { "enum": ["allow_once", "deny"] },
+            "source": { "enum": ["client", "timeout", "disconnect"] }
+          },
+          "additionalProperties": false
+        },
+        "conflictResponses": {
+          "type": "object",
+          "required": ["count", "code", "retryable"],
+          "properties": {
+            "count": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "code": { "const": -32010 },
+            "retryable": { "const": false }
+          },
+          "additionalProperties": false
+        },
+        "toolIntentCount": { "const": 1 },
+        "toolResultCount": { "const": 1 },
+        "toolStartedCount": { "const": 0 },
+        "outcomeKnown": { "const": true },
+        "terminalStatuses": {
+          "type": "array",
+          "items": { "enum": ["completed", "interrupted"] },
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "workspace": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workspaceExpectation" },
+          "minItems": 1,
+          "maxItems": 8
+        }
+      },
+      "additionalProperties": false
+    },
+    "approvalFailureCase": {
+      "type": "object",
+      "required": ["name", "kind", "mode", "seedFiles", "scenario", "fault", "expected"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 128 },
+        "kind": { "const": "approval_failure" },
+        "mode": { "const": "interactive" },
+        "seedFiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/seedFile" },
+          "maxItems": 8
+        },
+        "scenario": { "$ref": "protocol/faux-scenario.schema.json#/$defs/scenario" },
+        "fault": { "$ref": "#/$defs/approvalFailureFault" },
+        "expected": { "$ref": "#/$defs/approvalFailureExpected" }
+      },
+      "additionalProperties": false
+    },
+    "recoveryCase": {
+      "type": "object",
+      "required": ["name", "kind", "fixtureDirectory", "expected"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 128 },
+        "kind": { "const": "portable_recovery" },
+        "fixtureDirectory": { "$ref": "#/$defs/relativePath" },
+        "expected": {
+          "type": "object",
+          "required": ["toolCallId", "intentCountBefore", "intentCountAfter", "resultCountAfter", "outcomeKnown", "terminal"],
+          "properties": {
+            "toolCallId": { "$ref": "common.schema.json#/$defs/opaqueId" },
+            "intentCountBefore": { "const": 1 },
+            "intentCountAfter": { "const": 1 },
+            "resultCountAfter": { "const": 1 },
+            "outcomeKnown": { "const": false },
+            "terminal": { "const": "interrupted" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "oneOf": [
+        { "$ref": "#/$defs/daemonCase" },
+        { "$ref": "#/$defs/approvalFailureCase" },
+        { "$ref": "#/$defs/recoveryCase" }
+      ]
+    }
+  }
+}

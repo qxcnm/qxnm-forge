@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/QxnmForge.Core/QxnmForge.Core.csproj" />
+  <Project Path="src/QxnmForge.Cli/QxnmForge.Cli.csproj" />
+  <Project Path="tests/QxnmForge.Core.Tests/QxnmForge.Core.Tests.csproj" />
+</Solution>

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/approval.schema.json",
+  "title": "qxnm-forge approval request and decision",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$ref": "#/$defs/approvalRequest",
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "enum": ["path", "executable", "origin", "credential", "process", "other"] },
+        "value": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      },
+      "additionalProperties": false
+    },
+    "approvalRequest": {
+      "type": "object",
+      "required": ["approvalId", "toolCallId", "operation", "arguments", "operationHash", "risk", "resources", "choices", "expiresAt"],
+      "properties": {
+        "approvalId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "toolCallId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "operation": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+        "arguments": { "type": "object" },
+        "operationHash": { "$ref": "../common.schema.json#/$defs/sha256" },
+        "risk": { "enum": ["low", "medium", "high", "critical"] },
+        "reason": { "type": "string", "maxLength": 4096 },
+        "resources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resource" },
+          "maxItems": 128
+        },
+        "choices": {
+          "type": "array",
+          "items": { "enum": ["allow_once", "allow_session", "deny"] },
+          "contains": { "const": "deny" },
+          "minItems": 2,
+          "uniqueItems": true
+        },
+        "expiresAt": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "approvalDecision": {
+      "type": "object",
+      "required": ["choice"],
+      "properties": {
+        "choice": { "enum": ["allow_once", "allow_session", "deny"] },
+        "reason": { "type": "string", "maxLength": 4096 },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

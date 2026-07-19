@@ -1,0 +1,47 @@
+{
+  "$schema": "urn:agent-protocol:session:journal-tail-recovery-cases:0.1",
+  "schemaVersion": "0.1",
+  "contract": {
+    "namespace": "org.agent-session.recovery",
+    "action": "truncate_uncommitted_tail",
+    "backupFileTemplate": "journal.recovery-{originalSha256}.bak",
+    "unterminatedPolicy": "uncommitted_without_independent_durability_witness",
+    "corruptError": {
+      "code": -32008,
+      "retryable": false,
+      "kind": "journal_corrupt"
+    }
+  },
+  "cases": [
+    {
+      "name": "invalid_torn_tail",
+      "mutation": "invalid_json_no_lf",
+      "expected": "repair"
+    },
+    {
+      "name": "valid_json_no_lf",
+      "mutation": "valid_record_no_lf",
+      "expected": "repair"
+    },
+    {
+      "name": "complete_invalid_utf8",
+      "mutation": "invalid_utf8_lf",
+      "expected": "journal_corrupt"
+    },
+    {
+      "name": "complete_invalid_json",
+      "mutation": "invalid_json_lf",
+      "expected": "journal_corrupt"
+    },
+    {
+      "name": "complete_invalid_schema",
+      "mutation": "invalid_schema_lf",
+      "expected": "journal_corrupt"
+    },
+    {
+      "name": "recursive_duplicate_key",
+      "mutation": "recursive_duplicate_key_lf",
+      "expected": "journal_corrupt"
+    }
+  ]
+}

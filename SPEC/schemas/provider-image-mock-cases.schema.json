@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/provider-image-mock-cases.schema.json",
+  "title": "qxnm-forge OpenRouter Images artifact-first mock suite v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "type": "object",
+  "required": ["$schema", "schemaVersion", "suiteId", "family", "limits", "cases"],
+  "properties": {
+    "$schema": {"const": "https://schemas.agentprotocol.local/spec/0.1/schemas/provider-image-mock-cases.schema.json"},
+    "schemaVersion": {"const": "0.1"},
+    "suiteId": {"const": "openrouter-images-artifact-v1"},
+    "family": {
+      "type": "object",
+      "required": ["id", "apiFamily", "providerId", "modelId", "endpointEnv", "credentialEnv", "request"],
+      "properties": {
+        "id": {"const": "openrouter-images"},
+        "apiFamily": {"const": "openrouter-images"},
+        "providerId": {"const": "openrouter"},
+        "modelId": {"const": "google/gemini-2.5-flash-image"},
+        "endpointEnv": {"const": "QXNM_FORGE_OPENROUTER_IMAGES_ENDPOINT"},
+        "credentialEnv": {"const": "OPENROUTER_API_KEY"},
+        "request": {
+          "type": "object",
+          "required": ["pathSuffix", "requiredHeaders", "equals"],
+          "properties": {
+            "pathSuffix": {"const": "/chat/completions"},
+            "requiredHeaders": {"const": ["authorization", "content-type"]},
+            "equals": {"type": "object", "minProperties": 7, "additionalProperties": {"type": ["string", "boolean"]}}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": ["maxInputImages", "maxOutputImages", "maxInputImageBytes", "maxOutputImageBytes", "maxResponseBytes", "maxTextBytes"],
+      "properties": {
+        "maxInputImages": {"const": 8},
+        "maxOutputImages": {"const": 8},
+        "maxInputImageBytes": {"const": 16777216},
+        "maxOutputImageBytes": {"const": 33554432},
+        "maxResponseBytes": {"const": 50331648},
+        "maxTextBytes": {"const": 262144}
+      },
+      "additionalProperties": false
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 13,
+      "maxItems": 13,
+      "items": {
+        "type": "object",
+        "required": ["name", "response", "expected"],
+        "properties": {
+          "name": {"enum": ["success_png_text", "success_jpeg", "success_webp", "success_gif", "remote_url_rejected", "invalid_base64_rejected", "mime_mismatch_rejected", "svg_rejected", "rate_limit_retry", "server_error_retry", "disconnect", "idle_timeout", "cancellation"]},
+          "response": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {"enum": ["success", "remote_url", "invalid_base64", "mime_mismatch", "svg", "http_retry", "disconnect", "idle", "cancel"]},
+              "mediaType": {"enum": ["image/png", "image/jpeg", "image/webp", "image/gif"]},
+              "thenMediaType": {"const": "image/png"},
+              "text": {"type": "string", "maxLength": 262144},
+              "usage": {"type": "object"},
+              "chunkSizes": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1, "maximum": 65536}},
+              "status": {"enum": [429, 503]},
+              "retryAfter": {"type": "string", "minLength": 1, "maxLength": 128},
+              "idleMs": {"type": "integer", "minimum": 100, "maximum": 10000}
+            },
+            "additionalProperties": false
+          },
+          "expected": {
+            "type": "object",
+            "required": ["terminal", "artifactCount"],
+            "properties": {
+              "terminal": {"enum": ["completed", "failed", "cancelled", "interrupted"]},
+              "artifactCount": {"type": "integer", "minimum": 0, "maximum": 8},
+              "minRequests": {"type": "integer", "minimum": 2, "maximum": 3}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}
