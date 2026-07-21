@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import "@/i18n";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
@@ -35,6 +36,30 @@ class ResizeObserverStub implements ResizeObserver {
 }
 
 globalThis.ResizeObserver = ResizeObserverStub;
+
+/**
+ * 为 jsdom 提供 next-themes 解析系统配色时所需的 MediaQueryList 投影。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function createMediaQueryList(query: string): MediaQueryList {
+  return {
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  };
+}
+
+Object.defineProperty(window, "matchMedia", {
+  configurable: true,
+  value: vi.fn(createMediaQueryList),
+});
 
 Object.defineProperty(Element.prototype, "scrollIntoView", {
   configurable: true,

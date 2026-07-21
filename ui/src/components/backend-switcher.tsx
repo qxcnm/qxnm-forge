@@ -1,4 +1,5 @@
 import { Braces, Boxes } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -17,6 +18,7 @@ interface BackendSwitcherProps {
  * 邮箱：18272669457@163.com
  */
 export function BackendSwitcher({ compact = false }: BackendSwitcherProps) {
+  const { t } = useTranslation();
   const backend = useWorkspaceUiStore((state) => state.backend);
   const setBackend = useWorkspaceUiStore((state) => state.setBackend);
 
@@ -39,17 +41,17 @@ export function BackendSwitcher({ compact = false }: BackendSwitcherProps) {
           type="single"
           value={backend}
           onValueChange={handleValueChange}
-          aria-label="选择后端实现"
+          aria-label={t("backend.choose")}
           className={cn(
-            "gap-0 rounded-md border border-stone-200 bg-white p-0.5 shadow-sm",
+            "gap-0 rounded-md border bg-background p-0.5 shadow-sm",
             compact ? "h-7" : "h-8",
           )}
         >
           <ToggleGroupItem
             value="rust"
-            aria-label="使用 Rust 后端"
+            aria-label={t("backend.useRust")}
             className={cn(
-              "gap-1.5 rounded px-2 text-[11px] font-medium text-stone-500 shadow-none data-[state=on]:bg-stone-100 data-[state=on]:text-stone-900 data-[state=on]:shadow-none",
+              "gap-1.5 rounded px-2 text-[11px] font-medium text-muted-foreground shadow-none data-[state=on]:bg-muted data-[state=on]:text-foreground data-[state=on]:shadow-none",
               compact ? "h-6" : "h-7",
             )}
           >
@@ -58,9 +60,9 @@ export function BackendSwitcher({ compact = false }: BackendSwitcherProps) {
           </ToggleGroupItem>
           <ToggleGroupItem
             value="dotnet"
-            aria-label="使用 .NET 后端"
+            aria-label={t("backend.useDotnet")}
             className={cn(
-              "gap-1.5 rounded px-2 text-[11px] font-medium text-stone-500 shadow-none data-[state=on]:bg-stone-100 data-[state=on]:text-stone-900 data-[state=on]:shadow-none",
+              "gap-1.5 rounded px-2 text-[11px] font-medium text-muted-foreground shadow-none data-[state=on]:bg-muted data-[state=on]:text-foreground data-[state=on]:shadow-none",
               compact ? "h-6" : "h-7",
             )}
           >
@@ -69,7 +71,7 @@ export function BackendSwitcher({ compact = false }: BackendSwitcherProps) {
           </ToggleGroupItem>
         </ToggleGroup>
       </TooltipTrigger>
-      <TooltipContent side="top">切换 application service 实现</TooltipContent>
+      <TooltipContent side="top">{t("backend.switchHint")}</TooltipContent>
     </Tooltip>
   );
 }

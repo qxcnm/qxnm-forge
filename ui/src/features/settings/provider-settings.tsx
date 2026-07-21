@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import {
   AlertDialog,
@@ -26,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import i18n from "@/i18n";
 import { cn } from "@/lib/utils";
 import type {
   ApplicationServiceClient,
@@ -117,7 +119,7 @@ function draftToInput(draft: ProviderDraft): ProviderConnectionInput {
 function parseConnectionImport(source: string): ImportedConnection {
   const parsed: unknown = JSON.parse(source);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("连接 JSON 必须是对象");
+    throw new Error(i18n.t("provider.importErrors.object"));
   }
   const value = parsed as Record<string, unknown>;
   if (
@@ -125,7 +127,7 @@ function parseConnectionImport(source: string): ImportedConnection {
     typeof value.url !== "string" ||
     (value.key !== undefined && typeof value.key !== "string")
   ) {
-    throw new Error("仅支持 newapi_channel_conn 连接 JSON");
+    throw new Error(i18n.t("provider.importErrors.type"));
   }
   const endpoint = new URL(value.url);
   if (
@@ -135,7 +137,7 @@ function parseConnectionImport(source: string): ImportedConnection {
     endpoint.search !== "" ||
     endpoint.hash !== ""
   ) {
-    throw new Error("Provider URL 必须使用 HTTPS");
+    throw new Error(i18n.t("provider.importErrors.https"));
   }
   if (endpoint.pathname === "/") {
     endpoint.pathname = "/v1";
@@ -177,6 +179,7 @@ export function ProviderSettings({
   service,
   supportedMethods,
 }: ProviderSettingsProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const queryKey = ["provider-connections", service.mode, backend] as const;
   const canList = supportedMethods.includes("providerConnections/list");
@@ -198,7 +201,8 @@ export function ProviderSettings({
   );
   const [draft, setDraft] = useState<ProviderDraft>(EMPTY_PROVIDER_DRAFT);
   const [credential, setCredential] = useState("");
-  const [importSource, setImportSource] = useState("");
+  const importSourceRef = useRef<HTMLInputElement>(null);
+  const [hasImportSource, setHasImportSource] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -210,16 +214,34 @@ export function ProviderSettings({
     draftLogoUrl !== null && !failedLogoAssetIds.has(draftLogoAssetId);
 
   /**
-   * 在 Provider 变更后刷新连接、初始化能力与模型快照。
+   * 在 Provider 变更后先刷新初始化代际，再刷新对应模型快照。
+   *
+   * 不变量：连接列表可与 initialize 并行，但 models 只能在 initialize 成功后 refetch。
+   * 失败：连接、initialize 或 models 任一活动查询失败时向保存流程抛出。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
   const refreshProviderQueries = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey }),
-      queryClient.invalidateQueries({ queryKey: ["application-service", backend] }),
-    ]);
+    const initializeQueryKey = [
+      "application-service",
+      backend,
+      "initialize",
+    ] as const;
+    const modelsQueryKey = ["application-service", backend, "models"] as const;
+    const initializeRefresh = queryClient.invalidateQueries(
+      { queryKey: initializeQueryKey, exact: true, refetchType: "active" },
+      { throwOnError: true },
+    );
+    const connectionsRefresh = queryClient.invalidateQueries(
+      { queryKey, exact: true, refetchType: "active" },
+      { throwOnError: true },
+    );
+    await Promise.all([initializeRefresh, connectionsRefresh]);
+    await queryClient.invalidateQueries(
+      { queryKey: modelsQueryKey, refetchType: "active" },
+      { throwOnError: true },
+    );
   };
 
   /**
@@ -236,7 +258,10 @@ export function ProviderSettings({
     setEditingRevision(connection.revision);
     setDraft(connectionToDraft(connection));
     setCredential("");
-    setImportSource("");
+    if (importSourceRef.current) {
+      importSourceRef.current.value = "";
+    }
+    setHasImportSource(false);
     setNotice(null);
     setErrorMessage(null);
   };
@@ -255,37 +280,49 @@ export function ProviderSettings({
     setEditingRevision(null);
     setDraft(EMPTY_PROVIDER_DRAFT);
     setCredential("");
-    setImportSource("");
+    if (importSourceRef.current) {
+      importSourceRef.current.value = "";
+    }
+    setHasImportSource(false);
     setNotice(null);
     setErrorMessage(null);
   };
 
   /**
-   * 从用户粘贴的 New API JSON 填充草稿与瞬时密码输入。
+   * 从未受控密码输入同步读取 New API JSON，并填充草稿与瞬时密码输入。
+   *
+   * 不变量：完整导入原文不进入 React state，且成功或失败后都会立即从 DOM 清空。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
   const handleImport = () => {
+    const importInput = importSourceRef.current;
+    const importSource = importInput?.value ?? "";
+    setNotice(null);
     try {
       const imported = parseConnectionImport(importSource);
       setSelectedConnectionId(null);
       setEditingRevision(null);
       setDraft(imported.draft);
       setCredential(canSetCredential ? imported.credential : "");
-      setImportSource("");
       setNotice(
         canSetCredential
-          ? "连接信息已导入，请确认模型和凭据后保存"
-          : "连接信息已导入；当前服务不支持写入凭据",
+          ? t("provider.imported")
+          : t("provider.importedWithoutCredential"),
       );
       setErrorMessage(
         imported.credential && !canSetCredential
-          ? "导入内容中的 Key 未被保留，请切换到支持凭据管理的服务"
+          ? t("provider.keyDiscarded")
           : null,
       );
     } catch {
-      setErrorMessage("无法解析连接 JSON，请检查 _type、url 和 key 字段");
+      setErrorMessage(t("provider.importErrors.invalid"));
+    } finally {
+      if (importInput) {
+        importInput.value = "";
+      }
+      setHasImportSource(false);
     }
   };
 
@@ -318,7 +355,7 @@ export function ProviderSettings({
       try {
         if (connectionId !== null) {
           if (expectedRevision === null) {
-            setErrorMessage("Provider revision 不可用，请重新选择连接");
+            setErrorMessage(t("provider.revisionUnavailable"));
             return;
           }
           result = await service.updateProviderConnection(
@@ -330,7 +367,7 @@ export function ProviderSettings({
           result = await service.createProviderConnection(draftToInput(draft));
         }
       } catch {
-        setErrorMessage("连接配置保存失败，请检查字段或重新加载最新 revision");
+        setErrorMessage(t("provider.saveFailed"));
         return;
       }
 
@@ -342,20 +379,20 @@ export function ProviderSettings({
           await service.setProviderCredential(result.connection.providerId, pendingCredential);
         } catch {
           await refreshProviderQueries().catch(() => undefined);
-          setErrorMessage("连接配置已保存，但 API Key 写入失败；请重新输入 Key 后再次保存");
+          setErrorMessage(t("provider.keySaveFailed"));
           return;
         }
       }
       try {
         await refreshProviderQueries();
       } catch {
-        setErrorMessage("连接已保存，但最新 Provider 状态刷新失败；请重新打开设置");
+        setErrorMessage(t("provider.refreshFailed"));
         return;
       }
       setNotice(
         result.restartRequired && service.mode === "application-service"
-          ? "已保存并重新连接"
-          : "已保存，预览已更新",
+          ? t("provider.savedAndReconnected")
+          : t("provider.savedPreview"),
       );
     } finally {
       setSaving(false);
@@ -381,11 +418,11 @@ export function ProviderSettings({
       await refreshProviderQueries();
       setNotice(
         status.restartRequired && service.mode === "application-service"
-          ? "凭据已移除并重新连接"
-          : "凭据已移除，预览已更新",
+          ? t("provider.credentialRemovedAndReconnected")
+          : t("provider.credentialRemovedPreview"),
       );
     } catch {
-      setErrorMessage("无法移除凭据");
+      setErrorMessage(t("provider.credentialRemoveFailed"));
     } finally {
       setSaving(false);
     }
@@ -413,12 +450,12 @@ export function ProviderSettings({
       await refreshProviderQueries();
       setNotice(
         service.mode === "application-service"
-          ? "Provider 连接已删除并重新连接"
-          : "Provider 连接已从预览删除",
+          ? t("provider.deletedAndReconnected")
+          : t("provider.deletedPreview"),
       );
       setErrorMessage(null);
     } catch {
-      setErrorMessage("删除失败，请重新加载后再试");
+      setErrorMessage(t("provider.deleteFailed"));
     } finally {
       setSaving(false);
     }
@@ -426,19 +463,19 @@ export function ProviderSettings({
 
   if (!canList) {
     return (
-      <div className="border-y border-stone-100 py-10 text-center">
-        <Server className="mx-auto size-5 text-stone-300" aria-hidden="true" />
-        <h2 className="mt-3 text-[13px] font-medium text-stone-700">当前服务不支持 Provider 管理</h2>
-        <p className="mt-1 text-[11px] text-stone-400">请升级或切换 application service 实现。</p>
+      <div className="border-y py-10 text-center">
+        <Server className="mx-auto size-5 text-muted-foreground/50" aria-hidden="true" />
+        <h2 className="mt-3 text-[13px] font-medium text-foreground/80">{t("provider.unsupportedTitle")}</h2>
+        <p className="mt-1 text-[11px] text-muted-foreground">{t("provider.unsupportedDescription")}</p>
       </div>
     );
   }
 
   if (connectionsQuery.isError) {
     return (
-      <div className="border-y border-stone-100 py-10 text-center" role="alert">
+      <div className="border-y py-10 text-center" role="alert">
         <Server className="mx-auto size-5 text-red-300" aria-hidden="true" />
-        <h2 className="mt-3 text-[13px] font-medium text-stone-700">无法读取 Provider 配置</h2>
+        <h2 className="mt-3 text-[13px] font-medium text-foreground/80">{t("provider.loadFailed")}</h2>
         <Button
           type="button"
           variant="outline"
@@ -447,17 +484,17 @@ export function ProviderSettings({
           onClick={() => void connectionsQuery.refetch()}
         >
           <RefreshCw className="size-3" aria-hidden="true" />
-          重试
+          {t("common.retry")}
         </Button>
       </div>
     );
   }
 
   return (
-    <div className="grid min-h-[540px] grid-cols-1 border-y border-stone-100 lg:grid-cols-[220px_minmax(0,1fr)]">
-      <aside className="border-b border-stone-100 py-3 lg:border-b-0 lg:border-r">
+    <div className="grid min-h-[540px] grid-cols-1 border-y lg:grid-cols-[220px_minmax(0,1fr)]">
+      <aside className="border-b bg-muted/20 py-3 lg:border-b-0 lg:border-r">
         <div className="flex items-center justify-between px-3 pb-2">
-          <span className="text-[11px] font-semibold text-stone-700">提供商</span>
+          <span className="text-[11px] font-semibold text-foreground/80">{t("provider.title")}</span>
           <Button
             type="button"
             variant="ghost"
@@ -465,13 +502,13 @@ export function ProviderSettings({
             className="size-7"
             onClick={beginCreate}
             disabled={!canCreate || saving}
-            aria-label="新建提供商"
+            aria-label={t("provider.create")}
           >
             <Plus className="size-3.5" aria-hidden="true" />
           </Button>
         </div>
         {connectionsQuery.isLoading ? (
-          <p className="px-3 py-4 text-[11px] text-stone-400">正在读取提供商...</p>
+          <p className="px-3 py-4 text-[11px] text-muted-foreground">{t("provider.loading")}</p>
         ) : (
           <div className="space-y-0.5 px-2">
             {connections.map((connection) => {
@@ -488,16 +525,20 @@ export function ProviderSettings({
                   onClick={() => selectConnection(connection)}
                   disabled={saving}
                   className={cn(
-                    "flex h-12 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left hover:bg-stone-50",
-                    selectedConnectionId === connection.connectionId && "bg-stone-100",
+                    "flex h-12 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left hover:bg-accent",
+                    selectedConnectionId === connection.connectionId && "bg-accent",
                   )}
-                  aria-label={`编辑提供商 ${connection.displayName}`}
+                  aria-label={`${t("provider.edit", { name: connection.displayName })} · ${
+                    connection.credentialConfigured
+                      ? t("provider.credentialConfigured")
+                      : t("provider.credentialNotConfigured")
+                  }`}
                 >
                   {logoAvailable ? (
                     <img
                       src={logoUrl}
                       alt=""
-                      className="size-8 rounded border border-stone-100 bg-white object-contain"
+                      className="size-8 rounded border bg-white object-contain"
                       onError={() => {
                         setFailedLogoAssetIds((currentIds) =>
                           new Set(currentIds).add(logoAssetId),
@@ -505,22 +546,22 @@ export function ProviderSettings({
                       }}
                     />
                   ) : (
-                    <span className="flex size-8 items-center justify-center rounded bg-stone-100 text-[9px] font-semibold text-stone-500">
+                    <span className="flex size-8 items-center justify-center rounded bg-muted text-[9px] font-semibold text-muted-foreground">
                       {connection.displayName.slice(0, 2).toUpperCase()}
                     </span>
                   )}
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[11px] font-medium text-stone-700">
+                    <span className="block truncate text-[11px] font-medium text-foreground/80">
                       {connection.displayName}
                     </span>
-                    <span className="block truncate text-[9px] text-stone-400">{connection.providerId}</span>
+                    <span className="block truncate text-[9px] text-muted-foreground">{connection.providerId}</span>
                   </span>
                   <span
                     className={cn(
                       "size-1.5 rounded-full",
-                      connection.credentialConfigured ? "bg-emerald-500" : "bg-stone-300",
+                      connection.credentialConfigured ? "bg-emerald-500" : "bg-muted-foreground/40",
                     )}
-                    aria-label={connection.credentialConfigured ? "凭据已配置" : "凭据未配置"}
+                    aria-hidden="true"
                   />
                 </button>
               );
@@ -539,8 +580,8 @@ export function ProviderSettings({
             {draftLogoAvailable ? (
               <img
                 src={draftLogoUrl}
-                alt="提供商 Logo 预览"
-                className="size-10 shrink-0 rounded border border-stone-100 bg-white object-contain"
+                alt={t("provider.logoPreview")}
+                className="size-10 shrink-0 rounded border bg-white object-contain"
                 onError={() => {
                   setFailedLogoAssetIds((currentIds) =>
                     new Set(currentIds).add(draftLogoAssetId),
@@ -549,10 +590,10 @@ export function ProviderSettings({
               />
             ) : null}
             <div className="min-w-0">
-              <h2 className="truncate text-[13px] font-semibold text-stone-900">
-                {selectedConnection ? selectedConnection.displayName : "新建提供商"}
+              <h2 className="truncate text-[13px] font-semibold text-foreground">
+                {selectedConnection ? selectedConnection.displayName : t("provider.create")}
               </h2>
-              <p className="mt-0.5 truncate text-[10px] text-stone-400">OpenAI-compatible Chat 连接</p>
+              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{t("provider.connectionDescription")}</p>
             </div>
           </div>
           {selectedConnection && canDelete ? (
@@ -560,10 +601,10 @@ export function ProviderSettings({
               type="button"
               variant="ghost"
               size="icon"
-              className="size-7 text-stone-400 hover:text-red-600"
+              className="size-7 text-muted-foreground hover:text-red-600"
               onClick={() => setDeleteConnection(selectedConnection)}
               disabled={saving}
-              aria-label="删除提供商"
+              aria-label={t("provider.deleteProvider")}
             >
               <Trash2 className="size-3.5" aria-hidden="true" />
             </Button>
@@ -572,18 +613,24 @@ export function ProviderSettings({
 
         <fieldset disabled={saving} className="contents">
         {!selectedConnection ? (
-          <div className="mb-5 rounded-md border border-dashed border-stone-200 bg-stone-50/60 p-3">
-            <Label htmlFor="provider-import" className="text-[10px] text-stone-600">
-              导入 New API 连接 JSON
+          <div className="mb-5 rounded-md border border-dashed bg-muted/30 p-3">
+            <Label htmlFor="provider-import" className="text-[10px] text-foreground/70">
+              {t("provider.importLabel")}
             </Label>
             <div className="mt-2 flex gap-2">
               <Input
                 id="provider-import"
-                value={importSource}
-                onChange={(event) => setImportSource(event.target.value)}
+                ref={importSourceRef}
+                type="password"
+                onChange={(event) =>
+                  setHasImportSource(event.currentTarget.value.trim().length > 0)
+                }
                 placeholder={'{"_type":"newapi_channel_conn","key":"sk-...","url":"https://..."}'}
                 className="h-8 min-w-0 text-[10px]"
-                autoComplete="off"
+                autoComplete="new-password"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
               />
               <Button
                 type="button"
@@ -591,10 +638,10 @@ export function ProviderSettings({
                 size="sm"
                 className="h-8 gap-1.5 px-2 text-[10px] shadow-none"
                 onClick={handleImport}
-                disabled={!importSource.trim() || !canCreate}
+                disabled={!hasImportSource || !canCreate}
               >
                 <Upload className="size-3" aria-hidden="true" />
-                导入
+                {t("common.import")}
               </Button>
             </div>
           </div>
@@ -602,7 +649,7 @@ export function ProviderSettings({
 
         <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="provider-display-name" className="text-[10px]">名称</Label>
+            <Label htmlFor="provider-display-name" className="text-[10px]">{t("provider.fields.name")}</Label>
             <Input
               id="provider-display-name"
               value={draft.displayName}
@@ -613,7 +660,7 @@ export function ProviderSettings({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="provider-id" className="text-[10px]">Provider ID</Label>
+            <Label htmlFor="provider-id" className="text-[10px]">{t("provider.fields.providerId")}</Label>
             <Input
               id="provider-id"
               value={draft.providerId}
@@ -624,7 +671,7 @@ export function ProviderSettings({
             />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="provider-base-url" className="text-[10px]">Base URL</Label>
+            <Label htmlFor="provider-base-url" className="text-[10px]">{t("provider.fields.baseUrl")}</Label>
             <Input
               id="provider-base-url"
               type="url"
@@ -635,7 +682,7 @@ export function ProviderSettings({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="provider-api-family" className="text-[10px]">API family</Label>
+            <Label htmlFor="provider-api-family" className="text-[10px]">{t("provider.fields.apiFamily")}</Label>
             <Input
               id="provider-api-family"
               value={draft.apiFamily}
@@ -644,7 +691,7 @@ export function ProviderSettings({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="provider-logo" className="text-[10px]">Logo 资源 ID</Label>
+            <Label htmlFor="provider-logo" className="text-[10px]">{t("provider.fields.logoAssetId")}</Label>
             <Input
               id="provider-logo"
               value={draft.logoAssetId}
@@ -656,36 +703,36 @@ export function ProviderSettings({
             />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="provider-models" className="text-[10px]">模型 ID</Label>
+            <Label htmlFor="provider-models" className="text-[10px]">{t("provider.fields.modelIds")}</Label>
             <Textarea
               id="provider-models"
               value={draft.modelIdsText}
               onChange={(event) => setDraft({ ...draft, modelIdsText: event.target.value })}
               className="min-h-16 resize-y font-mono text-[10px]"
-              placeholder="每行一个模型 ID"
+              placeholder={t("provider.fields.modelIdsPlaceholder")}
               required
             />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <div className="flex items-center justify-between gap-2">
-              <Label htmlFor="provider-key" className="text-[10px]">API Key</Label>
+              <Label htmlFor="provider-key" className="text-[10px]">{t("provider.fields.apiKey")}</Label>
               {selectedConnection?.credentialConfigured ? (
-                <Badge variant="secondary" className="gap-1 bg-emerald-50 text-[9px] text-emerald-700">
+                <Badge variant="secondary" className="gap-1 bg-emerald-50 text-[9px] text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
                   <CheckCircle2 className="size-2.5" aria-hidden="true" />
-                  已配置
+                  {t("common.configured")}
                 </Badge>
               ) : null}
             </div>
             <div className="flex gap-2">
               <div className="relative min-w-0 flex-1">
-                <KeyRound className="pointer-events-none absolute left-2.5 top-2 size-3 text-stone-400" aria-hidden="true" />
+                <KeyRound className="pointer-events-none absolute left-2.5 top-2 size-3 text-muted-foreground" aria-hidden="true" />
                 <Input
                   id="provider-key"
                   type="password"
                   value={credential}
                   onChange={(event) => setCredential(event.target.value)}
                   className="h-8 pl-8 text-[11px]"
-                  placeholder={selectedConnection?.credentialConfigured ? "输入新 Key 以替换" : "输入 API Key"}
+                  placeholder={selectedConnection?.credentialConfigured ? t("provider.fields.replacementKey") : t("provider.fields.apiKeyPlaceholder")}
                   autoComplete="new-password"
                   disabled={!canSetCredential}
                 />
@@ -699,20 +746,20 @@ export function ProviderSettings({
                   onClick={() => void handleRemoveCredential()}
                   disabled={saving}
                 >
-                  移除
+                  {t("common.remove")}
                 </Button>
               ) : null}
             </div>
           </div>
         </div>
 
-        <div className="mt-4 flex items-center gap-2 border-t border-stone-100 pt-4">
+        <div className="mt-4 flex items-center gap-2 border-t pt-4">
           <Switch
             id="provider-enabled"
             checked={draft.enabled}
             onCheckedChange={(enabled) => setDraft({ ...draft, enabled })}
           />
-          <Label htmlFor="provider-enabled" className="text-[11px] font-normal">启用此提供商</Label>
+          <Label htmlFor="provider-enabled" className="text-[11px] font-normal">{t("provider.fields.enable")}</Label>
           <div className="flex-1" />
           <Button
             type="submit"
@@ -720,7 +767,7 @@ export function ProviderSettings({
             className="h-8 px-3 text-[10px]"
             disabled={saving || (selectedConnectionId ? !canUpdate : !canCreate)}
           >
-            {saving ? "保存中..." : "保存"}
+            {saving ? t("common.saving") : t("common.save")}
           </Button>
         </div>
         </fieldset>
@@ -731,18 +778,18 @@ export function ProviderSettings({
       <AlertDialog open={deleteConnection !== null} onOpenChange={(open) => !open && setDeleteConnection(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>删除“{deleteConnection?.displayName}”？</AlertDialogTitle>
+            <AlertDialogTitle>{t("provider.deleteTitle", { name: deleteConnection?.displayName })}</AlertDialogTitle>
             <AlertDialogDescription>
-              连接配置与关联凭据会被永久移除，此操作无法撤销。
+              {t("provider.deleteDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-red-600 hover:bg-red-700"
               onClick={() => void confirmDelete()}
             >
-              删除
+              {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

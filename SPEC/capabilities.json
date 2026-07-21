@@ -6,7 +6,7 @@
     "name": "高宏顺",
     "email": "18272669457@163.com"
   },
-  "updatedAt": "2026-07-21T07:38:00Z",
+  "updatedAt": "2026-07-21T16:06:03Z",
   "defaultStatus": "unsupported",
   "implementations": [
     "dotnet",
@@ -3589,14 +3589,37 @@
       "evidence": [
         "rust/src/daemon.rs",
         "rust/src/protocol.rs",
+        "ui/src/App.tsx",
+        "ui/src/App.fail-closed.test.tsx",
+        "ui/src/components/composer.tsx",
+        "ui/src/components/conversation.tsx",
+        "ui/src/components/conversation.test.tsx",
         "ui/src/types/application-service.ts",
         "ui/src/lib/tauri-application-service.ts",
         "ui/src/lib/tauri-application-service.test.ts",
+        "ui/src/lib/application-service-events.ts",
+        "ui/src/lib/application-service-events.test.tsx",
+        "ui/src/lib/mock-application-service.ts",
+        "ui/src/lib/mock-application-service.test.ts",
+        "ui/src/lib/model-route.ts",
+        "ui/src/lib/model-route.test.ts",
         "ui/src-tauri/src/application_service_bridge.rs",
+        "ui/src/features/approvals/approval-request-card.tsx",
+        "ui/src/features/approvals/approval-request-card.test.tsx",
+        "ui/src/features/approvals/pending-approvals.ts",
+        "ui/src/features/approvals/pending-approvals.test.ts",
+        "ui/src/features/settings/provider-settings.tsx",
+        "ui/src/features/plugins/plugin-workspace.tsx",
+        "ui/src/store/plugin-marketplace-store.ts",
+        "ui/src/components/interface-providers.tsx",
+        "ui/src/components/interface-theme.ts",
+        "ui/src/i18n.ts",
+        "ui/src/features/plugins/plugin-workspace.test.tsx",
+        "ui/src/features/settings/theme-language.test.tsx",
         "SPEC/ui.md",
         "ui/README.md"
       ],
-      "notes": "React/Vite/shadcn 工作台与 Tauri desktop-local bridge 已实现；WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon，普通浏览器使用零网络 faux 预览。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
+      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，Computer Use 还要求交互审批方法和 durable 审批事件。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
     },
     {
       "implementation": "dotnet",
@@ -3608,14 +3631,37 @@
       "evidence": [
         "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
         "dotnet/src/QxnmForge.Core/Protocol/ProtocolModels.cs",
+        "ui/src/App.tsx",
+        "ui/src/App.fail-closed.test.tsx",
+        "ui/src/components/composer.tsx",
+        "ui/src/components/conversation.tsx",
+        "ui/src/components/conversation.test.tsx",
         "ui/src/types/application-service.ts",
         "ui/src/lib/tauri-application-service.ts",
         "ui/src/lib/tauri-application-service.test.ts",
+        "ui/src/lib/application-service-events.ts",
+        "ui/src/lib/application-service-events.test.tsx",
+        "ui/src/lib/mock-application-service.ts",
+        "ui/src/lib/mock-application-service.test.ts",
+        "ui/src/lib/model-route.ts",
+        "ui/src/lib/model-route.test.ts",
         "ui/src-tauri/src/application_service_bridge.rs",
+        "ui/src/features/approvals/approval-request-card.tsx",
+        "ui/src/features/approvals/approval-request-card.test.tsx",
+        "ui/src/features/approvals/pending-approvals.ts",
+        "ui/src/features/approvals/pending-approvals.test.ts",
+        "ui/src/features/settings/provider-settings.tsx",
+        "ui/src/features/plugins/plugin-workspace.tsx",
+        "ui/src/store/plugin-marketplace-store.ts",
+        "ui/src/components/interface-providers.tsx",
+        "ui/src/components/interface-theme.ts",
+        "ui/src/i18n.ts",
+        "ui/src/features/plugins/plugin-workspace.test.tsx",
+        "ui/src/features/settings/theme-language.test.tsx",
         "SPEC/ui.md",
         "ui/README.md"
       ],
-      "notes": "React/Vite/shadcn 工作台与 Tauri desktop-local bridge 已实现；WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon，普通浏览器使用零网络 faux 预览。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
+      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，Computer Use 还要求交互审批方法和 durable 审批事件。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
     }
   ]
 }

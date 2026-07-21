@@ -12,6 +12,8 @@ import {
   SquareTerminal,
   Trash2,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -60,18 +62,18 @@ interface SessionNavigationItemProps {
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
-function getSessionAge(updatedAt: string): string {
+function getSessionAge(updatedAt: string, t: TFunction): string {
   const elapsedMinutes = Math.max(0, Math.floor((Date.now() - Date.parse(updatedAt)) / 60_000));
   if (elapsedMinutes < 1) {
-    return "刚刚";
+    return t("navigation.justNow");
   }
   if (elapsedMinutes < 60) {
-    return `${elapsedMinutes} 分钟`;
+    return t("navigation.minutes", { count: elapsedMinutes });
   }
   if (elapsedMinutes < 1_440) {
-    return `${Math.floor(elapsedMinutes / 60)} 小时`;
+    return t("navigation.hours", { count: Math.floor(elapsedMinutes / 60) });
   }
-  return `${Math.floor(elapsedMinutes / 1_440)} 天`;
+  return t("navigation.days", { count: Math.floor(elapsedMinutes / 1_440) });
 }
 
 /**
@@ -91,33 +93,45 @@ function SessionNavigationItem({
   onArchive,
   onDelete,
 }: SessionNavigationItemProps) {
+  const { t } = useTranslation();
+  const sessionStatusLabel =
+    session.status === "approval"
+      ? t("navigation.pendingApproval")
+      : session.status === "active"
+        ? t("navigation.sessionInProgress")
+        : null;
+
   return (
     <div
       className={cn(
-        "group flex h-8 min-w-0 items-center rounded-md pr-1 transition-colors hover:bg-stone-200/80",
-        selected && "bg-[#e7e7e5] text-stone-950",
+        "group flex h-8 min-w-0 items-center rounded-md pr-1 transition-colors hover:bg-accent",
+        selected && "bg-accent text-accent-foreground",
       )}
     >
       <button
         type="button"
         onClick={onSelect}
         disabled={navigationDisabled}
-        className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 disabled:pointer-events-none disabled:opacity-50"
-        aria-label={session.title}
+        className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+        aria-label={
+          sessionStatusLabel
+            ? `${session.title}, ${sessionStatusLabel}`
+            : session.title
+        }
       >
         {session.status === "active" ? (
-          <span className="size-1.5 shrink-0 rounded-full bg-sky-500" aria-label="正在进行" />
+          <span className="size-1.5 shrink-0 rounded-full bg-sky-500" aria-label={t("navigation.sessionInProgress")} />
         ) : (
-          <Pin className="size-3 shrink-0 text-stone-400" aria-hidden="true" />
+          <Pin className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
         )}
         <span className="min-w-0 flex-1 truncate">{session.title}</span>
         {session.status === "approval" ? (
-          <span className="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">
-            待审批
+          <span className="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+            {t("navigation.pendingApproval")}
           </span>
         ) : (
-          <span className="shrink-0 text-[9px] text-stone-400 group-hover:hidden">
-            {getSessionAge(session.updatedAt)}
+          <span className="shrink-0 text-[9px] text-muted-foreground group-hover:hidden">
+            {getSessionAge(session.updatedAt, t)}
           </span>
         )}
       </button>
@@ -127,9 +141,9 @@ function SessionNavigationItem({
             type="button"
             variant="ghost"
             size="icon"
-            className="size-6 shrink-0 text-stone-400 opacity-100 data-[state=open]:opacity-100 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+            className="size-6 shrink-0 text-muted-foreground opacity-100 data-[state=open]:opacity-100 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
             disabled={actionsDisabled}
-            aria-label={`${session.title} 更多操作`}
+            aria-label={t("navigation.moreActions", { title: session.title })}
           >
             <Ellipsis className="size-3.5" aria-hidden="true" />
           </Button>
@@ -137,12 +151,12 @@ function SessionNavigationItem({
         <DropdownMenuContent align="start" side="right" className="w-36">
           {canArchive ? <DropdownMenuItem className="text-[11px]" onSelect={onArchive}>
             <ArchiveIcon className="size-3.5" aria-hidden="true" />
-            归档
+            {t("navigation.archiveAction")}
           </DropdownMenuItem> : null}
           {canArchive && canDelete ? <DropdownMenuSeparator /> : null}
           {canDelete ? <DropdownMenuItem className="text-[11px] text-red-600 focus:text-red-600" onSelect={onDelete}>
             <Trash2 className="size-3.5" aria-hidden="true" />
-            删除
+            {t("navigation.deleteAction")}
           </DropdownMenuItem> : null}
         </DropdownMenuContent>
       </DropdownMenu> : null}
@@ -170,16 +184,17 @@ export function WorkspaceSidebar({
   sessions,
   workspaceName,
 }: WorkspaceSidebarProps) {
+  const { t } = useTranslation();
   const activeSessionId = useWorkspaceUiStore((state) => state.activeSessionId);
   const activeView = useWorkspaceUiStore((state) => state.activeView);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#f3f3f2] text-stone-700">
+    <div className="flex h-full min-h-0 flex-col bg-muted/70 text-foreground/80">
       <div className="flex h-12 shrink-0 items-center gap-2 px-3">
-        <div className="flex size-6 items-center justify-center rounded-md bg-stone-900 text-white">
+        <div className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <SquareTerminal className="size-3.5" aria-hidden="true" />
         </div>
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-stone-900">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
           QXNM Forge
         </span>
         {onRequestClose ? (
@@ -187,9 +202,9 @@ export function WorkspaceSidebar({
             type="button"
             variant="ghost"
             size="icon"
-            className="size-7 text-stone-500"
+            className="size-7 text-muted-foreground"
             onClick={onRequestClose}
-            aria-label="关闭项目导航"
+            aria-label={t("navigation.closeSidebar")}
           >
             <PanelLeftClose className="size-4" aria-hidden="true" />
           </Button>
@@ -200,57 +215,57 @@ export function WorkspaceSidebar({
         <Button
           type="button"
           variant="ghost"
-          className="h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75"
+          className="h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-foreground/80 hover:bg-accent"
           onClick={onCreateSession}
           disabled={navigationDisabled}
         >
-          <CirclePlus className="size-4 text-stone-500" aria-hidden="true" />
-          新建任务
+          <CirclePlus className="size-4 text-muted-foreground" aria-hidden="true" />
+          {t("navigation.newTask")}
         </Button>
         <Button
           type="button"
           variant="ghost"
           className={cn(
-            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75",
-            activeView === "agents" && "bg-[#e7e7e5] text-stone-950",
+            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-foreground/80 hover:bg-accent",
+            activeView === "agents" && "bg-accent text-accent-foreground",
           )}
           onClick={() => onOpenView("agents")}
         >
-          <Bot className="size-4 text-stone-500" aria-hidden="true" />
-          智能体
+          <Bot className="size-4 text-muted-foreground" aria-hidden="true" />
+          {t("navigation.agents")}
         </Button>
         <Button
           type="button"
           variant="ghost"
           className={cn(
-            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75",
-            activeView === "plugins" && "bg-[#e7e7e5] text-stone-950",
+            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-foreground/80 hover:bg-accent",
+            activeView === "plugins" && "bg-accent text-accent-foreground",
           )}
           onClick={() => onOpenView("plugins")}
         >
-          <Puzzle className="size-4 text-stone-500" aria-hidden="true" />
-          插件
+          <Puzzle className="size-4 text-muted-foreground" aria-hidden="true" />
+          {t("navigation.plugins")}
         </Button>
         <Button
           type="button"
           variant="ghost"
           className={cn(
-            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75",
-            activeView === "archive" && "bg-[#e7e7e5] text-stone-950",
+            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-foreground/80 hover:bg-accent",
+            activeView === "archive" && "bg-accent text-accent-foreground",
           )}
           onClick={() => onOpenView("archive")}
         >
-          <Archive className="size-4 text-stone-500" aria-hidden="true" />
-          已归档
+          <Archive className="size-4 text-muted-foreground" aria-hidden="true" />
+          {t("navigation.archive")}
         </Button>
       </div>
 
-      <Separator className="bg-stone-200/80" />
+      <Separator />
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-2 py-3">
-          <div className="mb-1 flex h-7 items-center px-2 text-[11px] font-medium text-stone-500">
-            最近任务
+          <div className="mb-1 flex h-7 items-center px-2 text-[11px] font-medium text-muted-foreground">
+            {t("navigation.recentTasks")}
           </div>
           <div className="space-y-0.5">
             {sessions.map((session) => (
@@ -269,12 +284,12 @@ export function WorkspaceSidebar({
             ))}
           </div>
 
-          <div className="mb-1 mt-4 flex h-7 items-center px-2 text-[11px] font-medium text-stone-500">
-            工作区
+          <div className="mb-1 mt-4 flex h-7 items-center px-2 text-[11px] font-medium text-muted-foreground">
+            {t("navigation.workspace")}
           </div>
 
-          <div className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-stone-700">
-            <Folder className="size-3.5 text-stone-500" aria-hidden="true" />
+          <div className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-foreground/80">
+            <Folder className="size-3.5 text-muted-foreground" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">{workspaceName}</span>
           </div>
         </div>
@@ -285,13 +300,13 @@ export function WorkspaceSidebar({
           type="button"
           variant="ghost"
           className={cn(
-            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75",
-            activeView === "settings" && "bg-[#e7e7e5] text-stone-950",
+            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-foreground/80 hover:bg-accent",
+            activeView === "settings" && "bg-accent text-accent-foreground",
           )}
           onClick={() => onOpenView("settings")}
         >
-          <Settings className="size-4 text-stone-500" aria-hidden="true" />
-          设置
+          <Settings className="size-4 text-muted-foreground" aria-hidden="true" />
+          {t("navigation.settings")}
         </Button>
       </div>
     </div>

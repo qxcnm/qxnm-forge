@@ -289,6 +289,52 @@ export interface SessionReplayEvent {
   readonly extensions?: ProtocolExtensions;
 }
 
+/** 服务端允许客户端选择的单次审批结果。 */
+export type ApprovalChoice = "allow_once" | "allow_session" | "deny";
+
+/** 审批请求中已经规范化且可向用户展示的资源。 */
+export interface ApprovalResource {
+  readonly kind:
+    | "path"
+    | "executable"
+    | "origin"
+    | "credential"
+    | "process"
+    | "other";
+  readonly value: string;
+}
+
+/** 后端在执行副作用前持久化的结构化审批请求。 */
+export interface ApprovalRequest {
+  readonly approvalId: string;
+  readonly toolCallId: string;
+  readonly operation: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly operationHash: string;
+  readonly risk: "low" | "medium" | "high" | "critical";
+  readonly reason?: string;
+  readonly resources: readonly ApprovalResource[];
+  readonly choices: readonly ApprovalChoice[];
+  readonly expiresAt: string;
+  readonly extensions?: ProtocolExtensions;
+}
+
+/** 客户端提交给 application service 的审批决定。 */
+export interface ApprovalDecision {
+  readonly choice: ApprovalChoice;
+  readonly reason?: string;
+  readonly extensions?: ProtocolExtensions;
+}
+
+/** 从 durable Session 事件重建的单个未决审批。 */
+export interface PendingApproval {
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly turnId?: string;
+  readonly requestedAt: string;
+  readonly request: ApprovalRequest;
+}
+
 /** session/get 返回的完整消息快照与可选事件增量。 */
 export interface SessionSnapshot {
   readonly sessionId: string;
@@ -362,6 +408,23 @@ export interface ApplicationServiceClient extends AgentProfileService {
    * 邮箱：18272669457@163.com
    */
   cancelRun(sessionId: string, runId: string): Promise<void>;
+
+  /**
+   * 对服务端已经持久化的精确审批请求作出一次决定。
+   *
+   * 输入：Session、run、opaque approval ID 与服务端 choices 中的一项。
+   * 输出：服务确认 durable 接受后无正文；不代表工具已经开始或完成。
+   * 不变量：前端不能扩大 choices、改写操作参数或伪造 resolutionSource。
+   * 失败：请求已过期/解决、标识不匹配、选择不受支持或传输失败时拒绝。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  respondToApproval(
+    sessionId: string,
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ): Promise<void>;
 
   /**
    * 列出 Provider 连接的脱敏配置。

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import type {
+  ApprovalDecision,
   ApplicationServiceClient,
   BackendKind,
   InitializeResult,
@@ -141,7 +142,7 @@ const providerConnectionInputSchema = z
     baseUrl: z.string().min(1).max(2_048).refine(isSafeProviderBaseUrl),
     apiFamily: z.literal("openai-completions"),
     modelIds: z.array(z.string().min(1).max(256)).min(1).max(64).refine(hasUniqueValues),
-    logoAssetId: z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9-]*$/).nullable(),
+    logoAssetId: z.string().min(1).max(128).regex(PROVIDER_ID_PATTERN).nullable(),
     enabled: z.boolean(),
   })
   .strict();
@@ -435,6 +436,15 @@ const approvalRequestSchema = z
     ...optionalExtensions,
   })
   .strict();
+const approvalRespondParamsSchema = z
+  .object({
+    sessionId: opaqueIdSchema,
+    runId: opaqueIdSchema,
+    approvalId: opaqueIdSchema,
+    decision: approvalDecisionSchema,
+  })
+  .strict();
+const approvalRespondResultSchema = z.object({ accepted: z.literal(true) }).strict();
 const messageDeltaSchema = z.union([
   z.object({ type: z.literal("text"), text: z.string().min(1) }).strict(),
   z.object({ type: z.literal("reasoning"), text: z.string().min(1) }).strict(),
@@ -809,6 +819,33 @@ export class TauriApplicationServiceClient implements ApplicationServiceClient {
    */
   public async cancelRun(sessionId: string, runId: string): Promise<void> {
     await this.#request("run/cancel", { sessionId, runId });
+  }
+
+  /**
+   * 将用户选择绑定到服务端签发的精确审批请求，并等待 durable 接受回执。
+   *
+   * 输入：同一 Session/run 的 opaque approval ID 与受支持决定。
+   * 输出：服务确认 accepted=true 后无正文。
+   * 不变量：客户端不发送 resolutionSource，也不修改审批操作或 operation hash。
+   * 失败：输入 Schema、过期/重复审批、服务冲突或传输失败时拒绝。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public async respondToApproval(
+    sessionId: string,
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ): Promise<void> {
+    const params = approvalRespondParamsSchema.parse({
+      sessionId,
+      runId,
+      approvalId,
+      decision,
+    });
+    approvalRespondResultSchema.parse(
+      await this.#request("approval/respond", params),
+    );
   }
 
   /**

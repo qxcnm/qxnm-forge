@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   Bot,
@@ -88,15 +89,56 @@ type PendingNavigation =
   | { readonly kind: "create" }
   | { readonly kind: "back" };
 
-const PERMISSION_LABELS = {
-  workspace_read: "只读",
-  workspace_write: "写入",
-  process: "进程",
-  shell: "Shell",
-  computer_observe: "屏幕只读",
-  computer_interact: "电脑控制",
-  extension: "扩展",
+const PERMISSION_LABEL_KEYS = {
+  workspace_read: "agents.permissions.workspaceRead",
+  workspace_write: "agents.permissions.workspaceWrite",
+  process: "agents.permissions.process",
+  shell: "agents.permissions.shell",
+  computer_observe: "agents.permissions.computerObserve",
+  computer_interact: "agents.permissions.computerInteract",
+  extension: "agents.permissions.extension",
 } as const;
+
+const TOOL_TRANSLATION_KEYS: Readonly<
+  Record<string, Readonly<{ displayName: string; description: string }>>
+> = {
+  "file.read": {
+    displayName: "tools.file_read.name",
+    description: "tools.file_read.description",
+  },
+  "search.text": {
+    displayName: "tools.search_text.name",
+    description: "tools.search_text.description",
+  },
+  "file.write": {
+    displayName: "tools.file_write.name",
+    description: "tools.file_write.description",
+  },
+  "file.edit": {
+    displayName: "tools.file_edit.name",
+    description: "tools.file_edit.description",
+  },
+  "process.exec": {
+    displayName: "tools.process_exec.name",
+    description: "tools.process_exec.description",
+  },
+  "shell.exec": {
+    displayName: "tools.shell_exec.name",
+    description: "tools.shell_exec.description",
+  },
+  "computer.observe": {
+    displayName: "tools.computer_observe.name",
+    description: "tools.computer_observe.description",
+  },
+  "computer.screenshot": {
+    displayName: "tools.computer_screenshot.name",
+    description: "tools.computer_screenshot.description",
+  },
+  "computer.interact": {
+    displayName: "tools.computer_interact.name",
+    description: "tools.computer_interact.description",
+  },
+};
 
 /**
  * 从服务投影提取用户可编辑字段的独立副本。
@@ -124,16 +166,20 @@ function profileToInput(profile: AgentProfile): AgentProfileInput {
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
-function createEmptyProfile(models: readonly ModelDescriptor[]): AgentProfileInput | undefined {
+function createEmptyProfile(
+  models: readonly ModelDescriptor[],
+  defaultDisplayName: string,
+  defaultInstructions: string,
+): AgentProfileInput | undefined {
   const model = models[0];
   if (!model) {
     return undefined;
   }
   return {
-    displayName: "新智能体",
+    displayName: defaultDisplayName,
     description: "",
     enabled: true,
-    instructions: "说明这个智能体应如何分析任务、使用上下文并组织最终回复。",
+    instructions: defaultInstructions,
     model: {
       providerId: model.providerId,
       modelId: model.modelId,
@@ -155,8 +201,8 @@ function createEmptyProfile(models: readonly ModelDescriptor[]): AgentProfileInp
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "智能体配置请求失败";
+function getErrorMessage(error: unknown, fallbackMessage: string): string {
+  return error instanceof Error ? error.message : fallbackMessage;
 }
 
 /**
@@ -180,6 +226,7 @@ export function AgentWorkspace({
   onOpenMobileSidebar,
   onNavigationStateChange,
 }: AgentWorkspaceProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -200,6 +247,16 @@ export function AgentWorkspace({
   );
   const toolPresentations = useMemo(() => {
     const knownToolIds = new Set(AGENT_TOOL_PRESENTATIONS.map((tool) => tool.toolId));
+    const knownTools = AGENT_TOOL_PRESENTATIONS.map((tool) => {
+      const translationKeys = TOOL_TRANSLATION_KEYS[tool.toolId];
+      return translationKeys
+        ? {
+            ...tool,
+            displayName: t(translationKeys.displayName),
+            description: t(translationKeys.description),
+          }
+        : tool;
+    });
     const dynamicToolIds = new Set([
       ...supportedToolIds,
       ...(draft?.requestedToolIds ?? []),
@@ -210,12 +267,12 @@ export function AgentWorkspace({
       .map((toolId) => ({
         toolId,
         displayName: toolId,
-        description: "application service 广告的扩展工具",
+        description: t("agents.tools.dynamicDescription"),
         permissionClass: "extension",
         dangerous: true,
       }));
-    return [...AGENT_TOOL_PRESENTATIONS, ...dynamicTools];
-  }, [draft?.requestedToolIds, supportedToolIds]);
+    return [...knownTools, ...dynamicTools];
+  }, [draft?.requestedToolIds, supportedToolIds, t]);
   const selectedProfile = profiles.find((profile) => profile.profileId === selectedProfileId);
   const currentInput = selectedProfile ? profileToInput(selectedProfile) : null;
   const isNewProfile = draft !== null && selectedProfileId === null;
@@ -289,14 +346,14 @@ export function AgentWorkspace({
       setDraft(profileToInput(savedProfile));
       setNotice(
         service.mode === "application-service"
-          ? "已保存到 application service"
-          : "已保存到本次预览",
+          ? t("agents.notices.savedService")
+          : t("agents.notices.savedPreview"),
       );
       setErrorMessage(null);
     },
     onError: (error) => {
       setNotice(null);
-      setErrorMessage(getErrorMessage(error));
+      setErrorMessage(getErrorMessage(error, t("agents.errors.requestFailed")));
     },
   });
 
@@ -319,14 +376,14 @@ export function AgentWorkspace({
       }
       setNotice(
         service.mode === "application-service"
-          ? "智能体已从 application service 删除"
-          : "智能体已从本次预览删除",
+          ? t("agents.notices.deletedService")
+          : t("agents.notices.deletedPreview"),
       );
       setErrorMessage(null);
     },
     onError: (error) => {
       setNotice(null);
-      setErrorMessage(getErrorMessage(error));
+      setErrorMessage(getErrorMessage(error, t("agents.errors.requestFailed")));
     },
   });
   const navigationLocked = saveMutation.isPending || deleteMutation.isPending;
@@ -350,9 +407,13 @@ export function AgentWorkspace({
     if (!canCreate) {
       return;
     }
-    const emptyProfile = createEmptyProfile(models);
+    const emptyProfile = createEmptyProfile(
+      models,
+      t("agents.draft.defaultName"),
+      t("agents.draft.defaultInstructions"),
+    );
     if (!emptyProfile) {
-      setErrorMessage("当前服务没有可用于智能体的模型");
+      setErrorMessage(t("agents.errors.noModels"));
       return;
     }
     lastProfileTriggerRef.current = null;
@@ -491,7 +552,7 @@ export function AgentWorkspace({
       kind: "create",
       input: {
         ...draft,
-        displayName: `${draft.displayName} 副本`.slice(0, 48),
+        displayName: t("agents.draft.copyName", { name: draft.displayName }).slice(0, 48),
         model: { ...draft.model },
         requestedToolIds: [...draft.requestedToolIds],
         behavior: { ...draft.behavior },
@@ -574,23 +635,27 @@ export function AgentWorkspace({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white">
-      <header className="flex h-[52px] shrink-0 items-center border-b border-stone-100 px-2.5 sm:px-4">
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <header className="flex h-[52px] shrink-0 items-center border-b px-2.5 sm:px-4">
         <Button
           type="button"
           variant="ghost"
           size="icon"
           className="mr-1 size-8 md:hidden"
           onClick={onOpenMobileSidebar}
-          aria-label="打开项目导航"
+          aria-label={t("agents.header.openNavigation")}
         >
           <Menu className="size-4" aria-hidden="true" />
         </Button>
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Bot className="size-4 shrink-0 text-stone-500" aria-hidden="true" />
-          <h1 className="truncate text-[13px] font-semibold text-stone-900">智能体</h1>
+          <Bot className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <h1 className="truncate text-[13px] font-semibold text-foreground">
+            {t("agents.header.title")}
+          </h1>
           <Badge variant="secondary" className="h-5 rounded px-1.5 text-[9px] font-medium">
-            {service.mode === "application-service" ? "已持久化" : "内存预览"}
+            {service.mode === "application-service"
+              ? t("agents.header.persisted")
+              : t("agents.header.preview")}
           </Badge>
         </div>
         <Button
@@ -602,43 +667,43 @@ export function AgentWorkspace({
           disabled={models.length === 0 || navigationLocked || !canCreate}
         >
           <Plus className="size-3.5" aria-hidden="true" />
-          新建
+          {t("agents.header.create")}
         </Button>
       </header>
 
       <div className="flex min-h-0 flex-1">
         <aside
-          aria-label="智能体列表"
+          aria-label={t("agents.list.ariaLabel")}
           className={cn(
-            "flex w-full min-w-0 flex-col border-r border-stone-200/70 bg-[#fafafa] lg:w-[272px] lg:shrink-0",
+            "flex w-full min-w-0 flex-col border-r bg-muted/30 lg:w-[272px] lg:shrink-0",
             mobileEditorOpen && "hidden lg:flex",
           )}
         >
-          <div className="shrink-0 border-b border-stone-100 p-3">
+          <div className="shrink-0 border-b p-3">
             <div className="relative">
               <Search
-                className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-stone-400"
+                className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
                 aria-hidden="true"
               />
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="搜索智能体"
-                aria-label="搜索智能体"
-                className="h-8 border-stone-200 bg-white pl-8 text-[11px] shadow-none"
+                placeholder={t("agents.list.searchPlaceholder")}
+                aria-label={t("agents.list.searchAria")}
+                className="h-8 bg-background pl-8 text-[11px] shadow-none"
               />
             </div>
           </div>
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-1 p-2">
               {profilesLoading ? (
-                <div className="flex h-20 items-center justify-center gap-2 text-[11px] text-stone-500">
+                <div className="flex h-20 items-center justify-center gap-2 text-[11px] text-muted-foreground">
                   <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-                  正在读取预览投影
+                  {t("agents.list.loading")}
                 </div>
               ) : filteredProfiles.length === 0 ? (
-                <div className="px-3 py-8 text-center text-[11px] leading-5 text-stone-500">
-                  没有匹配的智能体
+                <div className="px-3 py-8 text-center text-[11px] leading-5 text-muted-foreground">
+                  {t("agents.list.empty")}
                 </div>
               ) : (
                 filteredProfiles.map((profile) => (
@@ -649,43 +714,45 @@ export function AgentWorkspace({
                     disabled={navigationLocked}
                     aria-current={selectedProfileId === profile.profileId ? "true" : undefined}
                     className={cn(
-                      "flex min-h-16 w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 disabled:pointer-events-none disabled:opacity-60",
-                      selectedProfileId === profile.profileId && "bg-stone-200/75",
+                      "flex min-h-16 w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60",
+                      selectedProfileId === profile.profileId && "bg-accent",
                     )}
                   >
-                    <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-stone-900 text-white">
+                    <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
                       <Bot className="size-3.5" aria-hidden="true" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5 text-[12px] font-medium text-stone-800">
+                      <span className="flex items-center gap-1.5 text-[12px] font-medium text-foreground">
                         <span className="truncate">{profile.displayName}</span>
                         {!profile.enabled ? (
-                          <span className="shrink-0 text-[9px] font-normal text-stone-500">停用</span>
+                          <span className="shrink-0 text-[9px] font-normal text-muted-foreground">
+                            {t("agents.list.disabled")}
+                          </span>
                         ) : null}
                       </span>
-                      <span className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-stone-500">
-                        {profile.description || "暂无说明"}
+                      <span className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-muted-foreground">
+                        {profile.description || t("agents.list.noDescription")}
                       </span>
                     </span>
-                    <span className="mt-0.5 shrink-0 text-[9px] text-stone-500">
-                      v{profile.revision}
+                    <span className="mt-0.5 shrink-0 text-[9px] text-muted-foreground">
+                      {t("agents.list.version", { revision: profile.revision })}
                     </span>
                   </button>
                 ))
               )}
             </div>
           </ScrollArea>
-          <div className="shrink-0 border-t border-stone-100 px-3 py-2 text-[9px] leading-4 text-stone-500">
+          <div className="shrink-0 border-t px-3 py-2 text-[9px] leading-4 text-muted-foreground">
             {service.mode === "application-service"
-              ? "application.db 持久化 · revision 冲突保护"
-              : "刷新后重置 · 浏览器 faux 预览"}
+              ? t("agents.list.serviceFooter")
+              : t("agents.list.previewFooter")}
           </div>
         </aside>
 
         <section
-          aria-label="智能体编辑器"
+          aria-label={t("agents.editor.ariaLabel")}
           className={cn(
-            "min-w-0 flex-1 flex-col bg-white",
+            "min-w-0 flex-1 flex-col bg-background",
             mobileEditorOpen ? "flex" : "hidden lg:flex",
           )}
         >
@@ -695,7 +762,7 @@ export function AgentWorkspace({
               className="flex min-h-0 flex-1 flex-col"
               aria-busy={navigationLocked}
             >
-              <div className="flex h-12 shrink-0 items-center gap-2 border-b border-stone-100 px-3 sm:px-5">
+              <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3 sm:px-5">
                 <Button
                   type="button"
                   variant="ghost"
@@ -703,7 +770,7 @@ export function AgentWorkspace({
                   className="size-8 lg:hidden"
                   onClick={handleBackRequest}
                   disabled={navigationLocked}
-                  aria-label="返回智能体列表"
+                  aria-label={t("agents.editor.back")}
                 >
                   <ArrowLeft className="size-4" aria-hidden="true" />
                 </Button>
@@ -712,14 +779,21 @@ export function AgentWorkspace({
                     <h2
                       ref={editorHeadingRef}
                       tabIndex={-1}
-                      className="truncate text-[12px] font-semibold text-stone-900 outline-none"
+                      className="truncate text-[12px] font-semibold text-foreground outline-none"
                     >
-                      {isNewProfile ? "新建智能体" : draft.displayName}
+                      {isNewProfile ? t("agents.editor.createTitle") : draft.displayName}
                     </h2>
-                    {isDirty ? <span className="size-1.5 rounded-full bg-amber-400" aria-label="有未保存修改" /> : null}
+                    {isDirty ? (
+                      <span
+                        className="size-1.5 rounded-full bg-amber-400"
+                        aria-label={t("agents.editor.unsavedChanges")}
+                      />
+                    ) : null}
                   </div>
-                  <p className="truncate text-[9px] text-stone-500">
-                    {isNewProfile ? "尚未保存" : `revision ${editingRevision ?? 1}`}
+                  <p className="truncate text-[9px] text-muted-foreground">
+                    {isNewProfile
+                      ? t("agents.editor.unsaved")
+                      : t("agents.editor.revision", { revision: editingRevision ?? 1 })}
                   </p>
                 </div>
                 {selectedProfile && canCreate ? (
@@ -727,10 +801,10 @@ export function AgentWorkspace({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="size-8 text-stone-500"
+                    className="size-8 text-muted-foreground"
                     onClick={handleDuplicate}
                     disabled={navigationLocked}
-                    aria-label="复制智能体"
+                    aria-label={t("agents.editor.duplicate")}
                   >
                     <Copy className="size-3.5" aria-hidden="true" />
                   </Button>
@@ -742,29 +816,33 @@ export function AgentWorkspace({
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="size-8 text-stone-500 hover:text-rose-600"
+                        className="size-8 text-muted-foreground hover:text-rose-600"
                         disabled={navigationLocked}
-                        aria-label="删除智能体"
+                        aria-label={t("agents.editor.delete")}
                       >
                         <Trash2 className="size-3.5" aria-hidden="true" />
                       </Button>
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                       <AlertDialogHeader>
-                        <AlertDialogTitle>删除“{selectedProfile.displayName}”？</AlertDialogTitle>
+                        <AlertDialogTitle>
+                          {t("agents.deleteDialog.title", {
+                            name: selectedProfile.displayName,
+                          })}
+                        </AlertDialogTitle>
                         <AlertDialogDescription>
                           {service.mode === "application-service"
-                            ? "该配置会从 application service 永久删除，此操作无法撤销。"
-                            : "仅删除本次内存预览中的投影，刷新页面后默认数据会重新出现。"}
+                            ? t("agents.deleteDialog.serviceDescription")
+                            : t("agents.deleteDialog.previewDescription")}
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
-                        <AlertDialogCancel>取消</AlertDialogCancel>
+                        <AlertDialogCancel>{t("agents.deleteDialog.cancel")}</AlertDialogCancel>
                         <AlertDialogAction
-                          className="bg-rose-600 text-white hover:bg-rose-700"
+                          className="bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-700 dark:hover:bg-rose-600"
                           onClick={() => deleteMutation.mutate(selectedProfile)}
                         >
-                          删除
+                          {t("agents.deleteDialog.confirm")}
                         </AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>
@@ -781,34 +859,48 @@ export function AgentWorkspace({
                   ) : (
                     <Save className="size-3.5" aria-hidden="true" />
                   )}
-                  保存
+                  {t("agents.editor.save")}
                 </Button>
               </div>
 
               <fieldset disabled={navigationLocked || editorReadOnly} className="contents">
               <ScrollArea className="min-h-0 flex-1">
                 <Tabs defaultValue={initialEditorTab} className="mx-auto w-full max-w-[820px] px-4 pb-8 pt-4 sm:px-7 sm:pt-6">
-                  <TabsList className="grid h-9 w-full grid-cols-4 rounded-md bg-stone-100 p-1">
-                    <TabsTrigger value="profile" className="text-[11px]">配置</TabsTrigger>
-                    <TabsTrigger value="instructions" className="text-[11px]">指令</TabsTrigger>
-                    <TabsTrigger value="tools" className="text-[11px]">工具</TabsTrigger>
-                    <TabsTrigger value="behavior" className="text-[11px]">行为</TabsTrigger>
+                  <TabsList className="grid h-9 w-full grid-cols-4 rounded-md bg-muted p-1">
+                    <TabsTrigger value="profile" className="text-[11px]">
+                      {t("agents.tabs.profile")}
+                    </TabsTrigger>
+                    <TabsTrigger value="instructions" className="text-[11px]">
+                      {t("agents.tabs.instructions")}
+                    </TabsTrigger>
+                    <TabsTrigger value="tools" className="text-[11px]">
+                      {t("agents.tabs.tools")}
+                    </TabsTrigger>
+                    <TabsTrigger value="behavior" className="text-[11px]">
+                      {t("agents.tabs.behavior")}
+                    </TabsTrigger>
                   </TabsList>
 
                   <div className="mt-5 min-h-5 text-[10px]" aria-live="polite">
-                    {errorMessage ? <p className="text-rose-600">{errorMessage}</p> : null}
-                    {!errorMessage && notice ? <p className="text-emerald-600">{notice}</p> : null}
+                    {errorMessage ? <p className="text-rose-600 dark:text-rose-400">{errorMessage}</p> : null}
+                    {!errorMessage && notice ? <p className="text-emerald-600 dark:text-emerald-400">{notice}</p> : null}
                   </div>
 
                   <TabsContent value="profile" className="mt-1 space-y-7">
                     <section className="space-y-4" aria-labelledby="agent-basic-heading">
                       <div>
-                        <h3 id="agent-basic-heading" className="text-[12px] font-semibold text-stone-900">基本信息</h3>
-                        <p className="mt-1 text-[10px] leading-4 text-stone-500">名称与说明只作为服务投影展示，不参与授权。</p>
+                        <h3 id="agent-basic-heading" className="text-[12px] font-semibold text-foreground">
+                          {t("agents.profile.basicTitle")}
+                        </h3>
+                        <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                          {t("agents.profile.basicDescription")}
+                        </p>
                       </div>
                       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_150px]">
                         <div className="space-y-1.5">
-                          <Label htmlFor="agent-name" className="text-[11px]">名称</Label>
+                          <Label htmlFor="agent-name" className="text-[11px]">
+                            {t("agents.profile.name")}
+                          </Label>
                           <Input
                             id="agent-name"
                             value={draft.displayName}
@@ -817,8 +909,10 @@ export function AgentWorkspace({
                             className="h-9 text-[12px] shadow-none"
                           />
                         </div>
-                        <div className="flex h-9 items-center justify-between self-end rounded-md border border-stone-200 px-3">
-                          <Label htmlFor="agent-enabled" className="text-[11px] font-normal">允许新会话选择</Label>
+                        <div className="flex h-9 items-center justify-between self-end rounded-md border px-3">
+                          <Label htmlFor="agent-enabled" className="text-[11px] font-normal">
+                            {t("agents.profile.enabled")}
+                          </Label>
                           <Switch
                             id="agent-enabled"
                             checked={draft.enabled}
@@ -827,26 +921,35 @@ export function AgentWorkspace({
                         </div>
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="agent-description" className="text-[11px]">说明</Label>
+                        <Label htmlFor="agent-description" className="text-[11px]">
+                          {t("agents.profile.description")}
+                        </Label>
                         <Input
                           id="agent-description"
                           value={draft.description}
                           maxLength={160}
                           onChange={(event) => updateDraft({ ...draft, description: event.target.value })}
-                          placeholder="这个智能体适合处理什么任务"
+                          placeholder={t("agents.profile.descriptionPlaceholder")}
                           className="h-9 text-[12px] shadow-none"
                         />
                       </div>
                     </section>
 
-                    <section className="space-y-4 border-t border-stone-100 pt-6" aria-labelledby="agent-model-heading">
+                    <section className="space-y-4 border-t pt-6" aria-labelledby="agent-model-heading">
                       <div>
-                        <h3 id="agent-model-heading" className="text-[12px] font-semibold text-stone-900">默认模型</h3>
-                        <p className="mt-1 text-[10px] leading-4 text-stone-500">按 Provider、modelId 与 API family 的完整路由选择。</p>
+                        <h3 id="agent-model-heading" className="text-[12px] font-semibold text-foreground">
+                          {t("agents.model.title")}
+                        </h3>
+                        <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                          {t("agents.model.description")}
+                        </p>
                       </div>
                       <Select value={getModelRouteKey(draft.model)} onValueChange={handleModelChange}>
-                        <SelectTrigger aria-label="智能体默认模型" className="h-9 w-full text-[11px] shadow-none">
-                          <SelectValue placeholder="选择模型" />
+                        <SelectTrigger
+                          aria-label={t("agents.model.ariaLabel")}
+                          className="h-9 w-full text-[11px] shadow-none"
+                        >
+                          <SelectValue placeholder={t("agents.model.placeholder")} />
                         </SelectTrigger>
                         <SelectContent>
                           {models.map((model) => (
@@ -858,10 +961,14 @@ export function AgentWorkspace({
                       </Select>
                     </section>
 
-                    <section className="space-y-4 border-t border-stone-100 pt-6" aria-labelledby="agent-approval-heading">
+                    <section className="space-y-4 border-t pt-6" aria-labelledby="agent-approval-heading">
                       <div>
-                        <h3 id="agent-approval-heading" className="text-[12px] font-semibold text-stone-900">危险操作</h3>
-                        <p className="mt-1 text-[10px] leading-4 text-stone-500">配置只能收窄行为；写入、进程与 Shell 仍由后端逐次裁决。</p>
+                        <h3 id="agent-approval-heading" className="text-[12px] font-semibold text-foreground">
+                          {t("agents.dangerous.title")}
+                        </h3>
+                        <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                          {t("agents.dangerous.description")}
+                        </p>
                       </div>
                       <ToggleGroup
                         type="single"
@@ -871,35 +978,52 @@ export function AgentWorkspace({
                             handleDangerousActionModeChange(value);
                           }
                         }}
-                        className="grid grid-cols-2 rounded-md bg-stone-100 p-1"
+                        className="grid grid-cols-2 rounded-md bg-muted p-1"
                       >
-                        <ToggleGroupItem value="ask" className="h-8 text-[11px]">标准审批</ToggleGroupItem>
-                        <ToggleGroupItem value="deny" className="h-8 text-[11px]">只读</ToggleGroupItem>
+                        <ToggleGroupItem value="ask" className="h-8 text-[11px]">
+                          {t("agents.dangerous.ask")}
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="deny" className="h-8 text-[11px]">
+                          {t("agents.dangerous.deny")}
+                        </ToggleGroupItem>
                       </ToggleGroup>
                     </section>
                   </TabsContent>
 
                   <TabsContent value="instructions" className="mt-1 space-y-3">
                     <div>
-                      <h3 className="text-[12px] font-semibold text-stone-900">System instructions</h3>
-                      <p className="mt-1 text-[10px] leading-4 text-stone-500">指令属于不可信 Prompt，不得携带凭据、真实宿主路径或授权声明。</p>
+                      <h3 className="text-[12px] font-semibold text-foreground">
+                        {t("agents.instructions.title")}
+                      </h3>
+                      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                        {t("agents.instructions.description")}
+                      </p>
                     </div>
                     <Textarea
                       value={draft.instructions}
                       maxLength={12_000}
                       onChange={(event) => updateDraft({ ...draft, instructions: event.target.value })}
-                      aria-label="智能体系统指令"
+                      aria-label={t("agents.instructions.ariaLabel")}
                       className="min-h-[320px] resize-y text-[12px] leading-5 shadow-none"
                     />
-                    <p className="text-right text-[9px] text-stone-500">{draft.instructions.length} / 12000</p>
+                    <p className="text-right text-[9px] text-muted-foreground">
+                      {t("agents.instructions.characterCount", {
+                        count: draft.instructions.length,
+                        max: 12_000,
+                      })}
+                    </p>
                   </TabsContent>
 
                   <TabsContent value="tools" className="mt-1 space-y-4">
                     <div>
-                      <h3 className="text-[12px] font-semibold text-stone-900">工具请求子集</h3>
-                      <p className="mt-1 text-[10px] leading-4 text-stone-500">未被当前服务广告的工具不可选择；空集合表示禁用全部工具。</p>
+                      <h3 className="text-[12px] font-semibold text-foreground">
+                        {t("agents.tools.title")}
+                      </h3>
+                      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                        {t("agents.tools.description")}
+                      </p>
                     </div>
-                    <div className="divide-y divide-stone-100 border-y border-stone-100">
+                    <div className="divide-y border-y">
                       {toolPresentations.map((tool) => {
                         const advertised = supportedToolIdSet.has(tool.toolId);
                         const deniedByMode = tool.dangerous && draft.dangerousActionMode === "deny";
@@ -915,33 +1039,39 @@ export function AgentWorkspace({
                               onCheckedChange={(checked) => handleToolChange(tool.toolId, checked === true)}
                             />
                             <Label htmlFor={`agent-tool-${tool.toolId}`} className={cn("min-w-0 flex-1 cursor-pointer", disabled && "cursor-not-allowed opacity-55")}>
-                              <span className="flex items-center gap-2 text-[11px] font-medium text-stone-800">
+                              <span className="flex items-center gap-2 text-[11px] font-medium text-foreground">
                                 {tool.displayName}
-                                <span className="rounded bg-stone-100 px-1.5 py-0.5 text-[8px] font-normal text-stone-500">{PERMISSION_LABELS[tool.permissionClass]}</span>
+                                <span className="rounded bg-muted px-1.5 py-0.5 text-[8px] font-normal text-muted-foreground">
+                                  {t(PERMISSION_LABEL_KEYS[tool.permissionClass])}
+                                </span>
                               </span>
-                              <span className="mt-0.5 block text-[10px] leading-4 text-stone-500">
+                              <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
                                 {advertised
                                   ? tool.description
                                   : selected
-                                    ? "当前服务未广告；取消选择后保存"
-                                    : "当前服务未广告此工具"}
+                                    ? t("agents.tools.unavailableSelected")
+                                    : t("agents.tools.unavailable")}
                               </span>
                             </Label>
                           </div>
                         );
                       })}
                     </div>
-                    <div className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2.5 text-[10px] leading-4 text-amber-800">
+                    <div className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2.5 text-[10px] leading-4 text-amber-800 dark:bg-amber-950/70 dark:text-amber-200">
                       <ShieldAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                      勾选工具不等于批准执行，最终能力仍由注册表、宿主策略、工作区信任与审批共同收窄。
+                      {t("agents.tools.warning")}
                     </div>
                   </TabsContent>
 
                   <TabsContent value="behavior" className="mt-1 space-y-7">
                     <section className="space-y-4">
                       <div>
-                        <h3 className="text-[12px] font-semibold text-stone-900">回复风格</h3>
-                        <p className="mt-1 text-[10px] leading-4 text-stone-500">当前仅保存为 Faux 交互预览偏好。</p>
+                        <h3 className="text-[12px] font-semibold text-foreground">
+                          {t("agents.behavior.title")}
+                        </h3>
+                        <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                          {t("agents.behavior.description")}
+                        </p>
                       </div>
                       <ToggleGroup
                         type="single"
@@ -954,19 +1084,29 @@ export function AgentWorkspace({
                             });
                           }
                         }}
-                        className="grid grid-cols-3 rounded-md bg-stone-100 p-1"
+                        className="grid grid-cols-3 rounded-md bg-muted p-1"
                       >
-                        <ToggleGroupItem value="concise" className="h-8 text-[11px]">简洁</ToggleGroupItem>
-                        <ToggleGroupItem value="balanced" className="h-8 text-[11px]">平衡</ToggleGroupItem>
-                        <ToggleGroupItem value="detailed" className="h-8 text-[11px]">详细</ToggleGroupItem>
+                        <ToggleGroupItem value="concise" className="h-8 text-[11px]">
+                          {t("agents.behavior.concise")}
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="balanced" className="h-8 text-[11px]">
+                          {t("agents.behavior.balanced")}
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="detailed" className="h-8 text-[11px]">
+                          {t("agents.behavior.detailed")}
+                        </ToggleGroupItem>
                       </ToggleGroup>
                     </section>
 
-                    <section className="divide-y divide-stone-100 border-y border-stone-100">
+                    <section className="divide-y border-y">
                       <div className="flex min-h-16 items-center gap-4 py-3">
                         <div className="min-w-0 flex-1">
-                          <Label htmlFor="agent-plan-first" className="text-[11px] font-medium">先规划再执行</Label>
-                          <p className="mt-0.5 text-[10px] leading-4 text-stone-500">复杂任务优先形成可检查的步骤。</p>
+                          <Label htmlFor="agent-plan-first" className="text-[11px] font-medium">
+                            {t("agents.behavior.planFirstTitle")}
+                          </Label>
+                          <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                            {t("agents.behavior.planFirstDescription")}
+                          </p>
                         </div>
                         <Switch
                           id="agent-plan-first"
@@ -976,8 +1116,12 @@ export function AgentWorkspace({
                       </div>
                       <div className="flex min-h-16 items-center gap-4 py-3">
                         <div className="min-w-0 flex-1">
-                          <Label htmlFor="agent-review-changes" className="text-[11px] font-medium">完成后审阅变更</Label>
-                          <p className="mt-0.5 text-[10px] leading-4 text-stone-500">在回复前检查改动与验证结果。</p>
+                          <Label htmlFor="agent-review-changes" className="text-[11px] font-medium">
+                            {t("agents.behavior.reviewChangesTitle")}
+                          </Label>
+                          <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                            {t("agents.behavior.reviewChangesDescription")}
+                          </p>
                         </div>
                         <Switch
                           id="agent-review-changes"
@@ -995,12 +1139,14 @@ export function AgentWorkspace({
           ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
               <div>
-                <Bot className="mx-auto size-7 text-stone-300" aria-hidden="true" />
-                <p className="mt-3 text-[12px] font-medium text-stone-600">选择或新建智能体</p>
-                <p className="mt-1 text-[10px] text-stone-500">
+                <Bot className="mx-auto size-7 text-muted-foreground/50" aria-hidden="true" />
+                <p className="mt-3 text-[12px] font-medium text-foreground/80">
+                  {t("agents.empty.title")}
+                </p>
+                <p className="mt-1 text-[10px] text-muted-foreground">
                   {service.mode === "application-service"
-                    ? "配置由当前 application service 安全持久化。"
-                    : "配置只在本次预览生命周期内有效。"}
+                    ? t("agents.empty.serviceDescription")
+                    : t("agents.empty.previewDescription")}
                 </p>
               </div>
             </div>
@@ -1017,14 +1163,16 @@ export function AgentWorkspace({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>放弃未保存修改？</AlertDialogTitle>
+            <AlertDialogTitle>{t("agents.discardDialog.title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              当前草稿尚未保存，继续后这些修改会被丢弃。
+              {t("agents.discardDialog.description")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>继续编辑</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDiscard}>放弃修改</AlertDialogAction>
+            <AlertDialogCancel>{t("agents.discardDialog.continueEditing")}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDiscard}>
+              {t("agents.discardDialog.confirm")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

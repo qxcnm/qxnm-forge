@@ -3,17 +3,30 @@ import {
   Database,
   Info,
   Keyboard,
+  Languages,
+  Monitor,
+  Moon,
   Palette,
   PanelLeft,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
+  Sun,
   Waypoints,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { BackendSwitcher } from "@/components/backend-switcher";
+import { useInterfaceTheme } from "@/components/interface-theme";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -54,8 +67,8 @@ function SettingRow({ title, description, control }: SettingRowProps) {
   return (
     <div className="flex min-h-14 items-center gap-4 py-2.5">
       <div className="min-w-0 flex-1">
-        <h3 className="text-[11px] font-medium text-stone-800">{title}</h3>
-        <p className="mt-0.5 text-[10px] leading-4 text-stone-400">{description}</p>
+        <h3 className="text-[11px] font-medium text-foreground">{title}</h3>
+        <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{description}</p>
       </div>
       <div className="shrink-0">{control}</div>
     </div>
@@ -77,6 +90,8 @@ export function SettingsWorkspace({
   onOpenAgentTools,
   onOpenMobileSidebar,
 }: SettingsWorkspaceProps) {
+  const { t, i18n } = useTranslation();
+  const { theme, setTheme } = useInterfaceTheme();
   const composerSubmitMode = useWorkspaceUiStore((state) => state.composerSubmitMode);
   const setComposerSubmitMode = useWorkspaceUiStore(
     (state) => state.setComposerSubmitMode,
@@ -95,54 +110,54 @@ export function SettingsWorkspace({
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-white">
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
       <WorkspacePageHeader
-        title="设置"
-        description="应用、连接与数据边界"
+        title={t("settings.title")}
+        description={t("settings.description")}
         onOpenMobileSidebar={onOpenMobileSidebar}
       />
       <Tabs defaultValue="general" className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <TabsList className="scrollbar-none h-11 w-full shrink-0 justify-start gap-1 overflow-x-auto rounded-none border-b border-stone-100 bg-stone-50/70 px-3 py-1 text-stone-500 lg:h-full lg:w-48 lg:flex-col lg:items-stretch lg:justify-start lg:border-b-0 lg:border-r lg:px-2 lg:py-4">
-          <TabsTrigger value="general" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-white lg:w-full">
+        <TabsList className="scrollbar-none h-11 w-full shrink-0 justify-start gap-1 overflow-x-auto rounded-none border-b bg-muted/60 px-3 py-1 text-muted-foreground lg:h-full lg:w-48 lg:flex-col lg:items-stretch lg:justify-start lg:border-b-0 lg:border-r lg:px-2 lg:py-4">
+          <TabsTrigger value="general" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-background lg:w-full">
             <Settings2 className="size-3.5" aria-hidden="true" />
-            常规
+            {t("settings.tabs.general")}
           </TabsTrigger>
-          <TabsTrigger value="providers" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-white lg:w-full">
+          <TabsTrigger value="providers" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-background lg:w-full">
             <Waypoints className="size-3.5" aria-hidden="true" />
-            提供商
+            {t("settings.tabs.providers")}
           </TabsTrigger>
-          <TabsTrigger value="appearance" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-white lg:w-full">
+          <TabsTrigger value="appearance" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-background lg:w-full">
             <Palette className="size-3.5" aria-hidden="true" />
-            外观
+            {t("settings.tabs.appearance")}
           </TabsTrigger>
-          <TabsTrigger value="permissions" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-white lg:w-full">
+          <TabsTrigger value="permissions" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-background lg:w-full">
             <ShieldCheck className="size-3.5" aria-hidden="true" />
-            权限
+            {t("settings.tabs.permissions")}
           </TabsTrigger>
-          <TabsTrigger value="data" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-white lg:w-full">
+          <TabsTrigger value="data" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-background lg:w-full">
             <Database className="size-3.5" aria-hidden="true" />
-            数据
+            {t("settings.tabs.data")}
           </TabsTrigger>
-          <TabsTrigger value="about" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-white lg:w-full">
+          <TabsTrigger value="about" className="h-8 justify-start gap-2 px-2 text-[11px] shadow-none data-[state=active]:bg-background lg:w-full">
             <Info className="size-3.5" aria-hidden="true" />
-            关于
+            {t("settings.tabs.about")}
           </TabsTrigger>
         </TabsList>
 
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           <TabsContent value="general" className="mx-auto mt-0 w-full max-w-3xl px-4 py-6 sm:px-8">
-            <h2 className="text-[14px] font-semibold text-stone-900">常规</h2>
-            <p className="mt-1 text-[10px] text-stone-400">非敏感界面偏好保存在当前设备。</p>
+            <h2 className="text-[14px] font-semibold text-foreground">{t("settings.tabs.general")}</h2>
+            <p className="mt-1 text-[10px] text-muted-foreground">{t("settings.general.description")}</p>
             <Separator className="mt-5" />
             <SettingRow
-              title="后端实现"
-              description="Rust 与 .NET 均通过相同的品牌中立 application service 协议连接。"
+              title={t("settings.general.backendTitle")}
+              description={t("settings.general.backendDescription")}
               control={<BackendSwitcher />}
             />
             <Separator />
             <SettingRow
-              title="当前服务"
-              description={initializeResult?.implementation.name ?? "正在与 application service 握手"}
+              title={t("settings.general.currentServiceTitle")}
+              description={initializeResult?.implementation.name ?? t("settings.general.handshaking")}
               control={(
                 <Badge variant="secondary" className="font-mono text-[9px] font-normal">
                   {initializeResult?.implementation.version ?? backend}
@@ -151,8 +166,8 @@ export function SettingsWorkspace({
             />
             <Separator />
             <SettingRow
-              title="发送消息"
-              description="选择输入器提交消息的按键。"
+              title={t("settings.general.sendTitle")}
+              description={t("settings.general.sendDescription")}
               control={(
                 <ToggleGroup
                   type="single"
@@ -162,8 +177,8 @@ export function SettingsWorkspace({
                       setComposerSubmitMode(value);
                     }
                   }}
-                  aria-label="发送消息快捷键"
-                  className="rounded-md bg-stone-100 p-0.5"
+                  aria-label={t("settings.general.sendShortcut")}
+                  className="rounded-md bg-muted p-0.5"
                 >
                   <ToggleGroupItem value="enter" className="h-7 px-2 text-[9px]">
                     Enter
@@ -178,30 +193,85 @@ export function SettingsWorkspace({
 
           <TabsContent value="providers" className="mx-auto mt-0 w-full max-w-5xl px-4 py-6 sm:px-8">
             <div className="mb-5">
-              <h2 className="text-[14px] font-semibold text-stone-900">提供商</h2>
-              <p className="mt-1 text-[10px] text-stone-400">连接配置与 CredentialStore 凭据分开保存。</p>
+              <h2 className="text-[14px] font-semibold text-foreground">{t("settings.tabs.providers")}</h2>
+              <p className="mt-1 text-[10px] text-muted-foreground">{t("settings.providers.description")}</p>
             </div>
-            {initializeResult ? (
+            <div className={initializeResult ? undefined : "hidden"}>
               <ProviderSettings
                 key={backend}
                 backend={backend}
                 service={service}
                 supportedMethods={methods}
               />
-            ) : (
-              <p className="border-y border-stone-100 py-10 text-center text-[11px] text-stone-400">
-                正在读取 Provider capability...
+            </div>
+            {!initializeResult ? (
+              <p className="border-y py-10 text-center text-[11px] text-muted-foreground">
+                {t("settings.providers.loadingCapability")}
               </p>
-            )}
+            ) : null}
           </TabsContent>
 
           <TabsContent value="appearance" className="mx-auto mt-0 w-full max-w-3xl px-4 py-6 sm:px-8">
-            <h2 className="text-[14px] font-semibold text-stone-900">外观</h2>
-            <p className="mt-1 text-[10px] text-stone-400">调整当前设备上的工作台布局与动态效果。</p>
+            <h2 className="text-[14px] font-semibold text-foreground">{t("settings.tabs.appearance")}</h2>
+            <p className="mt-1 text-[10px] text-muted-foreground">{t("settings.appearance.description")}</p>
             <Separator className="mt-5" />
             <SettingRow
-              title="项目导航宽度"
-              description="紧凑模式为会话区留出更多横向空间。"
+              title={t("settings.appearance.themeTitle")}
+              description={t("settings.appearance.themeDescription")}
+              control={(
+                <ToggleGroup
+                  type="single"
+                  value={theme}
+                  onValueChange={(value) => {
+                    if (value === "light" || value === "dark" || value === "system") {
+                      setTheme(value);
+                    }
+                  }}
+                  aria-label={t("settings.appearance.themeLabel")}
+                  className="rounded-md bg-muted p-0.5"
+                >
+                  <ToggleGroupItem value="system" className="h-7 gap-1 px-2 text-[9px]">
+                    <Monitor className="size-3" aria-hidden="true" />
+                    {t("settings.appearance.themeSystem")}
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="light" className="h-7 gap-1 px-2 text-[9px]">
+                    <Sun className="size-3" aria-hidden="true" />
+                    {t("settings.appearance.themeLight")}
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="dark" className="h-7 gap-1 px-2 text-[9px]">
+                    <Moon className="size-3" aria-hidden="true" />
+                    {t("settings.appearance.themeDark")}
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              )}
+            />
+            <Separator />
+            <SettingRow
+              title={t("settings.appearance.languageTitle")}
+              description={t("settings.appearance.languageDescription")}
+              control={(
+                <Select
+                  value={i18n.resolvedLanguage === "en-US" ? "en-US" : "zh-CN"}
+                  onValueChange={(value) => void i18n.changeLanguage(value)}
+                >
+                  <SelectTrigger
+                    className="h-8 w-36 gap-2 text-[10px] shadow-none"
+                    aria-label={t("settings.appearance.languageLabel")}
+                  >
+                    <Languages className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="zh-CN">{t("settings.appearance.languageChinese")}</SelectItem>
+                    <SelectItem value="en-US">{t("settings.appearance.languageEnglish")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            <Separator />
+            <SettingRow
+              title={t("settings.appearance.sidebarTitle")}
+              description={t("settings.appearance.sidebarDescription")}
               control={(
                 <ToggleGroup
                   type="single"
@@ -211,61 +281,61 @@ export function SettingsWorkspace({
                       setSidebarWidth(value);
                     }
                   }}
-                  aria-label="项目导航宽度"
-                  className="rounded-md bg-stone-100 p-0.5"
+                  aria-label={t("settings.appearance.sidebarLabel")}
+                  className="rounded-md bg-muted p-0.5"
                 >
                   <ToggleGroupItem value="compact" className="h-7 gap-1 px-2 text-[9px]">
                     <PanelLeft className="size-3" aria-hidden="true" />
-                    紧凑
+                    {t("settings.appearance.compact")}
                   </ToggleGroupItem>
                   <ToggleGroupItem value="standard" className="h-7 gap-1 px-2 text-[9px]">
                     <PanelLeft className="size-3.5" aria-hidden="true" />
-                    标准
+                    {t("settings.appearance.standard")}
                   </ToggleGroupItem>
                 </ToggleGroup>
               )}
             />
             <Separator />
             <SettingRow
-              title="减少动态效果"
-              description="关闭非必要的过渡与循环动画。"
+              title={t("settings.appearance.reduceMotionTitle")}
+              description={t("settings.appearance.reduceMotionDescription")}
               control={(
                 <Switch
                   checked={reduceMotion}
                   onCheckedChange={setReduceMotion}
-                  aria-label="减少动态效果"
+                  aria-label={t("settings.appearance.reduceMotionLabel")}
                 />
               )}
             />
           </TabsContent>
 
           <TabsContent value="permissions" className="mx-auto mt-0 w-full max-w-3xl px-4 py-6 sm:px-8">
-            <h2 className="text-[14px] font-semibold text-stone-900">权限</h2>
-            <p className="mt-1 text-[10px] text-stone-400">审批只会收窄后端广告的工具能力。</p>
+            <h2 className="text-[14px] font-semibold text-foreground">{t("settings.tabs.permissions")}</h2>
+            <p className="mt-1 text-[10px] text-muted-foreground">{t("settings.permissions.description")}</p>
             <Separator className="mt-5" />
             <SettingRow
-              title="工作区写入审批"
-              description="file.write 与 file.edit 继续由后端策略和逐次审批裁决。"
+              title={t("settings.permissions.workspaceWriteTitle")}
+              description={t("settings.permissions.workspaceWriteDescription")}
               control={(
                 <Badge variant="outline" className="text-[9px] font-normal">
-                  {writeToolsAvailable ? "后端审批" : "未广告"}
+                  {writeToolsAvailable ? t("settings.permissions.backendApproval") : t("settings.permissions.notAdvertised")}
                 </Badge>
               )}
             />
             <Separator />
             <SettingRow
-              title="进程与 Shell 审批"
-              description="process.exec 与 shell.exec 继续由后端策略和逐次审批裁决。"
+              title={t("settings.permissions.processTitle")}
+              description={t("settings.permissions.processDescription")}
               control={(
                 <Badge variant="outline" className="text-[9px] font-normal">
-                  {processToolsAvailable ? "后端审批" : "未广告"}
+                  {processToolsAvailable ? t("settings.permissions.backendApproval") : t("settings.permissions.notAdvertised")}
                 </Badge>
               )}
             />
             <Separator />
             <SettingRow
-              title="智能体工具子集"
-              description="为每个智能体选择当前服务已广告的工具。"
+              title={t("settings.permissions.agentToolsTitle")}
+              description={t("settings.permissions.agentToolsDescription")}
               control={(
                 <Button
                   type="button"
@@ -276,30 +346,30 @@ export function SettingsWorkspace({
                   disabled={!methods.includes("agentProfiles/list")}
                 >
                   <Keyboard className="size-3" aria-hidden="true" />
-                  配置工具
+                  {t("settings.permissions.configureTools")}
                 </Button>
               )}
             />
             <Separator />
             <div className="py-4">
-              <h3 className="text-[11px] font-medium text-stone-800">当前广告工具</h3>
+              <h3 className="text-[11px] font-medium text-foreground">{t("settings.permissions.advertisedTools")}</h3>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {tools.length > 0 ? tools.map((toolId) => (
-                  <Badge key={toolId} variant="secondary" className="font-mono text-[9px] font-normal text-stone-600">
+                  <Badge key={toolId} variant="secondary" className="font-mono text-[9px] font-normal text-secondary-foreground">
                     {toolId}
                   </Badge>
-                )) : <span className="text-[10px] text-stone-400">当前服务未广告工具</span>}
+                )) : <span className="text-[10px] text-muted-foreground">{t("settings.permissions.noAdvertisedTools")}</span>}
               </div>
             </div>
           </TabsContent>
 
           <TabsContent value="data" className="mx-auto mt-0 w-full max-w-3xl px-4 py-6 sm:px-8">
-            <h2 className="text-[14px] font-semibold text-stone-900">数据</h2>
-            <p className="mt-1 text-[10px] text-stone-400">会话数据由 application service 管理。</p>
+            <h2 className="text-[14px] font-semibold text-foreground">{t("settings.tabs.data")}</h2>
+            <p className="mt-1 text-[10px] text-muted-foreground">{t("settings.data.description")}</p>
             <Separator className="mt-5" />
             <SettingRow
-              title="已归档会话"
-              description="恢复会话或执行经过确认的永久删除。"
+              title={t("settings.data.archiveTitle")}
+              description={t("settings.data.archiveDescription")}
               control={(
                 <Button
                   type="button"
@@ -309,35 +379,35 @@ export function SettingsWorkspace({
                   onClick={onOpenArchive}
                   disabled={!methods.includes("session/list")}
                 >
-                  查看归档
+                  {t("settings.data.viewArchive")}
                 </Button>
               )}
             />
             <Separator />
             <SettingRow
-              title="运行位置"
-              description={runtimeEnvironment?.supportsLocalDaemon ? "使用桌面本地 daemon" : "使用远程或浏览器预览边界"}
-              control={<Badge variant="secondary" className="text-[9px]">{runtimeEnvironment?.mode ?? "检测中"}</Badge>}
+              title={t("settings.data.runtimeTitle")}
+              description={runtimeEnvironment?.supportsLocalDaemon ? t("settings.data.localDaemon") : t("settings.data.remoteBoundary")}
+              control={<Badge variant="secondary" className="text-[9px]">{runtimeEnvironment?.mode ?? t("settings.data.detecting")}</Badge>}
             />
           </TabsContent>
 
           <TabsContent value="about" className="mx-auto mt-0 w-full max-w-3xl px-4 py-6 sm:px-8">
             <div className="flex items-center gap-3">
-              <div className="flex size-10 items-center justify-center rounded-md bg-stone-900 text-white">
+              <div className="flex size-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
                 <SlidersHorizontal className="size-4" aria-hidden="true" />
               </div>
               <div>
-                <h2 className="text-[14px] font-semibold text-stone-900">QXNM Forge</h2>
-                <p className="mt-0.5 text-[10px] text-stone-400">
-                  {initializeResult?.implementation.name ?? "application service 初始化中"}
+                <h2 className="text-[14px] font-semibold text-foreground">QXNM Forge</h2>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                  {initializeResult?.implementation.name ?? t("settings.about.serviceInitializing")}
                   {initializeResult ? ` · ${initializeResult.implementation.version}` : ""}
                 </p>
               </div>
             </div>
             <Separator className="my-5" />
-            <SettingRow title="作者" description="高宏顺" control={<span className="text-[10px] text-stone-500">18272669457@163.com</span>} />
+            <SettingRow title={t("settings.about.author")} description={t("settings.about.authorName")} control={<span className="text-[10px] text-muted-foreground">18272669457@163.com</span>} />
             <Separator />
-            <SettingRow title="实现" description="React + Tauri；Rust 与 .NET 独立后端" control={<Badge variant="outline" className="text-[9px]">Community</Badge>} />
+            <SettingRow title={t("settings.about.implementation")} description={t("settings.about.implementationDescription")} control={<Badge variant="outline" className="text-[9px]">{t("common.community")}</Badge>} />
           </TabsContent>
         </div>
       </Tabs>

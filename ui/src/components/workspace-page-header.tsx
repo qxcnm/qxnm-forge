@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Menu } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 
@@ -22,21 +23,23 @@ export function WorkspacePageHeader({
   onOpenMobileSidebar,
   actions,
 }: WorkspacePageHeaderProps) {
+  const { t } = useTranslation();
+
   return (
-    <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-stone-100 bg-white px-2.5 sm:px-4">
+    <header className="flex h-[52px] shrink-0 items-center gap-2 border-b bg-background px-2.5 sm:px-4">
       <Button
         type="button"
         variant="ghost"
         size="icon"
         className="size-8 md:hidden"
         onClick={onOpenMobileSidebar}
-        aria-label="打开项目导航"
+        aria-label={t("navigation.openSidebar")}
       >
         <Menu className="size-4" aria-hidden="true" />
       </Button>
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-[13px] font-semibold text-stone-900">{title}</h1>
-        <p className="truncate text-[10px] text-stone-400">{description}</p>
+        <h1 className="truncate text-[13px] font-semibold text-foreground">{title}</h1>
+        <p className="truncate text-[10px] text-muted-foreground">{description}</p>
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </header>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createFauxAgentProfileService } from "@/lib/faux-agent-profile-service";
-import type { AgentProfileInput } from "@/types/agent-profile";
+import type { AgentModelSelection, AgentProfileInput } from "@/types/agent-profile";
 
 const PROFILE_INPUT: AgentProfileInput = {
   displayName: "测试智能体",
@@ -56,6 +56,49 @@ describe("FauxAgentProfileService", () => {
     await expect(service.createProfile(PROFILE_INPUT)).rejects.toThrow(
       "当前服务未广告",
     );
+  });
+
+  /**
+   * 验证动态 Provider 模型按完整三元身份进入 Profile，且快照移除后立即拒绝更新。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("validates profiles against the current complete model route snapshot", async () => {
+    let availableModels: AgentModelSelection[] = [
+      {
+        providerId: "custom.routes",
+        modelId: "shared-model",
+        apiFamily: "openai-completions",
+      },
+    ];
+    const service = createFauxAgentProfileService(
+      "rust",
+      ["file.read"],
+      () => availableModels,
+    );
+    const input: AgentProfileInput = {
+      ...PROFILE_INPUT,
+      model: { ...availableModels[0] },
+    };
+
+    const created = await service.createProfile(input);
+    expect(created.model).toEqual({
+      providerId: "custom.routes",
+      modelId: "shared-model",
+      apiFamily: "openai-completions",
+    });
+    await expect(
+      service.createProfile({
+        ...input,
+        model: { ...input.model, apiFamily: "anthropic-messages" },
+      }),
+    ).rejects.toThrow("模型身份无效");
+
+    availableModels = [];
+    await expect(
+      service.updateProfile(created.profileId, created.revision, input),
+    ).rejects.toThrow("当前预览服务广告");
   });
 
   /**

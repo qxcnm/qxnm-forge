@@ -1,4 +1,5 @@
 import { ArchiveRestore, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,8 +22,8 @@ interface ArchiveWorkspaceProps {
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
-function formatSessionTime(updatedAt: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+function formatSessionTime(updatedAt: string, language: string): string {
+  return new Intl.DateTimeFormat(language, {
     month: "numeric",
     day: "numeric",
     hour: "2-digit",
@@ -45,31 +46,33 @@ export function ArchiveWorkspace({
   onDelete,
   onOpenMobileSidebar,
 }: ArchiveWorkspaceProps) {
+  const { t, i18n } = useTranslation();
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-white">
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
       <WorkspacePageHeader
-        title="已归档"
-        description="归档会话不会出现在最近任务中"
+        title={t("archive.title")}
+        description={t("archive.description")}
         onOpenMobileSidebar={onOpenMobileSidebar}
       />
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-8">
           {sessions.length === 0 ? (
-            <div className="border-y border-stone-100 py-12 text-center">
-              <ArchiveRestore className="mx-auto size-5 text-stone-300" aria-hidden="true" />
-              <h2 className="mt-3 text-[13px] font-medium text-stone-700">暂无已归档会话</h2>
-              <p className="mt-1 text-[11px] text-stone-400">从任务菜单归档的会话会显示在这里。</p>
+            <div className="border-y py-12 text-center">
+              <ArchiveRestore className="mx-auto size-5 text-muted-foreground/50" aria-hidden="true" />
+              <h2 className="mt-3 text-[13px] font-medium text-foreground/80">{t("archive.emptyTitle")}</h2>
+              <p className="mt-1 text-[11px] text-muted-foreground">{t("archive.emptyDescription")}</p>
             </div>
           ) : (
-            <div className="divide-y divide-stone-100 border-y border-stone-100">
+            <div className="divide-y border-y">
               {sessions.map((session) => {
                 const busy = busySessionIds.has(session.sessionId);
                 return (
                   <article key={session.sessionId} className="flex min-h-16 items-center gap-3 py-3">
                     <div className="min-w-0 flex-1">
-                      <h2 className="truncate text-[12px] font-medium text-stone-800">{session.title}</h2>
-                      <p className="mt-1 truncate text-[10px] text-stone-400">
-                        {session.project} · {formatSessionTime(session.updatedAt)}
+                      <h2 className="truncate text-[12px] font-medium text-foreground">{session.title}</h2>
+                      <p className="mt-1 truncate text-[10px] text-muted-foreground">
+                        {session.project} · {formatSessionTime(session.updatedAt, i18n.resolvedLanguage ?? "zh-CN")}
                       </p>
                     </div>
                     {canRestore ? <Button
@@ -81,16 +84,16 @@ export function ArchiveWorkspace({
                       disabled={busy}
                     >
                       <ArchiveRestore className="size-3" aria-hidden="true" />
-                      恢复
+                      {t("archive.restore")}
                     </Button> : null}
                     {canDelete ? <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="size-7 text-stone-400 hover:text-red-600"
+                      className="size-7 text-muted-foreground hover:text-red-600"
                       onClick={() => onDelete(session)}
                       disabled={busy}
-                      aria-label={`永久删除 ${session.title}`}
+                      aria-label={t("archive.permanentlyDelete", { title: session.title })}
                     >
                       <Trash2 className="size-3.5" aria-hidden="true" />
                     </Button> : null}

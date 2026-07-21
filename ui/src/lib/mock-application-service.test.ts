@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createApplicationServiceClient,
   resetMockApplicationServiceState,
 } from "@/lib/mock-application-service";
+import { projectPendingApprovals } from "@/features/approvals/pending-approvals";
 
 describe("MockApplicationServiceClient", () => {
   beforeEach(() => {
@@ -11,12 +12,12 @@ describe("MockApplicationServiceClient", () => {
   });
 
   /**
-   * 验证 Rust 画像只额外广告服务端实际具备的队列方法。
+   * 验证 faux 客户端不会广告尚未实现的 Session 与运行控制方法。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  it("advertises Rust-only follow-up methods", async () => {
+  it("does not advertise unimplemented application service methods", async () => {
     const rustClient = createApplicationServiceClient("rust");
     const dotnetClient = createApplicationServiceClient("dotnet");
 
@@ -25,8 +26,30 @@ describe("MockApplicationServiceClient", () => {
       dotnetClient.initialize(),
     ]);
 
-    expect(rustResult.capabilities.methods).toContain("run/followUp");
-    expect(dotnetResult.capabilities.methods).not.toContain("run/followUp");
+    for (const result of [rustResult, dotnetResult]) {
+      for (const method of [
+        "session/branch/select",
+        "session/compact",
+        "run/steer",
+        "run/followUp",
+      ]) {
+        expect(result.capabilities.methods).not.toContain(method);
+      }
+    }
+  });
+
+  /**
+   * 验证 faux 能力投影广告其可持久化与解决的审批事件。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("advertises the approval events produced by the faux service", async () => {
+    const result = await createApplicationServiceClient("rust").initialize();
+
+    expect(result.capabilities.eventTypes).toEqual(
+      expect.arrayContaining(["approval.requested", "approval.resolved"]),
+    );
   });
 
   /**
@@ -133,6 +156,65 @@ describe("MockApplicationServiceClient", () => {
   });
 
   /**
+   * 验证预览模型目录只投影当前后端已启用且已配置凭据的完整 Provider 路由。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("projects configured provider models with backend-isolated route identity", async () => {
+    const rustClient = createApplicationServiceClient("rust");
+    const dotnetClient = createApplicationServiceClient("dotnet");
+    const created = await rustClient.createProviderConnection({
+      displayName: "Route Provider",
+      providerId: "custom.routes",
+      baseUrl: "https://example.invalid/v1",
+      apiFamily: "openai-completions",
+      modelIds: ["shared-model", "second-model"],
+      logoAssetId: null,
+      enabled: true,
+    });
+
+    expect(await rustClient.listModels()).toHaveLength(1);
+    await rustClient.setProviderCredential(created.connection.providerId, "test-only-secret");
+
+    expect(await rustClient.listModels()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "custom.routes",
+          modelId: "shared-model",
+          apiFamily: "openai-completions",
+        }),
+        expect.objectContaining({
+          providerId: "custom.routes",
+          modelId: "second-model",
+          apiFamily: "openai-completions",
+        }),
+      ]),
+    );
+    expect(await dotnetClient.listModels()).toEqual([
+      expect.objectContaining({
+        providerId: "faux",
+        modelId: "faux-v1",
+        apiFamily: "faux",
+      }),
+    ]);
+    await expect(
+      rustClient.startRun({
+        sessionId: "route-identity",
+        prompt: "verify route",
+        model: {
+          providerId: "custom.routes",
+          modelId: "shared-model",
+          apiFamily: "wrong-family",
+        },
+      }),
+    ).rejects.toThrow("model route is not available");
+
+    await rustClient.removeProviderCredential(created.connection.providerId);
+    expect(await rustClient.listModels()).toHaveLength(1);
+  });
+
+  /**
    * 验证 faux Session 可完成归档、恢复与永久删除生命周期。
    *
    * 作者：高宏顺
@@ -168,5 +250,81 @@ describe("MockApplicationServiceClient", () => {
     expect(second).toEqual(first);
     await expect(client.getSession("desktop-shell", -1)).rejects.toThrow();
     await expect(client.getSession("missing-session")).rejects.toThrow();
+  });
+
+  /**
+   * 验证浏览器预览提供可操作审批，并拒绝未提供或重复的 choice。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("resolves the deterministic approval flow exactly once", async () => {
+    const client = createApplicationServiceClient("rust");
+    const initial = await client.getSession("approval-flow");
+    const [approval] = projectPendingApprovals(initial);
+
+    expect(approval?.request.operation).toBe("file.write");
+    await expect(
+      client.respondToApproval(
+        "approval-flow",
+        "preview-run-approval",
+        "preview-approval-1",
+        { choice: "allow_session" },
+      ),
+    ).rejects.toThrow();
+    await client.respondToApproval(
+      "approval-flow",
+      "preview-run-approval",
+      "preview-approval-1",
+      { choice: "deny" },
+    );
+
+    const resolved = await client.getSession("approval-flow");
+    expect(projectPendingApprovals(resolved)).toEqual([]);
+    expect(resolved.activeRunId).toBeNull();
+    expect(resolved.events.at(-1)).toMatchObject({
+      type: "approval.resolved",
+      data: {
+        approvalId: "preview-approval-1",
+        decision: { choice: "deny" },
+        resolutionSource: "client",
+      },
+    });
+    await expect(
+      client.respondToApproval(
+        "approval-flow",
+        "preview-run-approval",
+        "preview-approval-1",
+        { choice: "deny" },
+      ),
+    ).rejects.toThrow();
+  });
+
+  /**
+   * 验证 faux 服务拒绝已过期审批且不会追加伪造的 resolution。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects an expired approval without recording a resolution", async () => {
+    const client = createApplicationServiceClient("rust");
+    const before = await client.getSession("approval-flow");
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2100-01-01T00:00:00Z"));
+
+    await expect(
+      client.respondToApproval(
+        "approval-flow",
+        "preview-run-approval",
+        "preview-approval-1",
+        { choice: "deny" },
+      ),
+    ).rejects.toThrow();
+    now.mockRestore();
+
+    const after = await client.getSession("approval-flow");
+    expect(after).toEqual(before);
+    expect(after.events).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "approval.resolved" })]),
+    );
   });
 });

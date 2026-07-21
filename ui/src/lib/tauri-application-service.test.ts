@@ -75,6 +75,74 @@ describe("TauriApplicationServiceClient", () => {
   });
 
   /**
+   * 验证审批决定只通过 allowlist 内的 approval/respond 提交，并要求 accepted 回执。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("submits a bounded approval decision through the application service", async () => {
+    invokeMock.mockResolvedValue({ accepted: true });
+    const client = new TauriApplicationServiceClient("dotnet");
+
+    await client.respondToApproval(
+      "session-1",
+      "run-1",
+      "approval-1",
+      { choice: "allow_once" },
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith("application_service_request", {
+      backend: "dotnet",
+      method: "approval/respond",
+      params: {
+        sessionId: "session-1",
+        runId: "run-1",
+        approvalId: "approval-1",
+        decision: { choice: "allow_once" },
+      },
+    });
+  });
+
+  /**
+   * 验证桌面传输边界按共同 Schema 接受包含点号的 Logo 资源 ID。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("transports dotted provider logo asset identifiers", async () => {
+    const connectionInput = {
+      displayName: "Example Provider",
+      providerId: "custom.example",
+      baseUrl: "https://api.example.invalid/v1",
+      apiFamily: "openai-completions",
+      modelIds: ["model-a"],
+      logoAssetId: "custom.brand.dark",
+      enabled: true,
+    } as const;
+    invokeMock.mockResolvedValue({
+      connection: {
+        connectionId: "connection-1",
+        revision: 1,
+        ...connectionInput,
+        credentialConfigured: false,
+        createdAt: "2026-07-21T00:00:00Z",
+        updatedAt: "2026-07-21T00:00:00Z",
+      },
+      restartRequired: true,
+    });
+    const client = new TauriApplicationServiceClient("rust");
+
+    const result = await client.createProviderConnection(connectionInput);
+
+    expect(result.connection.logoAssetId).toBe("custom.brand.dark");
+    expect(invokeMock).toHaveBeenCalledWith("application_service_request", {
+      backend: "rust",
+      method: "providerConnections/create",
+      params: { connection: connectionInput },
+    });
+  });
+
+  /**
    * 验证 host 即使返回额外 secret 字段，前端严格 schema 仍拒绝该投影。
    *
    * 作者：高宏顺

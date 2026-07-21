@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "@/App";
+import { InterfaceProviders } from "@/components/interface-providers";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { resetMockApplicationServiceState } from "@/lib/mock-application-service";
 import { useWorkspaceUiStore } from "@/store/workspace-ui-store";
@@ -23,9 +24,11 @@ function renderApp() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <App />
-      </TooltipProvider>
+      <InterfaceProviders>
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>
+      </InterfaceProviders>
     </QueryClientProvider>,
   );
 }
@@ -82,6 +85,36 @@ describe("QXNM Forge workspace", () => {
     expect(
       await screen.findByText(/运行已由 Rust capability 画像接受/),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * 验证侧栏待审批 Session 会展示结构化请求，并可通过真实客户端方法决议。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("renders and resolves a pending tool approval", async () => {
+    renderApp();
+
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: /检查工具审批流程/ }))[0],
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "需要审批" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("file.write")).toBeInTheDocument();
+    expect(screen.getByText("approval-preview.txt")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "对 file.write 选择拒绝" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("heading", { name: "需要审批" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText("待审批")).not.toBeInTheDocument();
   });
 
   /**
@@ -359,13 +392,17 @@ describe("QXNM Forge workspace", () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Base URL")).toHaveValue("");
 
-    fireEvent.change(screen.getByLabelText("导入 New API 连接 JSON"), {
+    const importInput = screen.getByLabelText("导入 New API 连接 JSON");
+    const importButton = screen.getByRole("button", { name: "导入" });
+    expect(importInput).toHaveAttribute("type", "password");
+    fireEvent.change(importInput, {
       target: {
         value:
           '{"_type":"newapi_channel_conn","key":"test-only-key","url":"https://api.example"}',
       },
     });
-    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    fireEvent.click(importButton);
+    expect(importInput).toHaveValue("");
     expect(screen.getByLabelText("名称")).toHaveValue("星思研 New API");
     expect(screen.getByLabelText("Provider ID")).toHaveValue("newapi-gzxsy");
     expect(screen.getByLabelText("Base URL")).toHaveValue("https://api.example/v1");
@@ -380,9 +417,36 @@ describe("QXNM Forge workspace", () => {
     expect(await screen.findByText("已保存，预览已更新")).toBeInTheDocument();
     expect(screen.getByLabelText("API Key")).toHaveValue("");
     expect(
-      screen.getByRole("button", { name: "编辑提供商 星思研 New API" }),
+      screen.getByRole("button", {
+        name: "编辑提供商 星思研 New API · 凭据已配置",
+      }),
     ).toBeInTheDocument();
     expect(JSON.stringify(window.localStorage)).not.toContain("test-only-key");
+
+    fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
+    const modelSelect = await screen.findByLabelText("选择模型");
+    await waitFor(() => expect(modelSelect).toBeEnabled());
+    fireEvent.click(modelSelect);
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: "gpt-5 · newapi-gzxsy/openai-completions",
+      }),
+    );
+    expect(modelSelect).toHaveTextContent(
+      "gpt-5 · newapi-gzxsy/openai-completions",
+    );
+
+    const agentSelect = screen.getByLabelText("选择智能体");
+    fireEvent.click(agentSelect);
+    fireEvent.click(await screen.findByRole("option", { name: "编码助手" }));
+    expect(modelSelect).toBeEnabled();
+    fireEvent.click(modelSelect);
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: "gpt-5 · newapi-gzxsy/openai-completions",
+      }),
+    );
+    expect(agentSelect).toHaveTextContent("默认智能体");
   });
 
   /**

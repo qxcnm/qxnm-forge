@@ -1,4 +1,5 @@
 import type {
+  ApprovalDecision,
   ApplicationServiceClient,
   BackendKind,
   InitializeResult,
@@ -14,6 +15,7 @@ import type {
   SessionSummary,
 } from "@/types/application-service";
 import { createFauxAgentProfileService } from "@/lib/faux-agent-profile-service";
+import { getModelRouteKey } from "@/lib/model-route";
 import type {
   AgentProfile,
   AgentProfileInput,
@@ -32,8 +34,6 @@ const SHARED_METHODS = [
   "session/archive",
   "session/restore",
   "session/delete",
-  "session/branch/select",
-  "session/compact",
   "agentProfiles/list",
   "agentProfiles/create",
   "agentProfiles/update",
@@ -54,6 +54,15 @@ const FAUX_TOOL_IDS = [
   "process.exec",
   "shell.exec",
 ] as const;
+
+const FAUX_MODEL_DESCRIPTOR: ModelDescriptor = {
+  providerId: "faux",
+  modelId: "faux-v1",
+  apiFamily: "faux",
+  displayName: "Faux v1",
+  supportsReasoning: false,
+  supportsTools: true,
+};
 
 const DEFAULT_SESSIONS: readonly SessionSummary[] = [
   {
@@ -113,6 +122,62 @@ const DEFAULT_DESKTOP_MESSAGES: SessionSnapshot["messages"] = [
   },
 ];
 
+/** approval-flow faux 会话中等待用户确认的结构化写入请求。 */
+const DEFAULT_APPROVAL_SNAPSHOT: SessionSnapshot = {
+  sessionId: "approval-flow",
+  latestSeq: 1,
+  activeRunId: "preview-run-approval",
+  messages: [
+    {
+      messageId: "preview-approval-user",
+      role: "user",
+      content: [{ type: "text", text: "在工作区写入审批演示文件" }],
+      time: "2026-07-21T06:59:58Z",
+    },
+    {
+      messageId: "preview-approval-assistant",
+      role: "assistant",
+      content: [
+        {
+          type: "tool_call",
+          toolCallId: "preview-tool-call-approval",
+          name: "file.write",
+          arguments: { path: "approval-preview.txt", content: "preview" },
+        },
+      ],
+      provider: { id: "faux", modelId: "faux-v1", apiFamily: "faux" },
+      finishReason: "tool_use",
+      usage: { inputTokens: 8, outputTokens: 6, totalTokens: 14 },
+      time: "2026-07-21T07:00:00Z",
+    },
+  ],
+  events: [
+    {
+      sessionId: "approval-flow",
+      runId: "preview-run-approval",
+      turnId: "preview-turn-approval",
+      seq: 1,
+      time: "2026-07-21T07:00:01Z",
+      type: "approval.requested",
+      data: {
+        approval: {
+          approvalId: "preview-approval-1",
+          toolCallId: "preview-tool-call-approval",
+          operation: "file.write",
+          arguments: { path: "approval-preview.txt", content: "preview" },
+          operationHash: "a".repeat(64),
+          risk: "medium",
+          reason: "此写入会修改工作区内容，需要明确批准。",
+          resources: [{ kind: "path", value: "approval-preview.txt" }],
+          choices: ["allow_once", "deny"],
+          expiresAt: "2099-07-21T08:00:00Z",
+        },
+      },
+    },
+  ],
+  selectedHeadRecordId: "preview-approval-record-1",
+};
+
 /**
  * 为默认 Session 建立不含事件、凭据或宿主路径的确定性消息快照。
  *
@@ -120,6 +185,9 @@ const DEFAULT_DESKTOP_MESSAGES: SessionSnapshot["messages"] = [
  * 邮箱：18272669457@163.com
  */
 function createDefaultSessionSnapshot(sessionId: string): SessionSnapshot {
+  if (sessionId === DEFAULT_APPROVAL_SNAPSHOT.sessionId) {
+    return structuredClone(DEFAULT_APPROVAL_SNAPSHOT);
+  }
   const messages = sessionId === "desktop-shell" ? DEFAULT_DESKTOP_MESSAGES : [];
   return {
     sessionId,
@@ -227,6 +295,39 @@ function cloneProviderConnection(connection: ProviderConnection): ProviderConnec
 }
 
 /**
+ * 从浏览器预览状态构造与真实 daemon 规则一致的可用模型快照。
+ *
+ * 输入：当前后端隔离的 Provider 连接状态。
+ * 输出：faux 路由以及已启用、已配置凭据的自定义 Provider 三元路由。
+ * 不变量：不读取凭据正文，不向未配置连接广告模型，并按完整身份稳定排序。
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function createMockModelSnapshot(state: MockServiceState): readonly ModelDescriptor[] {
+  const models: ModelDescriptor[] = [{ ...FAUX_MODEL_DESCRIPTOR }];
+  for (const connection of state.providerConnections.values()) {
+    if (!connection.enabled || !connection.credentialConfigured) {
+      continue;
+    }
+    for (const modelId of connection.modelIds) {
+      models.push({
+        providerId: connection.providerId,
+        modelId,
+        apiFamily: connection.apiFamily,
+        displayName: modelId,
+        supportsReasoning: false,
+        supportsTools: false,
+      });
+    }
+  }
+  return models.sort((left, right) => {
+    const leftKey = getModelRouteKey(left);
+    const rightKey = getModelRouteKey(right);
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  });
+}
+
+/**
  * 深复制 faux Session 快照，阻止调用方修改共享的消息与事件对象。
  *
  * 作者：高宏顺
@@ -318,8 +419,12 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
    */
   public constructor(backend: BackendKind) {
     this.#backend = backend;
-    this.#profiles = createFauxAgentProfileService(backend, FAUX_TOOL_IDS);
     this.#state = MOCK_SERVICE_STATES[backend];
+    this.#profiles = createFauxAgentProfileService(
+      backend,
+      FAUX_TOOL_IDS,
+      () => createMockModelSnapshot(this.#state),
+    );
   }
 
   /**
@@ -374,7 +479,6 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
    */
   public async initialize(): Promise<InitializeResult> {
     await wait(240);
-    const rustOnlyMethods = this.#backend === "rust" ? ["run/steer", "run/followUp"] : [];
 
     return {
       implementation: {
@@ -383,31 +487,29 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
         language: this.#backend,
       },
       capabilities: {
-        methods: [...SHARED_METHODS, ...rustOnlyMethods],
-        eventTypes: ["run.started", "message.delta", "message.completed", "run.completed"],
+        methods: SHARED_METHODS,
+        eventTypes: [
+          "run.started",
+          "message.delta",
+          "message.completed",
+          "approval.requested",
+          "approval.resolved",
+          "run.completed",
+        ],
         tools: FAUX_TOOL_IDS,
       },
     };
   }
 
   /**
-   * 返回公开 faux Provider 的确定性模型。
+   * 返回公开 faux 与当前已配置自定义 Provider 的确定性模型快照。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
   public async listModels(): Promise<readonly ModelDescriptor[]> {
     await wait(120);
-    return [
-      {
-        providerId: "faux",
-        modelId: "faux-v1",
-        apiFamily: "faux",
-        displayName: "Faux v1",
-        supportsReasoning: false,
-        supportsTools: true,
-      },
-    ];
+    return createMockModelSnapshot(this.#state);
   }
 
   /**
@@ -415,13 +517,20 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
    *
    * 输入：非空 prompt 与服务端模型三元标识。
    * 输出：仅用于当前预览生命周期的 run 引用。
-   * 失败：prompt 为空时拒绝请求。
+   * 失败：prompt 为空或模型三元路由不在当前可用快照时拒绝请求。
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
   public async startRun(input: RunStartInput): Promise<RunStartResult> {
     if (input.prompt.trim().length === 0) {
       throw new Error("prompt must not be empty");
+    }
+    if (
+      !createMockModelSnapshot(this.#state).some(
+        (model) => getModelRouteKey(model) === getModelRouteKey(input.model),
+      )
+    ) {
+      throw new Error("model route is not available");
     }
 
     await wait(760);
@@ -439,6 +548,84 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
   public async cancelRun(sessionId: string, runId: string): Promise<void> {
     void sessionId;
     void runId;
+    await wait(80);
+  }
+
+  /**
+   * 在浏览器 faux 状态中解决一个确定性审批请求。
+   *
+   * 输入：精确 Session/run/approval ID 与服务端已提供的 choice。
+   * 输出：决议事件写入内存快照后无正文。
+   * 不变量：未知、重复或不在 choices 内的决定被拒绝；不会执行真实工具或写入宿主。
+   * 失败：标识不匹配、审批已解决或过期、choice 未提供时拒绝。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public async respondToApproval(
+    sessionId: string,
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ): Promise<void> {
+    const snapshot = this.#state.sessionSnapshots.get(sessionId);
+    const requestedEvent = snapshot?.events.find(
+      (event) =>
+        event.type === "approval.requested" &&
+        event.runId === runId &&
+        (event.data.approval as { approvalId?: unknown } | undefined)?.approvalId ===
+          approvalId,
+    );
+    const alreadyResolved = snapshot?.events.some(
+      (event) =>
+        event.type === "approval.resolved" &&
+        event.data.approvalId === approvalId,
+    );
+    const offeredChoices = (
+      requestedEvent?.data.approval as { choices?: unknown } | undefined
+    )?.choices;
+    const expiresAt = (
+      requestedEvent?.data.approval as { expiresAt?: unknown } | undefined
+    )?.expiresAt;
+    const expiresAtTimestamp =
+      typeof expiresAt === "string" ? Date.parse(expiresAt) : Number.NaN;
+    if (
+      !snapshot ||
+      !requestedEvent ||
+      alreadyResolved ||
+      !Array.isArray(offeredChoices) ||
+      !offeredChoices.includes(decision.choice) ||
+      !Number.isFinite(expiresAtTimestamp) ||
+      expiresAtTimestamp <= Date.now()
+    ) {
+      throw new Error("approval is unavailable or the decision was not offered");
+    }
+
+    const nextSequence = snapshot.latestSeq + 1;
+    this.#state.sessionSnapshots.set(sessionId, {
+      ...snapshot,
+      latestSeq: nextSequence,
+      activeRunId: null,
+      events: [
+        ...snapshot.events,
+        {
+          sessionId,
+          runId,
+          ...(requestedEvent.turnId ? { turnId: requestedEvent.turnId } : {}),
+          seq: nextSequence,
+          time: new Date().toISOString(),
+          type: "approval.resolved",
+          data: { approvalId, decision, resolutionSource: "client" },
+        },
+      ],
+    });
+    const session = this.#state.sessions.get(sessionId);
+    if (session) {
+      this.#state.sessions.set(sessionId, {
+        ...session,
+        status: "active",
+        updatedAt: new Date().toISOString(),
+      });
+    }
     await wait(80);
   }
 

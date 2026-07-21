@@ -1,5 +1,6 @@
-import type { BackendKind } from "@/types/application-service";
 import { AGENT_TOOL_PRESENTATIONS } from "@/data/agent-tools";
+import { getModelRouteKey } from "@/lib/model-route";
+import type { BackendKind, ModelDescriptor } from "@/types/application-service";
 import type {
   AgentProfile,
   AgentProfileInput,
@@ -11,6 +12,10 @@ const DEFAULT_MODEL = {
   modelId: "faux-v1",
   apiFamily: "faux",
 } as const;
+type ModelSnapshotReader = () => readonly Pick<
+  ModelDescriptor,
+  "providerId" | "modelId" | "apiFamily"
+>[];
 const PRESENTED_TOOL_IDS = new Set(
   AGENT_TOOL_PRESENTATIONS.map((tool) => tool.toolId),
 );
@@ -79,6 +84,21 @@ function cloneProfile(profile: AgentProfile): AgentProfile {
 }
 
 /**
+ * 返回浏览器预览在没有动态 Provider 时使用的最小模型快照。
+ *
+ * 输出：只包含公开 faux 路由的不可变列表。
+ * 不变量：不得推断或广告任何真实 Provider 能力。
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function readDefaultModelSnapshot(): readonly Pick<
+  ModelDescriptor,
+  "providerId" | "modelId" | "apiFamily"
+>[] {
+  return [DEFAULT_MODEL];
+}
+
+/**
  * 校验并规范化用户可编辑字段，拒绝未知工具与危险模式越权组合。
  *
  * 输入：未受信任的表单投影和服务端已广告工具集合。
@@ -90,6 +110,10 @@ function cloneProfile(profile: AgentProfile): AgentProfile {
 function normalizeInput(
   input: AgentProfileInput,
   supportedToolIds: ReadonlySet<string>,
+  availableModels: readonly Pick<
+    ModelDescriptor,
+    "providerId" | "modelId" | "apiFamily"
+  >[],
 ): AgentProfileInput {
   if (
     !input ||
@@ -124,6 +148,7 @@ function normalizeInput(
   const displayName = input.displayName.trim();
   const description = input.description.trim();
   const instructions = input.instructions.trim();
+  const availableModelRouteKeys = new Set(availableModels.map(getModelRouteKey));
   const requestedToolIdSet = new Set<string>();
   for (const toolId of input.requestedToolIds as readonly unknown[]) {
     if (typeof toolId !== "string") {
@@ -156,9 +181,7 @@ function normalizeInput(
     input.model.modelId !== input.model.modelId.trim() ||
     unicodeScalarCount(input.model.apiFamily) > 128 ||
     !API_FAMILY_PATTERN.test(input.model.apiFamily) ||
-    input.model.providerId !== DEFAULT_MODEL.providerId ||
-    input.model.modelId !== DEFAULT_MODEL.modelId ||
-    input.model.apiFamily !== DEFAULT_MODEL.apiFamily
+    !availableModelRouteKeys.has(getModelRouteKey(input.model))
   ) {
     throw new Error("模型身份无效或未被当前预览服务广告");
   }
@@ -254,20 +277,26 @@ class FauxAgentProfileService implements AgentProfileService {
   public readonly mode = "faux-preview" as const;
   readonly #profiles = new Map<string, AgentProfile>();
   readonly #supportedToolIds: ReadonlySet<string>;
+  readonly #readAvailableModels: ModelSnapshotReader;
 
   /**
    * 以当前 initialize 广告的工具上限建立内存服务。
    *
-   * 输入：后端展示画像与服务实际广告的工具 ID。
+   * 输入：后端展示画像、服务实际广告的工具 ID 与当前可用模型快照读取器。
    * 输出：隔离于其他后端画像的进程内预览服务。
    * 不变量：未知展示工具不会进入允许集合，且不读取网络或凭据。
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  public constructor(backend: BackendKind, supportedToolIds: readonly string[]) {
+  public constructor(
+    backend: BackendKind,
+    supportedToolIds: readonly string[],
+    readAvailableModels: ModelSnapshotReader = readDefaultModelSnapshot,
+  ) {
     this.#supportedToolIds = new Set(
       supportedToolIds.filter((toolId) => PRESENTED_TOOL_IDS.has(toolId)),
     );
+    this.#readAvailableModels = readAvailableModels;
     for (const profile of createDefaultProfiles(backend)) {
       this.#profiles.set(profile.profileId, profile);
     }
@@ -299,7 +328,11 @@ class FauxAgentProfileService implements AgentProfileService {
    * 邮箱：18272669457@163.com
    */
   public async createProfile(input: AgentProfileInput): Promise<AgentProfile> {
-    const normalized = normalizeInput(input, this.#supportedToolIds);
+    const normalized = normalizeInput(
+      input,
+      this.#supportedToolIds,
+      this.#readAvailableModels(),
+    );
     const timestamp = new Date().toISOString();
     const profile: AgentProfile = {
       ...normalized,
@@ -336,7 +369,11 @@ class FauxAgentProfileService implements AgentProfileService {
       throw new Error("智能体已在其他位置更新，请重新加载");
     }
 
-    const normalized = normalizeInput(input, this.#supportedToolIds);
+    const normalized = normalizeInput(
+      input,
+      this.#supportedToolIds,
+      this.#readAvailableModels(),
+    );
     const profile: AgentProfile = {
       ...normalized,
       profileId,
@@ -375,7 +412,7 @@ class FauxAgentProfileService implements AgentProfileService {
 /**
  * 创建与后端画像隔离的 Faux Agent Profile 内存服务。
  *
- * 输入：后端展示画像与 initialize 实际广告的工具 ID。
+ * 输入：后端展示画像、initialize 实际广告的工具 ID 与可选模型快照读取器。
  * 输出：刷新即丢弃且不会产生网络请求的 Draft 服务。
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
@@ -383,6 +420,7 @@ class FauxAgentProfileService implements AgentProfileService {
 export function createFauxAgentProfileService(
   backend: BackendKind,
   supportedToolIds: readonly string[],
+  readAvailableModels: ModelSnapshotReader = readDefaultModelSnapshot,
 ): AgentProfileService {
-  return new FauxAgentProfileService(backend, supportedToolIds);
+  return new FauxAgentProfileService(backend, supportedToolIds, readAvailableModels);
 }
