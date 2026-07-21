@@ -202,6 +202,19 @@ impl Agent {
         agent
     }
 
+    /// 功能：向同 crate 的 application service 暴露只读克隆 SessionStore 句柄。
+    ///
+    /// 输入：当前 Agent 服务。
+    /// 输出：共享同一 canonical state root 与限制的轻量 SessionStore 克隆。
+    /// 不变量：不会暴露 state path 给协议客户端，也不会打开 journal 或 writer。
+    /// 失败：本方法不执行 I/O 且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[must_use]
+    pub(crate) fn session_store(&self) -> SessionStore {
+        self.sessions.clone()
+    }
+
     /// 功能：返回当前进程真实注册、可接受 run/start 的 Provider capability 列表。
     ///
     /// 作者：高宏顺
@@ -989,7 +1002,10 @@ impl Agent {
     /// 失败：存在任意该 Session RunControl 时返回 -32004/session_busy/retryable。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
-    async fn ensure_session_mutation_quiescent(&self, session_id: &str) -> Result<(), AgentError> {
+    pub(crate) async fn ensure_session_mutation_quiescent(
+        &self,
+        session_id: &str,
+    ) -> Result<(), AgentError> {
         if self
             .active
             .lock()

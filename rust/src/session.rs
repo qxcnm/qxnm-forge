@@ -222,6 +222,16 @@ pub struct SessionLease {
     session_id: String,
     file: File,
     portable: PortableWriterLease,
+    _coordination: SessionCoordinationLease,
+}
+
+/// 固定 sessions 根下、不会随 Session 目录移动的跨进程 per-ID lease。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+#[derive(Debug)]
+pub(crate) struct SessionCoordinationLease {
+    _portable: PortableWriterLease,
 }
 
 impl SessionLease {
@@ -259,10 +269,47 @@ impl SessionStore {
         let root = root.as_ref().to_path_buf();
         tokio::fs::create_dir_all(root.join("sessions")).await?;
         let root = tokio::fs::canonicalize(root).await?;
+        let sessions = tokio::fs::canonicalize(root.join("sessions")).await?;
+        if sessions != root.join("sessions") {
+            return Err(AgentError::new(
+                ErrorCode::InternalError,
+                "session storage root is invalid",
+            )
+            .with_details(serde_json::json!({"kind":"session_store_invalid"})));
+        }
         Ok(Self {
             root,
             inline_output_limit,
         })
+    }
+
+    /// 功能：返回 canonical 应用状态根，供同 crate 的生命周期服务派生固定状态子目录。
+    ///
+    /// 输入：当前已初始化的 Session store。
+    /// 输出：只读 canonical 状态根引用。
+    /// 不变量：Session 始终只位于返回路径的 `sessions` 子目录；调用方不得把该路径暴露给协议客户端。
+    /// 失败：本方法不执行 I/O 且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[must_use]
+    pub(crate) fn state_root(&self) -> &Path {
+        &self.root
+    }
+
+    /// 功能：为永久删除取得不会随 Session rename 移动的跨进程 coordination lease。
+    ///
+    /// 输入：符合 portable opaque ID 语法的 Session ID。
+    /// 输出：释放前阻止当前 Rust/.NET writer 打开、创建或移动同 ID Session 的 lease。
+    /// 不变量：lease 固定在 `sessions/.session-coordination/<sessionId>`，不读取 journal 或凭据。
+    /// 失败：ID、coordination 路径或 live owner 无法安全确认时返回结构化错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub(crate) fn acquire_delete_coordination(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionCoordinationLease, AgentError> {
+        validate_id(session_id, "session")?;
+        acquire_session_coordination(&self.root.join("sessions"), session_id)
     }
 
     /// 功能：返回工具输出进入 artifact 前允许内联的字节数。
@@ -283,8 +330,11 @@ impl SessionStore {
     pub async fn acquire_writer(&self, session_id: &str) -> Result<SessionLease, AgentError> {
         validate_id(session_id, "session")?;
         let directory = self.session_dir(session_id)?;
+        let sessions_root = self.root.join("sessions");
         let session_id = session_id.to_owned();
         task::spawn_blocking(move || {
+            let coordination = acquire_session_coordination(&sessions_root, &session_id)?;
+            reject_pending_tombstone(&sessions_root, &session_id)?;
             let mut portable = PortableWriterLease::acquire(&directory, &session_id)?;
             let file = open_writer_lock(&directory)?;
             if let Err(error) = file.try_lock_exclusive() {
@@ -299,6 +349,7 @@ impl SessionStore {
                 session_id,
                 file,
                 portable,
+                _coordination: coordination,
             })
         })
         .await
@@ -318,9 +369,12 @@ impl SessionStore {
     ) -> Result<(), AgentError> {
         validate_id(session_id, "session")?;
         let directory = self.session_dir(session_id)?;
+        let sessions_root = self.root.join("sessions");
         let session_id = session_id.to_owned();
         let workspace = workspace.to_string_lossy().into_owned();
         task::spawn_blocking(move || {
+            let _coordination = acquire_session_coordination(&sessions_root, &session_id)?;
+            reject_pending_tombstone(&sessions_root, &session_id)?;
             create_session_directory(&directory)?;
             let mut portable = PortableWriterLease::acquire(&directory, &session_id)?;
             let lock = open_writer_lock(&directory)?;
@@ -1687,6 +1741,49 @@ fn validate_media_type(value: &str) -> Result<(), AgentError> {
     }
 }
 
+/// 功能：在 sessions 根的固定隐藏目录中取得不会随目标 Session rename 的 portable lease。
+///
+/// 输入：已经 canonical 的 sessions 根和已验证 Session ID。
+/// 输出：持有 literal-loopback witness 的 per-ID coordination lease。
+/// 不变量：coordination 根和 ID 目录都必须是真实 canonical 目录；不会创建或读取 Session journal。
+/// 失败：路径、live owner、owner metadata、随机源或同步失败时返回 portable writer 错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn acquire_session_coordination(
+    sessions_root: &Path,
+    session_id: &str,
+) -> Result<SessionCoordinationLease, AgentError> {
+    let coordination_root = sessions_root.join(".session-coordination");
+    create_session_directory(&coordination_root)?;
+    let directory = coordination_root.join(session_id);
+    create_session_directory(&directory)?;
+    let portable = PortableWriterLease::acquire(&directory, session_id)?;
+    Ok(SessionCoordinationLease {
+        _portable: portable,
+    })
+}
+
+/// 功能：普通 writer 打开或创建 Session 前拒绝同 ID 的固定删除 tombstone。
+///
+/// 输入：可信 sessions 根和已验证 Session ID。
+/// 输出：目标 tombstone 不存在时成功。
+/// 不变量：任意真实目录、普通文件、链接或特殊条目都视为 pending delete，不跟随该路径。
+/// 失败：存在或无法可靠读取时返回可重试 `session_locked`。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn reject_pending_tombstone(sessions_root: &Path, session_id: &str) -> Result<(), AgentError> {
+    let tombstone = sessions_root.join(".session-tombstones").join(session_id);
+    match std::fs::symlink_metadata(tombstone) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(_) | Err(_) => Err(AgentError::new(
+            ErrorCode::SessionLocked,
+            "session deletion is pending",
+        )
+        .retryable(true)
+        .with_details(serde_json::json!({"kind":"session_locked"}))),
+    }
+}
+
 /// 功能：打开或创建 Session 的跨进程 lock 文件。
 ///
 /// 作者：高宏顺
@@ -2728,11 +2825,19 @@ fn sync_directory(path: &Path) -> Result<(), AgentError> {
 ///
 /// 输入：canonical Session 目录与匹配的 opaque Session ID。
 /// 输出：完成恢复时为 true，无未提交尾部时为 false。
-/// 不变量：portable lease、advisory lock 和独占 append lock 覆盖重读、备份、截断及诊断追加。
+/// 不变量：固定 coordination、portable lease、advisory lock 和独占 append lock 覆盖重读、备份、截断及诊断追加。
 /// 失败：live writer、完整行损坏、备份冲突或 I/O 失败时 fail closed。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 fn recover_tail_locked(directory: &Path, session_id: &str) -> Result<bool, AgentError> {
+    let sessions_root = directory.parent().ok_or_else(|| {
+        AgentError::new(
+            ErrorCode::InternalError,
+            "session directory has no sessions root",
+        )
+    })?;
+    let _coordination = acquire_session_coordination(sessions_root, session_id)?;
+    reject_pending_tombstone(sessions_root, session_id)?;
     let mut portable = PortableWriterLease::acquire(directory, session_id)?;
     let lock = open_writer_lock(directory)?;
     if let Err(error) = lock.try_lock_exclusive() {

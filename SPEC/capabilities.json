@@ -6,7 +6,7 @@
     "name": "高宏顺",
     "email": "18272669457@163.com"
   },
-  "updatedAt": "2026-07-21T12:00:00Z",
+  "updatedAt": "2026-07-21T07:38:00Z",
   "defaultStatus": "unsupported",
   "implementations": [
     "dotnet",
@@ -20,6 +20,7 @@
     "agent.follow_up",
     "session.journal",
     "session.get",
+    "session.lifecycle",
     "session.linear_continuation",
     "session.cross_language",
     "session.cross_language_writer_lock",
@@ -41,6 +42,7 @@
     "cli.text",
     "provider.sponsored_catalog",
     "provider.credential_store",
+    "provider.custom_connection",
     "provider.sponsored_route",
     "agent.profile_crud",
     "agent.profile_run_binding",
@@ -175,6 +177,24 @@
         "CONFORMANCE/session_runner.py",
         "CONFORMANCE/fixtures/session/portable-v0.1/expectations.json"
       ]
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "session.lifecycle"
+      },
+      "status": "conformant",
+      "evidence": [
+        "rust/src/session_lifecycle.rs",
+        "rust/src/daemon.rs",
+        "rust/tests/session_lifecycle_rpc.rs",
+        "SPEC/adr/0030-session-lifecycle-application-service.md",
+        "SPEC/schemas/session/lifecycle.schema.json",
+        "CONFORMANCE/session_lifecycle_runner.py",
+        "CONFORMANCE/tests/test_session_lifecycle_runner.py"
+      ],
+      "notes": "共同真实 daemon runner 已通过 16 cases、Rust→.NET 与 .NET→Rust 两个方向、两端 cursor 分页、archive/restore/delete、portable journal 与 archive-state 互操作及摘要/错误/输出脱敏。门禁固定使用 faux，清除真实 Provider credential/endpoint，并报告 providerHttpConfigured:false；writer lease 的本地 loopback witness 不属于 Provider HTTP。当前证据不覆盖真实 Provider、全部 socket syscall 观测、断电 durability、mutation 中间点崩溃注入、Windows reparse 实机或移动端远程存储。"
     },
     {
       "implementation": "rust",
@@ -681,6 +701,25 @@
         "CONFORMANCE/session_runner.py",
         "CONFORMANCE/fixtures/session/portable-v0.1/expectations.json"
       ]
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "session.lifecycle"
+      },
+      "status": "conformant",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Session/SessionLifecycleService.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionCoordinationLease.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/SessionLifecycleServiceTests.cs",
+        "SPEC/adr/0030-session-lifecycle-application-service.md",
+        "SPEC/schemas/session/lifecycle.schema.json",
+        "CONFORMANCE/session_lifecycle_runner.py",
+        "CONFORMANCE/tests/test_session_lifecycle_runner.py"
+      ],
+      "notes": "共同真实 daemon runner 已通过 16 cases、Rust→.NET 与 .NET→Rust 两个方向、两端 cursor 分页、archive/restore/delete、portable journal 与 archive-state 互操作及摘要/错误/输出脱敏。门禁固定使用 faux，清除真实 Provider credential/endpoint，并报告 providerHttpConfigured:false；writer lease 的本地 loopback witness 不属于 Provider HTTP。当前证据不覆盖真实 Provider、全部 socket syscall 观测、断电 durability、mutation 中间点崩溃注入、Windows reparse 实机或移动端远程存储。"
     },
     {
       "implementation": "dotnet",
@@ -3346,6 +3385,42 @@
         "CONFORMANCE/commercial_state_runner.py"
       ],
       "notes": "已通过双向 JSON 互操作、stdin 零回显、list/remove、Unix 0600、workspace 外边界和缺 credential Session 前拒绝。v0.1 是文件型 store；Windows DPAPI/ACL、恶意并发 writer/reparse 的共同平台门禁和 OS keychain backend 尚未完成，因此保持 implemented。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.custom_connection"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/provider_connection.rs",
+        "rust/src/provider_identity.rs",
+        "rust/src/daemon.rs",
+        "rust/src/main.rs",
+        "SPEC/adr/0029-custom-provider-connections.md",
+        "SPEC/schemas/custom-provider-connection.schema.json",
+        "ui/src/features/settings/provider-settings.tsx"
+      ],
+      "notes": "已实现严格非敏感 CRUD、revision CAS、独立 CredentialStore、固定锁顺序、保留 Provider 命名空间、启动快照、模型 allowlist 与脱敏 RPC；未知模型只保守广告 text/streaming。尚无 Rust/.NET 共同动态 CRUD/credential/HTTP mock runner，Windows ACL/keychain 与真实兼容服务也未验证，因此保持 implemented。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.custom_connection"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/CustomProviderConnections.cs",
+        "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/CustomProviderConnectionTests.cs",
+        "SPEC/adr/0029-custom-provider-connections.md",
+        "SPEC/schemas/custom-provider-connection.schema.json",
+        "ui/src/features/settings/provider-settings.tsx"
+      ],
+      "notes": "已实现严格非敏感 CRUD、revision CAS、独立 CredentialStore、固定锁顺序、保留 Provider 命名空间、启动快照、模型 allowlist 与脱敏 RPC；未知模型只保守广告 text/streaming。尚无 Rust/.NET 共同动态 CRUD/credential/HTTP mock runner，Windows ACL/keychain 与真实兼容服务也未验证，因此保持 implemented。"
     },
     {
       "implementation": "rust",

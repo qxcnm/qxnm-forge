@@ -360,6 +360,229 @@ class SpecSchemaTests(unittest.TestCase):
                 with self.assertRaises(jsonschema.ValidationError):
                     validator.validate(invalid)
 
+    def test_custom_provider_connection_schema_never_accepts_credentials(self) -> None:
+        """功能：验证自定义连接 DTO 与 CredentialStore 保持严格分离。
+
+        输入：一个合法 HTTPS OpenAI-compatible connection 及安全负例。
+        输出：合法实体通过，secret、危险 URL、重复模型和未知字段全部拒绝。
+        不变量：可读取的 connection 投影永远只有 credentialConfigured 状态。
+        失败：ADR 0029 的字段或封闭对象约束漂移时测试失败。
+        作者：高宏顺
+        邮箱：18272669457@163.com
+        """
+
+        validator = self.validator(
+            "custom-provider-connection.schema.json", "#/$defs/connection"
+        )
+        connection = {
+            "connectionId": "connection-example",
+            "revision": 1,
+            "displayName": "示例 New API",
+            "providerId": "custom-example",
+            "apiFamily": "openai-completions",
+            "baseUrl": "https://api.example/v1",
+            "modelIds": ["gpt-5"],
+            "logoAssetId": "new-api",
+            "enabled": True,
+            "credentialConfigured": False,
+            "createdAt": "2026-07-21T00:00:00Z",
+            "updatedAt": "2026-07-21T00:00:00Z",
+        }
+        validator.validate(connection)
+        configuration = {
+            key: value
+            for key, value in connection.items()
+            if key != "credentialConfigured"
+        }
+        self.validator(
+            "custom-provider-connection.schema.json", "#/$defs/document"
+        ).validate({"schemaVersion": "0.1", "connections": [configuration]})
+        projected_fields = {
+            "connectionId",
+            "revision",
+            "credentialConfigured",
+            "createdAt",
+            "updatedAt",
+        }
+        connection_input = {
+            key: value
+            for key, value in connection.items()
+            if key not in projected_fields
+        }
+        protocol_cases = (
+            ("providerConnections/list", {}, "providerConnectionsListRequest"),
+            (
+                "providerConnections/create",
+                {"connection": connection_input},
+                "providerConnectionsCreateRequest",
+            ),
+            (
+                "providerConnections/update",
+                {
+                    "connectionId": connection["connectionId"],
+                    "expectedRevision": 1,
+                    "connection": connection_input,
+                },
+                "providerConnectionsUpdateRequest",
+            ),
+            (
+                "providerConnections/delete",
+                {"connectionId": connection["connectionId"], "expectedRevision": 1},
+                "providerConnectionsDeleteRequest",
+            ),
+            (
+                "providerCredentials/set",
+                {"providerId": "custom-example", "credential": "test-only-secret"},
+                "providerCredentialsSetRequest",
+            ),
+            (
+                "providerCredentials/remove",
+                {"providerId": "custom-example"},
+                "providerCredentialsRemoveRequest",
+            ),
+        )
+        for method, params, definition in protocol_cases:
+            request = {
+                "jsonrpc": "2.0",
+                "id": method,
+                "method": method,
+                "params": params,
+            }
+            with self.subTest(method=method):
+                self.validator(
+                    "protocol/jsonrpc.schema.json", f"#/$defs/{definition}"
+                ).validate(request)
+        for field, value in (
+            ("credential", "forbidden"),
+            ("apiKey", "forbidden"),
+            ("baseUrl", "http://api.example/v1"),
+            ("baseUrl", "https://user@example.test/v1"),
+            ("baseUrl", "https://api.example/v1?token=x"),
+            ("modelIds", ["gpt-5", "gpt-5"]),
+        ):
+            invalid = deepcopy(connection)
+            invalid[field] = value
+            with self.subTest(field=field, value=value):
+                with self.assertRaises(jsonschema.ValidationError):
+                    validator.validate(invalid)
+
+    def test_session_lifecycle_contract_is_closed_and_redacted(self) -> None:
+        """功能：验证 Session 生命周期分页、摘要、mutation 与归档文档的共同契约。
+
+        输入：合法脱敏摘要、四类 RPC、分页结果和工作区外归档状态。
+        输出：合法对象通过，状态矛盾、越界文本、secret/路径字段与重复归档 ID 均拒绝。
+        不变量：生命周期 wire 不包含 transcript、journal、宿主路径或 Provider credential。
+        失败：ADR 0030 的封闭字段、分页关系或资源上限漂移时测试失败。
+        作者：高宏顺
+        邮箱：18272669457@163.com
+        """
+
+        summary = {
+            "sessionId": "session-example",
+            "title": "实现桌面会话管理",
+            "project": "AI-Code",
+            "updatedAt": "2026-07-21T03:04:05Z",
+            "archived": False,
+        }
+        lifecycle_schema = "session/lifecycle.schema.json"
+        self.validator(lifecycle_schema, "#/$defs/summary").validate(summary)
+        self.validator(lifecycle_schema, "#/$defs/archiveDocument").validate(
+            {
+                "schemaVersion": "0.1",
+                "archivedSessionIds": ["session-a", "session-example"],
+            }
+        )
+
+        protocol_cases = (
+            (
+                "session/list",
+                {"limit": 64},
+                "sessionListRequest",
+                {
+                    "sessions": [summary],
+                    "nextCursor": "v1:1",
+                    "hasMore": True,
+                },
+                "sessionListResult",
+            ),
+            (
+                "session/archive",
+                {"sessionId": "session-example"},
+                "sessionArchiveRequest",
+                {"session": {**summary, "archived": True}},
+                "sessionSummaryResult",
+            ),
+            (
+                "session/restore",
+                {"sessionId": "session-example"},
+                "sessionRestoreRequest",
+                {"session": summary},
+                "sessionSummaryResult",
+            ),
+            (
+                "session/delete",
+                {"sessionId": "session-example"},
+                "sessionDeleteRequest",
+                {"deleted": True},
+                "sessionDeleteResult",
+            ),
+        )
+        for method, params, request_definition, result, result_definition in protocol_cases:
+            with self.subTest(method=method):
+                self.validator(
+                    "protocol/jsonrpc.schema.json",
+                    f"#/$defs/{request_definition}",
+                ).validate(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": method,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+                self.validator(
+                    "protocol/jsonrpc.schema.json",
+                    f"#/$defs/{result_definition}",
+                ).validate(result)
+
+        summary_validator = self.validator(lifecycle_schema, "#/$defs/summary")
+        for field, value in (
+            ("title", "x" * 97),
+            ("project", "x" * 129),
+            ("transcript", []),
+            ("workspacePath", "/private/workspace"),
+            ("apiKey", "forbidden"),
+        ):
+            invalid = deepcopy(summary)
+            invalid[field] = value
+            with (
+                self.subTest(summary_negative=field),
+                self.assertRaises(jsonschema.ValidationError),
+            ):
+                summary_validator.validate(invalid)
+
+        list_validator = self.validator(lifecycle_schema, "#/$defs/listResult")
+        for invalid in (
+            {"sessions": [], "nextCursor": "v1:1", "hasMore": False},
+            {"sessions": [summary], "nextCursor": None, "hasMore": True},
+            {
+                "sessions": [summary],
+                "nextCursor": None,
+                "hasMore": False,
+                "journal": "forbidden",
+            },
+        ):
+            with self.assertRaises(jsonschema.ValidationError):
+                list_validator.validate(invalid)
+
+        with self.assertRaises(jsonschema.ValidationError):
+            self.validator(lifecycle_schema, "#/$defs/archiveDocument").validate(
+                {
+                    "schemaVersion": "0.1",
+                    "archivedSessionIds": ["session-example", "session-example"],
+                }
+            )
+
     def test_agent_profile_v02_contract_and_security_negatives(self) -> None:
         """功能：验证 Agent Profile v0.2 的封闭 DTO、RPC、快照与安全负例。
 

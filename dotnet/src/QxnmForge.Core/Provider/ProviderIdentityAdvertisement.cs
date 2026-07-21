@@ -157,6 +157,19 @@ internal static class ProviderIdentityAdvertisement
         "{\"schemaVersion\":\"0.1\",\"implementedAdapterIds\":[],\"capabilityAllowances\":[],\"usableAuthProfiles\":[],\"configuredEnvironmentNames\":[]}"u8.ToArray();
 
     /// <summary>
+    /// 功能：判断 Provider ID 是否属于当前冻结 manifest 的 canonical 身份集合。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="providerId">已通过通用 ASCII 语法验证的候选 ID。</param>
+    /// <returns>精确命中 35 个冻结 Provider 身份之一时 true。</returns>
+    /// <remarks>不变量：结果与完整冻结模型计数索引同源，不依赖当前 credential 或 executable route presence。</remarks>
+    internal static bool IsCanonicalProviderId(string providerId)
+    {
+        return providerId is not null && TextModelCounts.ContainsKey(providerId);
+    }
+
+    /// <summary>
     /// 功能：读取并完整验证程序集内冻结 manifest/catalog，供 executable route spine 在同一证据上建立快照。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com

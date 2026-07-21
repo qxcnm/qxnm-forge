@@ -165,11 +165,25 @@ boundary.
 
 The v0.1 local `ProviderCredentialStore` is a permission-restricted file backend,
 not an OS-encrypted keychain. It MUST live outside the canonical workspace, read
-secrets only from stdin, reject symlink/reparse files, use an exclusive writer
+new secrets only from redirected stdin or an equivalent write-only local management boundary,
+reject symlink/reparse files, use an exclusive writer
 lock and atomic replacement, and require Unix mode `0600`. A stored source that
 is missing, corrupt, or unsafe MUST fail closed and MUST NOT silently fall back
 to environment credentials. Windows DPAPI/Credential Manager protection is not
 claimed until a separate platform gate passes.
+
+自定义 Provider connection 遵循 ADR 0029。通用 WebView RPC allowlist 不得包含
+`providerCredentials/set|remove`；桌面 host 只能把受限 Provider ID 与本次密码输入转发给固定
+daemon，不能接受 argv、state root、workspace、文件路径或方法名。非敏感连接列表只报告
+`credentialConfigured`，不得返回 credential、hash、前后缀或可用于离线验证的摘要。连接
+mutation 后必须重建启动期 Provider/model capability 快照。
+
+Session 列表、归档和永久删除遵循 ADR 0030。Web UI 只能接收脱敏摘要，不能直接访问
+journal、归档文件、SQLite 或宿主 Session 目录。Session 固定隔离在 `stateRoot/sessions`，
+生命周期元数据位于其外的专用目录；Provider、credential、数据库和其他状态不得被扫描或删除。
+永久删除必须在 writer/reservation 锁内先证明整棵树只含有界普通文件/目录，再原子移动到固定
+tombstone；symlink、junction、reparse point、device、活动 writer 或损坏 journal 均失败关闭。
+移动后的失败只能由同一 Session ID 续删，错误和日志不得泄露宿主路径或 transcript。
 
 Provider conformance uses a freshly generated in-memory canary credential. The
 runner removes inherited real credential variables before process creation, and

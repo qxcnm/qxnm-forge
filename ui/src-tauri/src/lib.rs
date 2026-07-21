@@ -4,6 +4,7 @@ mod application_service_bridge;
 
 use application_service_bridge::{
     ApplicationServiceBridge, application_service_initialize, application_service_request,
+    provider_credential_remove, provider_credential_set,
 };
 
 #[derive(Debug, Serialize)]
@@ -56,7 +57,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             runtime_environment,
             application_service_initialize,
-            application_service_request
+            application_service_request,
+            provider_credential_set,
+            provider_credential_remove
         ])
         .run(tauri::generate_context!())
         .expect("failed to run agent client shell");

@@ -96,7 +96,7 @@ internal sealed record InstalledSponsoredRouteDocument(
 public sealed class ProviderCredentialStore
 {
     private const string SchemaVersion = "0.1";
-    private const int MaximumDocumentBytes = 2 * 1024 * 1024;
+    private const int MaximumDocumentBytes = 16 * 1024 * 1024;
     private readonly string root;
 
     /// <summary>
@@ -270,6 +270,11 @@ public sealed class ProviderCredentialStore
     {
         ValidateDocument(document);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(document, JsonDefaults.Options);
+        if (bytes.Length > MaximumDocumentBytes)
+        {
+            throw Error("credential_shape", "CredentialStore 文档超过大小上限");
+        }
+
         CommercialFileSafety.AtomicWrite(
             Path.Combine(root, "provider-credentials.json"),
             bytes,
@@ -284,7 +289,10 @@ public sealed class ProviderCredentialStore
     /// <param name="document">严格 DTO。</param>
     private static void ValidateDocument(ProviderCredentialDocument document)
     {
-        if (document.SchemaVersion != SchemaVersion || document.Credentials.Count > 128)
+        if (document is null ||
+            document.SchemaVersion != SchemaVersion ||
+            document.Credentials is null ||
+            document.Credentials.Count > 128)
         {
             throw Error("credential_shape", "CredentialStore 文档无效");
         }
@@ -292,6 +300,11 @@ public sealed class ProviderCredentialStore
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entry in document.Credentials)
         {
+            if (entry is null)
+            {
+                throw Error("credential_shape", "CredentialStore 文档无效");
+            }
+
             ValidateProviderId(entry.ProviderId);
             ValidateApiKey(entry.ApiKey);
             if (!ids.Add(entry.ProviderId))
@@ -309,9 +322,11 @@ public sealed class ProviderCredentialStore
     /// <param name="value">候选 ID。</param>
     internal static void ValidateProviderId(string value)
     {
-        if (value.Length is < 1 or > 128 ||
+        if (value is null ||
+            value.Length is < 1 or > 128 ||
             !IsLowerAlphaNumeric(value[0]) ||
-            value.Any(static character => !IsLowerAlphaNumeric(character) && character != '-'))
+            value.Any(static character =>
+                !IsLowerAlphaNumeric(character) && character is not ('-' or '.')))
         {
             throw Error("provider_id", "Provider ID 无效");
         }
@@ -325,7 +340,9 @@ public sealed class ProviderCredentialStore
     /// <param name="value">只存在调用方内存中的候选 key。</param>
     internal static void ValidateApiKey(string value)
     {
-        if (value.Length is < 1 or > 16_384 || value.IndexOfAny(['\r', '\n', '\0']) >= 0)
+        if (value is null ||
+            value.Length is < 1 or > 16_384 ||
+            value.IndexOfAny(['\r', '\n', '\0']) >= 0)
         {
             throw Error("credential_value", "Provider credential 无效");
         }

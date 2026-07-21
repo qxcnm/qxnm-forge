@@ -28,6 +28,8 @@ Author: 高宏顺 `<18272669457@163.com>`.
   the fixed `tcp-loopback-writer-lease-v1` protocol and literal IPv4 loopback.
 - `session/writer-lock-cases.schema.json`: the ordered live, ambiguous, stale,
   initialization, host-injection, takeover-race, and release-CAS lock cases.
+- `session/lifecycle.schema.json`：ADR 0030 的脱敏 Session 摘要、分页 RPC DTO 与工作区外
+  归档状态文档；永久删除的文件系统不变量由实现和 conformance 共同验证。
 - `executor.schema.json`: `process.exec` and `shell.exec` DTOs.
 - `provider-manifest.schema.json`: closed Provider route metadata including
   adapters, auth environment names, endpoint bindings, model-catalog and
@@ -48,6 +50,8 @@ Author: 高宏顺 `<18272669457@163.com>`.
 - `sponsored-provider-installation.schema.json`：用户明确确认后固定且不含 secret 的本地 route。
 - `provider-credential-store.schema.json`：只允许工作区外敏感文件使用的 API-key store；
   不得把其实例放入 fixture、协议或 Session。
+- `custom-provider-connection.schema.json`：ADR 0029 的非敏感自定义连接、CAS 参数与
+  credential 状态；连接实体和列表永远不含 credential。
 - `storage-config.schema.json`：不携带远程连接串值的 SQLite/PostgreSQL/MySQL provider 配置。
 - `language-profiles.schema.json`：共享项目检测与工具链操作元数据。
 - `capability-matrix.schema.json`：稀疏支持矩阵；Provider target 必须同时包含

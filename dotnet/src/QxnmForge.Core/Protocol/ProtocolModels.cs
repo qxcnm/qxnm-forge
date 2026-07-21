@@ -3,6 +3,8 @@ using System.Text.Json.Serialization;
 using QxnmForge.Agent;
 using QxnmForge.Domain;
 using QxnmForge.Executor;
+using QxnmForge.Provider;
+using QxnmForge.Session;
 
 namespace QxnmForge.Protocol;
 
@@ -124,6 +126,76 @@ public sealed record InitializeResult(
 /// </summary>
 /// <param name="Models">按 Provider、model、API family 排序的公共描述。</param>
 public sealed record ModelsListResult(IReadOnlyList<ModelDescriptor> Models);
+
+/// <summary>
+/// 功能：表示 providerConnections/list 返回的全部脱敏连接。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Connections">按 connectionId 排序且永不包含 credential 的连接。</param>
+public sealed record ProviderConnectionsListResult(IReadOnlyList<ProviderConnection> Connections);
+
+/// <summary>
+/// 功能：表示 Provider 连接创建或更新的 durable 回执。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Connection">原子发布后的脱敏连接。</param>
+/// <param name="RestartRequired">连接路由快照需在下一 daemon 启动生效。</param>
+public sealed record ProviderConnectionResult(
+    ProviderConnection Connection,
+    bool RestartRequired);
+
+/// <summary>
+/// 功能：表示 Provider 连接删除完成的回执。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Deleted">成功时固定为 true。</param>
+/// <param name="RestartRequired">启动期路由快照需重启后更新。</param>
+public sealed record ProviderConnectionDeleteResult(bool Deleted, bool RestartRequired);
+
+/// <summary>
+/// 功能：表示 Provider credential 写入或移除后的脱敏状态。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="ProviderId">已存在连接的品牌中立 Provider ID。</param>
+/// <param name="CredentialConfigured">操作完成后的 presence 状态。</param>
+/// <param name="RestartRequired">模型广告需在下一 daemon 启动重新计算。</param>
+public sealed record ProviderCredentialStatusResult(
+    string ProviderId,
+    bool CredentialConfigured,
+    bool RestartRequired);
+
+/// <summary>
+/// 功能：表示 session/list 返回的真实活动与归档 Session 摘要。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Sessions">当前页按服务稳定顺序排列且不含 transcript 或路径的摘要。</param>
+/// <param name="NextCursor">存在下一页时由服务签发的 opaque cursor。</param>
+/// <param name="HasMore">是否仍有未返回摘要。</param>
+public sealed record SessionsListResult(
+    IReadOnlyList<SessionSummary> Sessions,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor,
+    bool HasMore);
+
+/// <summary>
+/// 功能：表示 session/archive 与 session/restore 返回的持久化摘要。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Session">与已 durable 归档状态一致的摘要。</param>
+public sealed record SessionSummaryResult(SessionSummary Session);
+
+/// <summary>
+/// 功能：表示 session/delete tombstone 已安全删除完成。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Deleted">成功时固定为 true。</param>
+public sealed record SessionDeleteResult(bool Deleted);
 
 /// <summary>
 /// 功能：表示 agentProfiles/list 返回的完整 profile 集合。

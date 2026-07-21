@@ -644,6 +644,44 @@ append a new completed turn. This opt-in command is an entry point, not a
 support claim; `session.cross_language` remains unchanged until both orders
 pass the shared gate.
 
+## Session 生命周期双运行时门禁
+
+`session_lifecycle_runner.py` 是 ADR 0030 的独立黑盒 evidence。它为两端创建同一个临时
+workspace 与 `stateRoot`，仅通过 conformance stdio daemon 和 `faux/faux-v1` 创建真实
+portable Session。runner 清除继承的真实 Provider credential/endpoint，关闭 Provider
+conformance 与 live test 开关，不配置或调用 Provider HTTP，也不调用付费模型：
+
+```sh
+python3 CONFORMANCE/session_lifecycle_runner.py \
+  --schema-root SPEC/schemas \
+  --rust-command-json '["./rust/target/debug/qxnm-forge"]' \
+  --dotnet-command-json \
+  '["dotnet","./dotnet/src/QxnmForge.Cli/bin/Release/net10.0/qxnm-forge-dotnet.dll"]'
+```
+
+命令参数是可执行前缀，runner 分别追加 Rust 的 `daemon --conformance` 和 .NET 的
+`daemon --stdio --conformance` 参数，并显式传入隔离的 `--workspace` 与 `--state-dir`。
+它执行 Rust 创建 → .NET 摘要/归档 → Rust 观察/恢复 → .NET 观察/删除 → Rust 确认消失，
+随后完整反向执行 .NET 创建 → Rust 归档 → .NET 恢复 → Rust 删除。两端必须原生读取
+`stateRoot/sessions` 的 portable journal 和
+`stateRoot/session-lifecycle/archive-state.json`，不能通过另一 runtime 代理。
+
+门禁以 `limit:1` 在同一 daemon 内跟随 opaque cursor，要求结果严格只有
+`sessions/nextCursor/hasMore`，拒绝重复 cursor、重复 Session、空进度页，并要求终页显式
+`nextCursor:null`。每个摘要严格限制为 ADR 0030 的五个字段和可选 `status`；runner 还逐行
+验证 journal Schema、稳定排序、mutation 回执、已删除 Session 的脱敏错误，以及 stdout、
+stderr、journal 中不存在运行期 synthetic canary。通过结果固定报告两个跨运行时方向、
+两个分页运行时及 `providerHttpConfigured:false`。该字段证明本门禁没有配置真实 Provider，
+不是对所有 socket syscall 的观测；portable writer lease 的本地 loopback witness 属于 Session
+协调机制，不是 Provider HTTP 请求。门禁不构成真实 Provider、移动端存储或崩溃注入证明。
+
+runner 自测使用只写临时状态的两个独立 fake runtime：
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
+  CONFORMANCE.tests.test_session_lifecycle_runner -v
+```
+
 ## Session journal 尾部恢复与严格损坏门禁
 
 `fixtures/session/journal-tail-recovery-cases.json` 与 ADR 0020 固定六个案例：两个

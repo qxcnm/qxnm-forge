@@ -70,14 +70,102 @@ public sealed class SessionRuntime
 }
 
 /// <summary>
+/// 功能：在单个 Session 生命周期 mutation 期间阻止 repository 重新打开同一 writer。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+internal sealed class SessionLifecycleReservation : IDisposable
+{
+    private readonly SessionRepository repository;
+    private readonly string sessionId;
+    private bool disposed;
+
+    /// <summary>
+    /// 功能：创建由 repository 独占登记的生命周期 reservation。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="repository">负责释放登记的 repository。</param>
+    /// <param name="sessionId">被阻止重新打开的 Session ID。</param>
+    internal SessionLifecycleReservation(SessionRepository repository, string sessionId)
+    {
+        this.repository = repository;
+        this.sessionId = sessionId;
+    }
+
+    /// <summary>
+    /// 功能：释放 reservation，使后续显式请求可以重新打开或创建该 Session。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public void Dispose()
+    {
+        if (disposed)
+        {
+            return;
+        }
+
+        disposed = true;
+        repository.ReleaseLifecycleReservation(sessionId);
+    }
+}
+
+/// <summary>
+/// 功能：在一次 repository 或 Agent 操作期间持有 SessionRuntime 的 StateGate 使用权。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+internal sealed class SessionRuntimeUse : IDisposable
+{
+    private bool disposed;
+
+    /// <summary>
+    /// 功能：包装已取得 StateGate 的 runtime。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="runtime">StateGate 已由调用方取得的 runtime。</param>
+    internal SessionRuntimeUse(SessionRuntime runtime)
+    {
+        Runtime = runtime;
+    }
+
+    /// <summary>
+    /// 功能：取得在本 lease 释放前不会被生命周期服务 evict 的 runtime。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    internal SessionRuntime Runtime { get; }
+
+    /// <summary>
+    /// 功能：释放 runtime StateGate，使后续操作或生命周期 reservation 可以继续。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public void Dispose()
+    {
+        if (disposed)
+        {
+            return;
+        }
+
+        disposed = true;
+        Runtime.StateGate.Release();
+    }
+}
+
+/// <summary>
 /// 功能：按 session ID 原生管理独占 journal，不借助其他语言运行时。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
 public sealed class SessionRepository : IAsyncDisposable
 {
+    private const int MaximumTrackedSessionIds = 16_384;
     private readonly string sessionsRoot;
     private readonly string workspace;
+    private readonly ConcurrentDictionary<string, object> lifecycleGates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> lifecycleReservations = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<SessionRuntime>>> sessions =
         new(StringComparer.Ordinal);
 
@@ -102,6 +190,13 @@ public sealed class SessionRepository : IAsyncDisposable
     public string Workspace => workspace;
 
     /// <summary>
+    /// 功能：取得只存放 Session 目录的规范根，供同进程生命周期服务绑定同一边界。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    internal string SessionsRoot => sessionsRoot;
+
+    /// <summary>
     /// 功能：取得或原子创建会话运行时；创建路径会先 durable 写 header。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -112,26 +207,97 @@ public sealed class SessionRepository : IAsyncDisposable
     /// <remarks>不变量：同一 repository 中每个 ID 只有一个 journal writer。</remarks>
     /// <exception cref="IOException">跨进程 lock 获取失败。</exception>
     /// <exception cref="JournalCorruptException">已有 journal 损坏。</exception>
-    public async Task<SessionRuntime> GetAsync(
+    internal async Task<SessionRuntime> GetAsync(
         string sessionId,
         CancellationToken cancellationToken = default)
     {
-        var lazy = sessions.GetOrAdd(
-            sessionId,
-            id => new Lazy<Task<SessionRuntime>>(
-                () => OpenRuntimeAsync(id, CancellationToken.None),
-                LazyThreadSafetyMode.ExecutionAndPublication));
+        var lifecycleGate = GetLifecycleGate(sessionId);
+        Lazy<Task<SessionRuntime>> lazy;
+        lock (lifecycleGate)
+        {
+            if (lifecycleReservations.ContainsKey(sessionId))
+            {
+                throw new SessionMutationException(-32004, true, "session_busy");
+            }
+
+            lazy = sessions.GetOrAdd(
+                sessionId,
+                id => new Lazy<Task<SessionRuntime>>(
+                    () => OpenRuntimeAsync(id, CancellationToken.None),
+                    LazyThreadSafetyMode.ExecutionAndPublication));
+        }
+
         try
         {
-            return await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var runtime = await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lock (lifecycleGate)
+            {
+                if (lifecycleReservations.ContainsKey(sessionId))
+                {
+                    throw new SessionMutationException(-32004, true, "session_busy");
+                }
+            }
+
+            return runtime;
         }
         catch
         {
             if (lazy.IsValueCreated && lazy.Value.IsFaulted)
             {
-                sessions.TryRemove(new KeyValuePair<string, Lazy<Task<SessionRuntime>>>(sessionId, lazy));
+                lock (lifecycleGate)
+                {
+                    sessions.TryRemove(new KeyValuePair<string, Lazy<Task<SessionRuntime>>>(sessionId, lazy));
+                }
             }
 
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 功能：取得 runtime 与 StateGate 的原子使用 lease，并在 reservation 竞争后再次确认所有权。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionId">目标 Session ID。</param>
+    /// <param name="waitForStateGate">true 时等待普通串行操作；false 时 busy 立即失败。</param>
+    /// <param name="cancellationToken">打开与等待 StateGate 的取消信号。</param>
+    /// <returns>释放前 runtime 不会被生命周期服务 evict 的使用 lease。</returns>
+    /// <exception cref="SessionMutationException">存在生命周期 reservation 或非等待模式未取得 gate。</exception>
+    internal async Task<SessionRuntimeUse> AcquireRuntimeUseAsync(
+        string sessionId,
+        bool waitForStateGate,
+        CancellationToken cancellationToken = default)
+    {
+        var runtime = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var acquired = waitForStateGate
+            ? await runtime.StateGate.WaitAsync(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false)
+            : await runtime.StateGate.WaitAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
+        if (!acquired)
+        {
+            throw new SessionMutationException(-32004, true, "session_busy");
+        }
+
+        try
+        {
+            var lifecycleGate = GetLifecycleGate(sessionId);
+            lock (lifecycleGate)
+            {
+                if (lifecycleReservations.ContainsKey(sessionId) ||
+                    !sessions.TryGetValue(sessionId, out var lazy) ||
+                    !lazy.IsValueCreated ||
+                    !lazy.Value.IsCompletedSuccessfully ||
+                    !ReferenceEquals(lazy.Value.Result, runtime))
+                {
+                    throw new SessionMutationException(-32004, true, "session_busy");
+                }
+            }
+
+            return new SessionRuntimeUse(runtime);
+        }
+        catch
+        {
+            runtime.StateGate.Release();
             throw;
         }
     }
@@ -153,28 +319,24 @@ public sealed class SessionRepository : IAsyncDisposable
         FauxScenario scenario,
         CancellationToken cancellationToken = default)
     {
-        var runtime = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        await runtime.StateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        using var runtimeUse = await AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: true,
+            cancellationToken).ConfigureAwait(false);
+        var runtime = runtimeUse.Runtime;
+        if (runtime.ActiveRun is not null)
         {
-            if (runtime.ActiveRun is not null)
-            {
-                throw new InvalidOperationException("session is busy");
-            }
+            throw new InvalidOperationException("session is busy");
+        }
 
-            var scenarioId = "faux:" + scenario.Name;
-            var receipt = await runtime.Journal.AppendAsync(
-                "faux.configured",
-                new { ScenarioId = scenarioId, Scenario = scenario },
-                cancellationToken).ConfigureAwait(false);
-            runtime.PendingScenario = scenario;
-            runtime.PendingScenarioRecordId = receipt.RecordId;
-            return scenarioId;
-        }
-        finally
-        {
-            runtime.StateGate.Release();
-        }
+        var scenarioId = "faux:" + scenario.Name;
+        var receipt = await runtime.Journal.AppendAsync(
+            "faux.configured",
+            new { ScenarioId = scenarioId, Scenario = scenario },
+            cancellationToken).ConfigureAwait(false);
+        runtime.PendingScenario = scenario;
+        runtime.PendingScenarioRecordId = receipt.RecordId;
+        return scenarioId;
     }
 
     /// <summary>
@@ -192,8 +354,102 @@ public sealed class SessionRepository : IAsyncDisposable
         long afterSeq = 0,
         CancellationToken cancellationToken = default)
     {
-        var runtime = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        return await runtime.Journal.GetSnapshotAsync(afterSeq, cancellationToken).ConfigureAwait(false);
+        using var runtimeUse = await AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: true,
+            cancellationToken).ConfigureAwait(false);
+        return await runtimeUse.Runtime.Journal.GetSnapshotAsync(
+            afterSeq,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：为 archive、restore 或 delete 建立 reservation，并安全释放已打开但静止的 writer。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionId">目标 Session ID。</param>
+    /// <param name="cancellationToken">等待正在打开的 runtime 时的取消信号。</param>
+    /// <returns>成功时返回必须释放的 reservation；active run、pending faux 或并发使用时返回 null。</returns>
+    /// <remarks>不变量：reservation 建立到释放期间 GetAsync 对同一 ID fail closed；writer 释放前已从 repository 精确移除。</remarks>
+    internal async Task<SessionLifecycleReservation?> TryReserveLifecycleMutationAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        var lifecycleGate = GetLifecycleGate(sessionId);
+        Lazy<Task<SessionRuntime>>? lazy;
+        lock (lifecycleGate)
+        {
+            if (!lifecycleReservations.TryAdd(sessionId, 0))
+            {
+                return null;
+            }
+
+            sessions.TryGetValue(sessionId, out lazy);
+        }
+
+        var reservation = new SessionLifecycleReservation(this, sessionId);
+        var reservationTransferred = false;
+        SessionRuntime? runtime = null;
+        var gateAcquired = false;
+        try
+        {
+            if (lazy is null)
+            {
+                reservationTransferred = true;
+                return reservation;
+            }
+
+            try
+            {
+                runtime = await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                exception is IOException or JournalCorruptException or JournalIncompatibleException)
+            {
+                lock (lifecycleGate)
+                {
+                    sessions.TryRemove(new KeyValuePair<string, Lazy<Task<SessionRuntime>>>(sessionId, lazy));
+                }
+
+                reservationTransferred = true;
+                return reservation;
+            }
+
+            gateAcquired = await runtime.StateGate.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+            if (!gateAcquired || runtime.ActiveRun is not null || runtime.PendingScenario is not null)
+            {
+                return null;
+            }
+
+            lock (lifecycleGate)
+            {
+                if (!sessions.TryRemove(
+                        new KeyValuePair<string, Lazy<Task<SessionRuntime>>>(sessionId, lazy)))
+                {
+                    return null;
+                }
+            }
+
+            await runtime.Journal.DisposeAsync().ConfigureAwait(false);
+            runtime.StateGate.Release();
+            gateAcquired = false;
+            runtime.StateGate.Dispose();
+            reservationTransferred = true;
+            return reservation;
+        }
+        finally
+        {
+            if (gateAcquired && runtime is not null)
+            {
+                runtime.StateGate.Release();
+            }
+
+            if (!reservationTransferred)
+            {
+                reservation.Dispose();
+            }
+        }
     }
 
     /// <summary>
@@ -216,28 +472,20 @@ public sealed class SessionRepository : IAsyncDisposable
         string targetLeafRecordId,
         CancellationToken cancellationToken = default)
     {
-        var runtime = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        if (!await runtime.StateGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        using var runtimeUse = await AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: false,
+            cancellationToken).ConfigureAwait(false);
+        var runtime = runtimeUse.Runtime;
+        if (runtime.ActiveRun is not null)
         {
             throw new SessionMutationException(-32004, true, "session_busy");
         }
 
-        try
-        {
-            if (runtime.ActiveRun is not null)
-            {
-                throw new SessionMutationException(-32004, true, "session_busy");
-            }
-
-            return await runtime.Journal.SelectBranchAsync(
-                expectedHeadRecordId,
-                targetLeafRecordId,
-                cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            runtime.StateGate.Release();
-        }
+        return await runtime.Journal.SelectBranchAsync(
+            expectedHeadRecordId,
+            targetLeafRecordId,
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -258,25 +506,17 @@ public sealed class SessionRepository : IAsyncDisposable
         SessionCompactionCommand command,
         CancellationToken cancellationToken = default)
     {
-        var runtime = await GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        if (!await runtime.StateGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        using var runtimeUse = await AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: false,
+            cancellationToken).ConfigureAwait(false);
+        var runtime = runtimeUse.Runtime;
+        if (runtime.ActiveRun is not null)
         {
             throw new SessionMutationException(-32004, true, "session_busy");
         }
 
-        try
-        {
-            if (runtime.ActiveRun is not null)
-            {
-                throw new SessionMutationException(-32004, true, "session_busy");
-            }
-
-            return await runtime.Journal.CompactAsync(command, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            runtime.StateGate.Release();
-        }
+        return await runtime.Journal.CompactAsync(command, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -322,11 +562,54 @@ public sealed class SessionRepository : IAsyncDisposable
         string sessionId,
         CancellationToken cancellationToken)
     {
+        var pendingTombstone = Path.Combine(sessionsRoot, ".session-tombstones", sessionId);
+        if (Directory.Exists(pendingTombstone) || File.Exists(pendingTombstone))
+        {
+            throw new IOException("session deletion is pending");
+        }
+
         var journal = await PortableSessionJournal.OpenAsync(
             sessionsRoot,
             sessionId,
             workspace,
             cancellationToken).ConfigureAwait(false);
         return new SessionRuntime(journal);
+    }
+
+    /// <summary>
+    /// 功能：取得用于原子协调 GetAsync 与生命周期 reservation 的稳定 per-Session gate。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionId">目标 Session ID。</param>
+    /// <returns>repository 生命周期内稳定的同步 gate。</returns>
+    private object GetLifecycleGate(string sessionId)
+    {
+        if (lifecycleGates.TryGetValue(sessionId, out var existing))
+        {
+            return existing;
+        }
+
+        if (lifecycleGates.Count >= MaximumTrackedSessionIds)
+        {
+            throw new IOException("session repository capacity was exceeded");
+        }
+
+        return lifecycleGates.GetOrAdd(sessionId, static _ => new object());
+    }
+
+    /// <summary>
+    /// 功能：释放生命周期 reservation，使同一 Session ID 可再次进入 GetAsync。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionId">已登记 reservation 的 Session ID。</param>
+    internal void ReleaseLifecycleReservation(string sessionId)
+    {
+        var lifecycleGate = GetLifecycleGate(sessionId);
+        lock (lifecycleGate)
+        {
+            lifecycleReservations.TryRemove(sessionId, out _);
+        }
     }
 }

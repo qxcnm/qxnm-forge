@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/session/lifecycle.schema.json",
+  "title": "qxnm-forge portable session lifecycle v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "required": ["sessionId", "title", "project", "updatedAt", "archived"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "project": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "updatedAt": { "$ref": "../common.schema.json#/$defs/utcTime" },
+        "archived": { "type": "boolean" },
+        "status": { "enum": ["active", "approval"] }
+      },
+      "additionalProperties": false
+    },
+    "listParams": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 128 }
+      },
+      "additionalProperties": false
+    },
+    "mutationParams": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" }
+      },
+      "additionalProperties": false
+    },
+    "listResult": {
+      "type": "object",
+      "required": ["sessions", "nextCursor", "hasMore"],
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/summary" },
+          "maxItems": 128
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            },
+            { "type": "null" }
+          ]
+        },
+        "hasMore": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "hasMore": { "const": true } },
+            "required": ["hasMore"]
+          },
+          "then": { "properties": { "nextCursor": { "type": "string" } } },
+          "else": { "properties": { "nextCursor": { "type": "null" } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "summaryResult": {
+      "type": "object",
+      "required": ["session"],
+      "properties": {
+        "session": { "$ref": "#/$defs/summary" }
+      },
+      "additionalProperties": false
+    },
+    "deleteResult": {
+      "type": "object",
+      "required": ["deleted"],
+      "properties": {
+        "deleted": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "archiveDocument": {
+      "type": "object",
+      "required": ["schemaVersion", "archivedSessionIds"],
+      "properties": {
+        "schemaVersion": { "const": "0.1" },
+        "archivedSessionIds": {
+          "type": "array",
+          "items": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+          "maxItems": 4096,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

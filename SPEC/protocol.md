@@ -255,6 +255,23 @@ Profile 字段、边界、模型三元组与运行快照以 `agent-profile.schem
 未知参数、未知 Profile 字段、credential/endpoint 字段都属于
 `-32602/agent_profile_invalid`。失败的 mutation 不修改 application database。
 
+自定义 Provider connection 使用 ADR 0029 的封闭 DTO：
+
+- `providerConnections/list {}` 返回 `{connections:[...]}`，每项只有非敏感配置和
+  `credentialConfigured`；
+- `providerConnections/create {connection}` 返回 `{connection,restartRequired:true}`；
+- `providerConnections/update {connectionId,expectedRevision,connection}` 使用 CAS 并返回
+  `{connection,restartRequired:true}`；
+- `providerConnections/delete {connectionId,expectedRevision}` 返回
+  `{deleted:true,restartRequired:true}`。
+
+本地管理边界还定义 `providerCredentials/set {providerId,credential}` 与
+`providerCredentials/remove {providerId}`，成功只返回
+`{providerId,credentialConfigured,restartRequired:true}`。它们不得由通用 WebView 方法
+转发器开放。credential 绝不进入 connection DTO、模型、Session、日志或错误。连接 mutation
+成功后旧 daemon capability 快照必须失效；新的 `models/list` 与 initialize Provider 广告从
+同一启用且 credential 可用的连接快照重建。
+
 - `run/cancel {sessionId, runId}` is idempotent. It returns the current
   `cancellationState`: `requested`, `alreadyRequested`, or `terminal`. A return
   does not replace the eventual terminal event.
@@ -275,6 +292,17 @@ Profile 字段、边界、模型三元组与运行快照以 `agent-profile.schem
   order. It does not filter `messages` or change `latestSeq`. Recovery records
   are appended before this snapshot is returned, so a recovered session has
   `activeRunId: null` and includes its durable `run.interrupted` event.
+- `session/list {cursor?, limit?}` 返回真实 Session 的脱敏摘要页。默认 `limit` 为 64，
+  合法范围为 1..128；结果严格包含 `{sessions,nextCursor,hasMore}`，终页也返回
+  `nextCursor:null`。排序、live-view cursor 语义、帧上限和摘要字段遵循
+  [ADR 0030](adr/0030-session-lifecycle-application-service.md)。
+- `session/archive {sessionId}` 在 Session 静止且 journal 健康时 durable 更新工作区外
+  归档元数据，返回 `{session}` 且 `archived:true`；它不改写 journal。
+- `session/restore {sessionId}` 使用相同边界移除归档状态，返回 `{session}` 且
+  `archived:false`。
+- `session/delete {sessionId}` 只在 writer/reservation 锁、完整普通树验证、固定 tombstone
+  删除和归档元数据清理全部完成后返回 `{deleted:true}`。活动 Session、损坏 journal、链接、
+  reparse point、device 或不安全半删除状态必须失败关闭。
 - `session/branch/select {sessionId, expectedHeadRecordId,
   targetLeafRecordId}` appends one `branch.selected` whose parent and target are
   the same earlier quiescent record. The compare, tree validation, append and
@@ -416,6 +444,39 @@ Agent Profile 的固定失败分类是：
 
 revision conflict 可以在 details 中携带 `resourceId/expectedRevision/currentRevision`；模型错误
 可以携带 `providerId/modelId/apiFamily`。错误与日志不得回显 instructions 或其他用户内容。
+
+Provider connection 的固定失败分类是：
+
+| Condition | Code | Retryable | `details.kind` |
+| --- | ---: | :---: | --- |
+| invalid/unknown connection or credential field | -32602 | false | `invalid_params` |
+| missing connection/provider identity | -32602 | false | `provider_connection_not_found` |
+| duplicate Provider ID | -32010 | true | `provider_id_conflict` |
+| stale update/delete revision | -32010 | true | `provider_connection_revision_conflict` |
+| connection store writer is locked | -32002 | true | `provider_connection_store_locked` |
+| corrupt/unsafe connection store | -32603 | false | `provider_connection_store_invalid` |
+
+这些错误只能携带公开 ID、字段名和 revision；不得携带 base URL、credential、状态路径、
+连接 JSON 正文或底层异常。失败的 credential 写入不得修改 presence；连接创建必须在固定
+`connection -> credential` 锁顺序内清理同 Provider ID 的历史 orphan credential，Provider ID
+变更必须清理目标与旧 ID，连接删除必须清理旧 ID，避免跨进程竞态留下不可达 secret 或把旧
+secret 绑定到新的 endpoint。
+
+Session 生命周期的固定失败分类是：
+
+| Condition | Code | Retryable | `details.kind` |
+| --- | ---: | :---: | --- |
+| invalid Session ID, cursor or limit | -32602 | false | `invalid_params` |
+| missing Session | -32602 | false | `session_not_found` |
+| active run, pending faux or live writer | -32004 | true | `session_busy` |
+| corrupt or incompatible journal/tree | -32008 | false | `session_corrupt` |
+| lifecycle store lock contention | -32002 | true | `session_lifecycle_locked` |
+| corrupt lifecycle metadata | -32603 | false | `session_lifecycle_store_invalid` |
+| lifecycle metadata I/O unavailable | -32603 | false | `session_lifecycle_store_io` |
+| deletion cannot be proven safe | -32603 | false | `session_delete_unsafe` |
+
+这些错误最多携带公开 `resourceId` 或输入 `field`，不得携带 transcript、workspace 绝对路径、
+journal 行、tombstone 路径、归档文档或底层异常。
 
 Provider status and retry hints belong in redacted `details`, for example
 `{"kind":"provider_rate_limit","httpStatus":429,"retryAfterMs":1000}`.

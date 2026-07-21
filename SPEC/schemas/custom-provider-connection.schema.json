@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/custom-provider-connection.schema.json",
+  "title": "Brand-neutral custom Provider connection DTO v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>. Connection DTOs never contain credentials.",
+  "$ref": "#/$defs/connection",
+  "$defs": {
+    "connectionInput": {
+      "type": "object",
+      "required": [
+        "displayName",
+        "providerId",
+        "apiFamily",
+        "baseUrl",
+        "modelIds",
+        "logoAssetId",
+        "enabled"
+      ],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
+        "apiFamily": { "const": "openai-completions" },
+        "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$", "maxLength": 2048 },
+        "modelIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "logoAssetId": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "maxLength": 128
+        },
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "connection": {
+      "type": "object",
+      "required": [
+        "connectionId",
+        "revision",
+        "displayName",
+        "providerId",
+        "apiFamily",
+        "baseUrl",
+        "modelIds",
+        "logoAssetId",
+        "enabled",
+        "credentialConfigured",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "connectionId": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/opaqueId" },
+        "revision": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/positiveSafeInteger" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
+        "apiFamily": { "const": "openai-completions" },
+        "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$", "maxLength": 2048 },
+        "modelIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "logoAssetId": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "maxLength": 128
+        },
+        "enabled": { "type": "boolean" },
+        "credentialConfigured": { "type": "boolean" },
+        "createdAt": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/utcTime" },
+        "updatedAt": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/utcTime" }
+      },
+      "additionalProperties": false
+    },
+    "configuration": {
+      "type": "object",
+      "required": [
+        "connectionId",
+        "revision",
+        "displayName",
+        "providerId",
+        "apiFamily",
+        "baseUrl",
+        "modelIds",
+        "logoAssetId",
+        "enabled",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "connectionId": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/opaqueId" },
+        "revision": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/positiveSafeInteger" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
+        "apiFamily": { "const": "openai-completions" },
+        "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$", "maxLength": 2048 },
+        "modelIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "logoAssetId": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "maxLength": 128
+        },
+        "enabled": { "type": "boolean" },
+        "createdAt": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/utcTime" },
+        "updatedAt": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/utcTime" }
+      },
+      "additionalProperties": false
+    },
+    "document": {
+      "type": "object",
+      "required": ["schemaVersion", "connections"],
+      "properties": {
+        "schemaVersion": { "const": "0.1" },
+        "connections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/configuration" },
+          "maxItems": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "listParams": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "createParams": {
+      "type": "object",
+      "required": ["connection"],
+      "properties": { "connection": { "$ref": "#/$defs/connectionInput" } },
+      "additionalProperties": false
+    },
+    "updateParams": {
+      "type": "object",
+      "required": ["connectionId", "expectedRevision", "connection"],
+      "properties": {
+        "connectionId": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/opaqueId" },
+        "expectedRevision": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/positiveSafeInteger" },
+        "connection": { "$ref": "#/$defs/connectionInput" }
+      },
+      "additionalProperties": false
+    },
+    "deleteParams": {
+      "type": "object",
+      "required": ["connectionId", "expectedRevision"],
+      "properties": {
+        "connectionId": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/opaqueId" },
+        "expectedRevision": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "credentialStatus": {
+      "type": "object",
+      "required": ["providerId", "credentialConfigured", "restartRequired"],
+      "properties": {
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
+        "credentialConfigured": { "type": "boolean" },
+        "restartRequired": { "const": true }
+      },
+      "additionalProperties": false
+    }
+  }
+}

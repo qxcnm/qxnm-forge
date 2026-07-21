@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Text.Json;
 using QxnmForge.Agent;
 using QxnmForge.Domain;
+using QxnmForge.Provider;
 using QxnmForge.Session;
 
 namespace QxnmForge.Protocol;
@@ -331,6 +332,65 @@ public static class ProtocolCodec
     }
 
     /// <summary>
+    /// 功能：严格解析 session/list 的可选 opaque cursor 与有界 page limit。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">只允许 cursor 与 limit 的方法 params。</param>
+    /// <returns>零基 offset 与 1..128 的 page limit；省略时为 0、64。</returns>
+    /// <exception cref="ProtocolRequestException">字段未知、类型错误或 cursor 不可解析。</exception>
+    public static (int Offset, int Limit) ParseSessionList(JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "cursor", "limit");
+        var offset = 0;
+        if (parameters.TryGetProperty("cursor", out var cursorElement))
+        {
+            if (cursorElement.ValueKind != JsonValueKind.String)
+            {
+                throw InvalidParams("cursor is invalid", "cursor");
+            }
+
+            var cursor = cursorElement.GetString()!;
+            if (!cursor.StartsWith("v1:", StringComparison.Ordinal) ||
+                cursor.Length is < 4 or > 12 ||
+                !int.TryParse(
+                    cursor.AsSpan(3),
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out offset) ||
+                offset is < 0 or > 16_384)
+            {
+                throw InvalidParams("cursor is invalid", "cursor");
+            }
+        }
+
+        var limit = 64;
+        if (parameters.TryGetProperty("limit", out var limitElement) &&
+            (limitElement.ValueKind != JsonValueKind.Number ||
+             !limitElement.TryGetInt32(out limit) ||
+             limit is < 1 or > 128))
+        {
+            throw InvalidParams("limit is invalid", "limit");
+        }
+
+        return (offset, limit);
+    }
+
+    /// <summary>
+    /// 功能：严格解析 archive、restore 或 delete 的唯一 Session 引用。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">只允许 sessionId 的方法 params。</param>
+    /// <returns>符合 portable opaque ID 语法的 Session ID。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知或 ID 无效。</exception>
+    public static string ParseSessionLifecycleMutation(JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "sessionId");
+        return RequireOpaqueId(parameters, "sessionId");
+    }
+
+    /// <summary>
     /// 功能：严格解析 <c>models/list</c> 的可选 Provider 过滤器。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -361,6 +421,101 @@ public static class ProtocolCodec
         }
 
         return value;
+    }
+
+    /// <summary>
+    /// 功能：严格验证 providerConnections/list 只接受空 params。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">方法 params。</param>
+    /// <exception cref="ProtocolRequestException">包含任何未知字段。</exception>
+    public static void ParseProviderConnectionsList(JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters);
+    }
+
+    /// <summary>
+    /// 功能：严格解析 providerConnections/create 的完整非敏感连接输入。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">只允许 connection 的 params。</param>
+    /// <returns>不含 credential 的连接输入。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知或类型错误。</exception>
+    public static ProviderConnectionInput ParseProviderConnectionsCreate(JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "connection");
+        return ParseProviderConnectionInput(RequireProperty(parameters, "connection"));
+    }
+
+    /// <summary>
+    /// 功能：严格解析 providerConnections/update 的连接 ID、CAS revision 与完整输入。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">方法 params。</param>
+    /// <returns>connectionId、expectedRevision 与完整非敏感输入。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知、类型或 revision 错误。</exception>
+    public static (
+        string ConnectionId,
+        long ExpectedRevision,
+        ProviderConnectionInput Connection) ParseProviderConnectionsUpdate(JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "connectionId", "expectedRevision", "connection");
+        return (
+            RequireString(parameters, "connectionId"),
+            RequirePositiveSafeInteger(parameters, "expectedRevision"),
+            ParseProviderConnectionInput(RequireProperty(parameters, "connection")));
+    }
+
+    /// <summary>
+    /// 功能：严格解析 providerConnections/delete 的连接 ID 与 CAS revision。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">方法 params。</param>
+    /// <returns>connectionId 与 expectedRevision。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知、类型或 revision 错误。</exception>
+    public static (string ConnectionId, long ExpectedRevision) ParseProviderConnectionsDelete(
+        JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "connectionId", "expectedRevision");
+        return (
+            RequireString(parameters, "connectionId"),
+            RequirePositiveSafeInteger(parameters, "expectedRevision"));
+    }
+
+    /// <summary>
+    /// 功能：严格解析 providerCredentials/set 的 Provider ID 与瞬时 credential。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">方法 params。</param>
+    /// <returns>Provider ID 与只应传入 CredentialStore 的明文 credential。</returns>
+    /// <remarks>不变量：解析器不持久化、记录或复制 credential 到任何 DTO 之外。</remarks>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知、类型错误或空 credential。</exception>
+    public static (string ProviderId, string Credential) ParseProviderCredentialsSet(
+        JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "providerId", "credential");
+        return (
+            RequireString(parameters, "providerId"),
+            RequireString(parameters, "credential"));
+    }
+
+    /// <summary>
+    /// 功能：严格解析 providerCredentials/remove 的 Provider ID。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">方法 params。</param>
+    /// <returns>待清理 credential 的 Provider ID。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知或类型错误。</exception>
+    public static string ParseProviderCredentialsRemove(JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "providerId");
+        return RequireString(parameters, "providerId");
     }
 
     /// <summary>
@@ -595,6 +750,69 @@ public static class ProtocolCodec
         }
 
         return element.Clone();
+    }
+
+    /// <summary>
+    /// 功能：解析 closed Provider 连接输入对象，并保留非敏感文本供服务层语义校验。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="element">connection JSON 对象。</param>
+    /// <returns>不含 credential 的完整连接输入。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知、类型错误或数组越界。</exception>
+    private static ProviderConnectionInput ParseProviderConnectionInput(JsonElement element)
+    {
+        RequireObject(element, "connection");
+        EnsureOnlyProperties(
+            element,
+            "displayName",
+            "providerId",
+            "apiFamily",
+            "baseUrl",
+            "modelIds",
+            "logoAssetId",
+            "enabled");
+        var modelIdsElement = RequireProperty(element, "modelIds");
+        if (modelIdsElement.ValueKind != JsonValueKind.Array ||
+            modelIdsElement.GetArrayLength() is < 1 or > 64)
+        {
+            throw InvalidParams("modelIds is invalid", "connection.modelIds");
+        }
+
+        var modelIds = new List<string>(modelIdsElement.GetArrayLength());
+        foreach (var modelId in modelIdsElement.EnumerateArray())
+        {
+            if (modelId.ValueKind != JsonValueKind.String)
+            {
+                throw InvalidParams("modelIds is invalid", "connection.modelIds");
+            }
+
+            modelIds.Add(modelId.GetString()!);
+        }
+
+        var logoElement = RequireProperty(element, "logoAssetId");
+        string? logoAssetId;
+        if (logoElement.ValueKind == JsonValueKind.Null)
+        {
+            logoAssetId = null;
+        }
+        else if (logoElement.ValueKind == JsonValueKind.String)
+        {
+            logoAssetId = logoElement.GetString();
+        }
+        else
+        {
+            throw InvalidParams("logoAssetId is invalid", "connection.logoAssetId");
+        }
+
+        return new ProviderConnectionInput(
+            RequireString(element, "displayName"),
+            RequireString(element, "providerId"),
+            RequireString(element, "apiFamily"),
+            RequireString(element, "baseUrl"),
+            modelIds,
+            logoAssetId,
+            RequireBoolean(element, "enabled"));
     }
 
     /// <summary>

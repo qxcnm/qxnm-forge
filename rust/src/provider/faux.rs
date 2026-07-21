@@ -1139,6 +1139,24 @@ impl FauxProvider {
         );
     }
 
+    /// 功能：判断指定 Session 是否仍有尚未绑定 run 的 faux 配置等待消费。
+    ///
+    /// 输入：已由 application service 解码的 Session ID。
+    /// 输出：存在至少一个未绑定脚本时为 true。
+    /// 不变量：只读取内存 presence，不返回场景内容；已绑定 run 由 Agent active 状态独立协调。
+    /// 失败：本方法无业务错误；等待异步互斥锁期间可被任务取消。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub async fn has_pending_configuration(&self, session_id: &str) -> bool {
+        self.scripts_by_session
+            .lock()
+            .await
+            .get(session_id)
+            .is_some_and(|configuration| {
+                configuration.bound_run_id.is_none() && !configuration.scripts.is_empty()
+            })
+    }
+
     /// 功能：在脚本队列为空时根据最近用户文本生成默认离线事件脚本。
     ///
     /// 输入：只读 Provider 请求。

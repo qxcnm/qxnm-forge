@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -16,6 +16,10 @@ use qxnm_forge::provider::{
     FauxProvider, GoogleGenerativeAiProvider, GoogleVertexProvider, MistralConversationsProvider,
     OpenAiChatProvider, OpenAiCodexResponsesProvider, OpenAiResponsesProvider,
     OpenRouterImagesProvider, Provider,
+};
+use qxnm_forge::provider_connection::{
+    CustomProviderConnectionRuntime, CustomProviderConnectionService,
+    CustomProviderConnectionStore, CustomProviderRuntimeSnapshot,
 };
 use qxnm_forge::provider_identity::ProviderIdentityAdvertisement;
 use qxnm_forge::provider_route::ProviderRouteSnapshot;
@@ -262,11 +266,19 @@ async fn run(
             conformance,
         } => {
             let state_dir = std::path::absolute(resolve_state_dir(state_dir))?;
+            let provider_connections =
+                build_provider_connection_service(&state_dir, &workspace, conformance)?;
+            let custom_provider_snapshot = if provider_identity.is_some() {
+                provider_connections.empty_runtime_snapshot()
+            } else {
+                provider_connections.runtime_snapshot()?
+            };
             let (agent, faux) = build_agent(
                 &workspace,
                 &state_dir,
                 provider_identity.is_some(),
                 provider_route.as_ref(),
+                &custom_provider_snapshot,
                 conformance,
             )
             .await?;
@@ -280,12 +292,17 @@ async fn run(
                         )
                     })?;
             let agent_profiles = AgentProfileService::new(database);
+            let provider_connections = CustomProviderConnectionRuntime::new(
+                provider_connections,
+                custom_provider_snapshot,
+            );
             Daemon::new(
                 agent,
                 faux,
                 agent_profiles,
                 provider_identity,
                 provider_route,
+                provider_connections,
                 &workspace,
             )?
             .run_stdio()
@@ -301,16 +318,28 @@ async fn run(
             session,
         } => {
             let state_dir = resolve_state_dir(state_dir);
+            let provider_connections =
+                build_provider_connection_service(&state_dir, &workspace, false)?;
+            let custom_provider_snapshot = if provider_identity.is_some() {
+                provider_connections.empty_runtime_snapshot()
+            } else {
+                provider_connections.runtime_snapshot()?
+            };
             let (agent, _faux) = build_agent(
                 &workspace,
                 &state_dir,
                 provider_identity.is_some(),
                 provider_route.as_ref(),
+                &custom_provider_snapshot,
                 false,
             )
             .await?;
             let api_family = if provider != "faux" {
-                if let Some(snapshot) = &provider_route {
+                if let Some(family) =
+                    custom_provider_snapshot.resolve(&provider, &model, api_family.as_deref())
+                {
+                    Some(family)
+                } else if let Some(snapshot) = &provider_route {
                     let canonical = snapshot.resolve(&provider, &model, api_family.as_deref())?;
                     if canonical.is_some() {
                         canonical
@@ -578,9 +607,10 @@ async fn run(
                 workspace,
                 state_dir,
             } => {
-                let store = ProviderCredentialStore::new(resolve_state_dir(state_dir), &workspace)?;
+                let state_dir = resolve_state_dir(state_dir);
+                let service = build_provider_connection_service(&state_dir, &workspace, false)?;
                 let secret = read_secret_from_stdin()?;
-                store.set(&provider, &secret)?;
+                service.set_credential_coordinated(&provider, &secret)?;
                 drop(secret);
                 println!("Provider credential 已保存；不会写入 workspace 或 Session。");
                 Ok(())
@@ -618,9 +648,9 @@ async fn run(
                 workspace,
                 state_dir,
             } => {
-                let removed =
-                    ProviderCredentialStore::new(resolve_state_dir(state_dir), &workspace)?
-                        .remove(&provider)?;
+                let state_dir = resolve_state_dir(state_dir);
+                let removed = build_provider_connection_service(&state_dir, &workspace, false)?
+                    .remove_credential_coordinated(&provider)?;
                 println!(
                     "{}",
                     if removed {
@@ -734,12 +764,39 @@ fn json_text() -> serde_json::Value {
     serde_json::Value::String("text".to_owned())
 }
 
+/// 功能：为 daemon 或单次 CLI run 构造物理分离的 Provider 连接 application service。
+///
+/// 输入：可信状态根、当前 workspace 与显式 CLI conformance 门。
+/// 输出：固定非敏感连接 store 和工作区外 CredentialStore 的协调服务。
+/// 不变量：HTTP loopback 例外同时要求 CLI、一般环境与 Provider conformance 三门；构造不读取 secret 值。
+/// 失败：状态目录、workspace canonical 边界、权限或固定 store 创建失败时返回脱敏结构化错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn build_provider_connection_service(
+    state_dir: &Path,
+    workspace: &Path,
+    cli_conformance: bool,
+) -> Result<CustomProviderConnectionService, AgentError> {
+    let environment_conformance = env_nonempty("QXNM_FORGE_CONFORMANCE").as_deref() == Some("1");
+    let provider_conformance =
+        env_nonempty("QXNM_FORGE_PROVIDER_CONFORMANCE").as_deref() == Some("1");
+    let connections = CustomProviderConnectionStore::new(
+        state_dir,
+        cli_conformance && environment_conformance && provider_conformance,
+    )?;
+    let credentials = ProviderCredentialStore::new(state_dir, workspace)?;
+    Ok(CustomProviderConnectionService::new(
+        connections,
+        credentials,
+    ))
+}
+
 /// 功能：构造完全原生的 Rust Agent 依赖图及各批 Provider。
 ///
-/// 输入：workspace、Session state 根、identity-only 分支标记、可选 executable route 快照和 CLI conformance 门。
+/// 输入：workspace、Session state 根、identity-only 分支标记、可选 canonical route、自定义启动快照和 CLI conformance 门。
 /// 输出：共享 Agent 与 faux Provider。
 /// 不变量：identity-only 分支只注册 faux；canonical adapter 只保存 credential 环境名称；hard-sandbox override 同时要求 CLI 与环境 conformance 门；
-/// route model allowlist 与协议广告来自同一快照；credential 值不进入日志或 Session。
+/// canonical/custom route model allowlist 与协议广告来自同一快照；credential 值不进入日志或 Session。
 /// 失败：workspace、Session、工具或普通 Provider 配置初始化失败时返回结构化错误；sandbox 自检失败保留到 initialize 失败关闭。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -748,6 +805,7 @@ async fn build_agent(
     state_dir: &PathBuf,
     identity_only: bool,
     provider_route: Option<&ProviderRouteSnapshot>,
+    custom_provider_snapshot: &CustomProviderRuntimeSnapshot,
     cli_conformance: bool,
 ) -> Result<(Arc<Agent>, FauxProvider), AgentError> {
     let environment_conformance = env_nonempty("QXNM_FORGE_CONFORMANCE").as_deref() == Some("1");
@@ -930,6 +988,7 @@ async fn build_agent(
             Arc::new(OpenRouterImagesProvider::new(endpoint, sessions.clone())),
         );
     }
+    custom_provider_snapshot.register_into(&mut providers)?;
     Ok((
         Arc::new(Agent::new_with_conformance_timeout(
             providers,

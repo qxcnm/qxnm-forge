@@ -44,4 +44,25 @@ export const AGENT_TOOL_PRESENTATIONS: readonly AgentToolPresentation[] = [
     permissionClass: "shell",
     dangerous: true,
   },
+  {
+    toolId: "computer.observe",
+    displayName: "查看屏幕",
+    description: "读取当前桌面的可见状态",
+    permissionClass: "computer_observe",
+    dangerous: false,
+  },
+  {
+    toolId: "computer.screenshot",
+    displayName: "截取屏幕",
+    description: "生成当前桌面的屏幕快照",
+    permissionClass: "computer_observe",
+    dangerous: false,
+  },
+  {
+    toolId: "computer.interact",
+    displayName: "操作电脑",
+    description: "在审批范围内控制鼠标与键盘",
+    permissionClass: "computer_interact",
+    dangerous: true,
+  },
 ] as const;

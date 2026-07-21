@@ -1,27 +1,18 @@
 import {
-  ChevronDown,
   GitCommitHorizontal,
   Menu,
-  MoreHorizontal,
   PanelRight,
-  Play,
-  Share2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface AppHeaderProps {
   readonly title: string;
+  readonly projectName: string;
   readonly implementationLabel: string;
   readonly connected: boolean;
+  readonly previewReviewAvailable: boolean;
   readonly onOpenMobileSidebar: () => void;
   readonly onOpenReview: () => void;
 }
@@ -34,8 +25,10 @@ interface AppHeaderProps {
  */
 export function AppHeader({
   title,
+  projectName,
   implementationLabel,
   connected,
+  previewReviewAvailable,
   onOpenMobileSidebar,
   onOpenReview,
 }: AppHeaderProps) {
@@ -63,93 +56,41 @@ export function AppHeader({
           </div>
           <p className="truncate text-[10px] text-stone-400 sm:hidden">{implementationLabel}</p>
         </div>
-        <span className="hidden text-[11px] text-stone-400 sm:inline">AI-Code</span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="hidden size-7 text-stone-400 sm:inline-flex"
-          aria-label="更多任务操作"
-        >
-          <MoreHorizontal className="size-4" aria-hidden="true" />
-        </Button>
+        <span className="hidden max-w-48 truncate text-[11px] text-stone-400 sm:inline">
+          {projectName}
+        </span>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 text-stone-500"
-              aria-label="运行当前任务"
-            >
-              <Play className="size-3.5" aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>运行任务</TooltipContent>
-        </Tooltip>
+      {previewReviewAvailable ? (
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="hidden h-7 gap-1.5 rounded-md border-stone-200 px-2.5 text-[11px] font-normal shadow-none lg:inline-flex"
+            onClick={onOpenReview}
+          >
+            <GitCommitHorizontal className="size-3" aria-hidden="true" />
+            预览变更
+          </Button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="hidden h-7 gap-1.5 rounded-md border-stone-200 px-2.5 text-[11px] font-normal shadow-none sm:inline-flex"
-            >
-              打开
-              <ChevronDown className="size-3 text-stone-400" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem>在编辑器中打开</DropdownMenuItem>
-            <DropdownMenuItem>打开工作区终端</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem>复制工作区路径</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="hidden h-7 gap-1.5 rounded-md border-stone-200 px-2.5 text-[11px] font-normal shadow-none lg:inline-flex"
-        >
-          <Share2 className="size-3" aria-hidden="true" />
-          交接
-        </Button>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="hidden h-7 gap-1.5 rounded-md border-stone-200 px-2.5 text-[11px] font-normal shadow-none lg:inline-flex"
-          onClick={onOpenReview}
-        >
-          <GitCommitHorizontal className="size-3" aria-hidden="true" />
-          变更
-          <span className="text-emerald-600">+253</span>
-          <span className="text-rose-500">-0</span>
-        </Button>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 text-stone-500 lg:hidden"
-              onClick={onOpenReview}
-              aria-label="打开变更审阅"
-            >
-              <PanelRight className="size-4" aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>变更审阅</TooltipContent>
-        </Tooltip>
-      </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 text-stone-500 lg:hidden"
+                onClick={onOpenReview}
+                aria-label="打开预览变更"
+              >
+                <PanelRight className="size-4" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>预览变更</TooltipContent>
+          </Tooltip>
+        </div>
+      ) : null}
     </header>
   );
 }

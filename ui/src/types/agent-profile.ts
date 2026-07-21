@@ -39,12 +39,19 @@ export interface AgentProfile extends AgentProfileInput {
   readonly updatedAt: string;
 }
 
-/** 前端用于展示固定工具注册表元数据的只读说明。 */
+/** 前端用于展示工具注册表与动态 capability 元数据的只读说明。 */
 export interface AgentToolPresentation {
   readonly toolId: string;
   readonly displayName: string;
   readonly description: string;
-  readonly permissionClass: "workspace_read" | "workspace_write" | "process" | "shell";
+  readonly permissionClass:
+    | "workspace_read"
+    | "workspace_write"
+    | "process"
+    | "shell"
+    | "computer_observe"
+    | "computer_interact"
+    | "extension";
   readonly dangerous: boolean;
 }
 

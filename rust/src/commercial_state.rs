@@ -8,6 +8,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(windows)]
+use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
+
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use fs2::FileExt as _;
@@ -26,8 +29,10 @@ use crate::provider::{
 use crate::sponsored_catalog::{SponsoredProviderCatalog, SponsoredProviderEntry};
 
 const SCHEMA_VERSION: &str = "0.1";
-const MAX_CREDENTIAL_STORE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_CREDENTIAL_STORE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_INSTALLATION_BYTES: usize = 512 * 1024;
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
 /// 在作用域结束时显式释放跨进程商业状态 writer lock。
 struct CommercialFileLock(File);
@@ -96,7 +101,11 @@ impl ProviderCredentialStore {
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     pub fn new(state_root: impl Into<PathBuf>, workspace: &Path) -> Result<Self, AgentError> {
-        let root = state_root.into().join("credentials");
+        let state_root = state_root.into();
+        create_private_directory(&state_root)?;
+        let canonical_state_root = std::fs::canonicalize(&state_root)
+            .map_err(|_| commercial_error("credential_path", "CredentialStore 路径无效"))?;
+        let root = canonical_state_root.join("credentials");
         create_private_directory(&root)?;
         let canonical_root = std::fs::canonicalize(&root)
             .map_err(|_| commercial_error("credential_path", "CredentialStore 路径无效"))?;
@@ -253,6 +262,12 @@ impl ProviderCredentialStore {
         let mut bytes = serde_json::to_vec(document)
             .map_err(|_| commercial_error("credential_json", "CredentialStore 序列化失败"))?;
         bytes.push(b'\n');
+        if bytes.len() > MAX_CREDENTIAL_STORE_BYTES {
+            return Err(commercial_error(
+                "credential_shape",
+                "CredentialStore 文档超过大小上限",
+            ));
+        }
         atomic_write(&self.root.join("provider-credentials.json"), &bytes, true)
     }
 }
@@ -641,9 +656,9 @@ fn validate_provider_id(value: &str) -> Result<(), AgentError> {
             .bytes()
             .next()
             .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'.'
+        })
     {
         return Err(commercial_error("provider_id", "Provider ID 无效"));
     }
@@ -716,8 +731,14 @@ fn validate_https_base(value: &str) -> Result<(), AgentError> {
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 fn create_private_directory(path: &Path) -> Result<(), AgentError> {
+    reject_symlink_if_present(path)?;
     std::fs::create_dir_all(path)
         .map_err(|_| commercial_error("directory", "商业状态目录创建失败"))?;
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| commercial_error("directory", "商业状态目录无效"))?;
+    if metadata_is_unsafe(&metadata) || !metadata.is_dir() {
+        return Err(commercial_error("directory_shape", "商业状态目录无效"));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -732,9 +753,9 @@ fn create_private_directory(path: &Path) -> Result<(), AgentError> {
 /// 邮箱：18272669457@163.com
 fn reject_symlink_if_present(path: &Path) -> Result<(), AgentError> {
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(commercial_error(
+        Ok(metadata) if metadata_is_unsafe(&metadata) => Err(commercial_error(
             "file_symlink",
-            "商业状态文件不能是符号链接",
+            "商业状态路径不能是链接或 reparse point",
         )),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -759,14 +780,15 @@ fn open_read_write_create(path: &Path, sensitive: bool) -> Result<File, AgentErr
             options.mode(0o600);
         }
     }
+    #[cfg(windows)]
+    options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     let file = options
         .open(path)
         .map_err(|_| commercial_error("file_open", "商业状态 lock 打开失败"))?;
-    if !file
+    let metadata = file
         .metadata()
-        .map_err(|_| commercial_error("file_metadata", "商业状态 lock 元数据读取失败"))?
-        .is_file()
-    {
+        .map_err(|_| commercial_error("file_metadata", "商业状态 lock 元数据读取失败"))?;
+    if metadata_is_unsafe(&metadata) || !metadata.is_file() {
         return Err(commercial_error("file_shape", "商业状态 lock 不是普通文件"));
     }
     Ok(file)
@@ -784,13 +806,19 @@ fn read_secure_file(path: &Path, maximum: usize, sensitive: bool) -> Result<Vec<
         use std::os::unix::fs::OpenOptionsExt as _;
         options.custom_flags(libc::O_NOFOLLOW);
     }
+    #[cfg(windows)]
+    options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     let mut file = options
         .open(path)
         .map_err(|_| commercial_error("file_read", "商业状态文件读取失败"))?;
     let metadata = file
         .metadata()
         .map_err(|_| commercial_error("file_metadata", "商业状态文件元数据读取失败"))?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > maximum as u64 {
+    if metadata_is_unsafe(&metadata)
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > maximum as u64
+    {
         return Err(commercial_error("file_shape", "商业状态文件形状无效"));
     }
     #[cfg(unix)]
@@ -807,6 +835,30 @@ fn read_secure_file(path: &Path, maximum: usize, sensitive: bool) -> Result<Vec<
     file.read_to_end(&mut bytes)
         .map_err(|_| commercial_error("file_read", "商业状态文件读取失败"))?;
     Ok(bytes)
+}
+
+/// 功能：判断文件元数据是否表示 symlink、Windows reparse point 或 device。
+///
+/// 输入：通过 `symlink_metadata` 或 no-follow handle 获得的元数据。
+/// 输出：任何平台的 symlink，或 Windows device/reparse point 时为 true。
+/// 不变量：普通文件和普通目录返回 false；不跟随或解析目标。
+/// 失败：本方法不执行 I/O 且不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn metadata_is_unsafe(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        const FILE_ATTRIBUTE_DEVICE: u32 = 0x40;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & (FILE_ATTRIBUTE_DEVICE | FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 /// 功能：以同目录 create-new 临时文件、同步和 rename 发布完整文档。
@@ -920,7 +972,13 @@ mod tests {
         fs::create_dir(&workspace)?;
         let store = ProviderCredentialStore::new(&state, &workspace)?;
         store.set("relay-example-relay", "first-local-test-key")?;
-        assert_eq!(store.list()?, ["relay-example-relay"]);
+        store.set("custom.example", "dotted-provider-key")?;
+        assert_eq!(store.list()?, ["custom.example", "relay-example-relay"]);
+        assert_eq!(
+            store.read_for_request("custom.example")?,
+            "dotted-provider-key"
+        );
+        assert!(store.remove("custom.example")?);
         store.set("relay-example-relay", "second-local-test-key")?;
         assert_eq!(
             store.read_for_request("relay-example-relay")?,
@@ -979,6 +1037,26 @@ mod tests {
             state.join("credentials").join("provider-credentials.json"),
         )?;
         assert!(store.list().is_err());
+        Ok(())
+    }
+
+    /// 功能：验证整个 state root 被符号链接替换时在创建 credential 目录前拒绝。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_credential_state_root() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir()?;
+        let workspace = directory.path().join("workspace");
+        let outside = directory.path().join("outside-state");
+        let linked_state = directory.path().join("linked-state");
+        fs::create_dir(&workspace)?;
+        fs::create_dir(&outside)?;
+        symlink(&outside, &linked_state)?;
+        assert!(ProviderCredentialStore::new(&linked_state, &workspace).is_err());
+        assert!(!outside.join("credentials").exists());
         Ok(())
     }
 }

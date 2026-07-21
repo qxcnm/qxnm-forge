@@ -109,4 +109,444 @@ describe("TauriApplicationServiceClient", () => {
 
     await expect(client.listProfiles()).rejects.toThrow();
   });
+
+  /**
+   * 验证 Provider secret 只通过专用 Tauri command 进入 host 边界。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("uses dedicated host commands for provider credentials", async () => {
+    invokeMock.mockImplementation((command: string) =>
+      Promise.resolve({
+        providerId: "newapi",
+        credentialConfigured: command === "provider_credential_set",
+        restartRequired: true,
+      }),
+    );
+    const client = new TauriApplicationServiceClient("rust");
+
+    await client.setProviderCredential("newapi", "test-secret");
+    await client.removeProviderCredential("newapi");
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "provider_credential_set", {
+      backend: "rust",
+      providerId: "newapi",
+      credential: "test-secret",
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "provider_credential_remove", {
+      backend: "rust",
+      providerId: "newapi",
+    });
+  });
+
+  /**
+   * 验证桌面 client 接受协议允许的 16 KiB credential，并在调用 host 前拒绝超限值。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("enforces the shared provider credential length boundary", async () => {
+    invokeMock.mockResolvedValue({
+      providerId: "newapi",
+      credentialConfigured: true,
+      restartRequired: true,
+    });
+    const client = new TauriApplicationServiceClient("rust");
+    const maximumCredential = "x".repeat(16_384);
+
+    await client.setProviderCredential("newapi", maximumCredential);
+    const arguments_ = invokeMock.mock.calls[0]?.[1] as
+      | { credential?: string }
+      | undefined;
+    expect(arguments_?.credential).toHaveLength(16_384);
+    await expect(
+      client.setProviderCredential("newapi", "x".repeat(16_385)),
+    ).rejects.toThrow();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 验证 session/get 使用可选 afterSeq，并解析三种 portable 消息与严格事件增量。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("parses strict session message snapshots and replay events", async () => {
+    invokeMock.mockResolvedValue({
+      sessionId: "session-1",
+      latestSeq: 5,
+      activeRunId: null,
+      selectedHeadRecordId: "record-3",
+      messages: [
+        {
+          messageId: "message-user",
+          role: "user",
+          content: [{ type: "text", text: "检查消息恢复" }],
+          time: "2026-07-21T01:00:00Z",
+        },
+        {
+          messageId: "message-assistant",
+          role: "assistant",
+          content: [
+            { type: "reasoning", text: "读取严格快照", redacted: false },
+            {
+              type: "tool_call",
+              toolCallId: "call-1",
+              name: "file.read",
+              arguments: { path: "README.md" },
+            },
+          ],
+          provider: { id: "faux", modelId: "faux-v1", apiFamily: "faux" },
+          finishReason: "tool_use",
+          usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+          time: "2026-07-21T01:00:01Z",
+        },
+        {
+          messageId: "message-tool",
+          role: "tool",
+          toolCallId: "call-1",
+          toolName: "file.read",
+          content: [{ type: "text", text: "文件内容" }],
+          isError: false,
+          time: "2026-07-21T01:00:02Z",
+        },
+      ],
+      events: [
+        {
+          sessionId: "session-1",
+          runId: "run-1",
+          seq: 5,
+          time: "2026-07-21T01:00:03Z",
+          type: "run.completed",
+          data: {
+            status: "completed",
+            usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 },
+          },
+        },
+      ],
+    });
+    const client = new TauriApplicationServiceClient("dotnet");
+
+    const snapshot = await client.getSession("session-1", 4);
+
+    expect(snapshot.messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+    ]);
+    expect(snapshot.events.map((event) => event.seq)).toEqual([5]);
+    expect(invokeMock).toHaveBeenCalledWith("application_service_request", {
+      backend: "dotnet",
+      method: "session/get",
+      params: { sessionId: "session-1", afterSeq: 4 },
+    });
+  });
+
+  /**
+   * 验证 session/get 不允许消息、事件或顶层投影夹带共同 Schema 未声明字段。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects session snapshots containing unknown message fields", async () => {
+    invokeMock.mockResolvedValue({
+      sessionId: "session-1",
+      latestSeq: 0,
+      activeRunId: null,
+      messages: [
+        {
+          messageId: "message-user",
+          role: "user",
+          content: [{ type: "text", text: "消息", apiKey: "must-not-enter-ui" }],
+          time: "2026-07-21T01:00:00Z",
+        },
+      ],
+      events: [],
+    });
+    const client = new TauriApplicationServiceClient("rust");
+
+    await expect(client.getSession("session-1")).rejects.toThrow();
+  });
+
+  /**
+   * 验证 session/get 会拒绝事件 data 未声明字段和不满足 afterSeq 的重放序号。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects invalid session replay event projections", async () => {
+    invokeMock.mockResolvedValue({
+      sessionId: "session-1",
+      latestSeq: 4,
+      activeRunId: null,
+      messages: [],
+      events: [
+        {
+          sessionId: "session-1",
+          runId: "run-1",
+          seq: 4,
+          time: "2026-07-21T01:00:03Z",
+          type: "run.completed",
+          data: {
+            status: "completed",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            apiKey: "must-not-enter-ui",
+          },
+        },
+      ],
+    });
+    const client = new TauriApplicationServiceClient("rust");
+
+    await expect(client.getSession("session-1", 4)).rejects.toThrow();
+  });
+
+  /**
+   * 验证 session/list 严格遍历 opaque cursor，并保持服务端分页顺序。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("loads every strict session list page", async () => {
+    invokeMock
+      .mockResolvedValueOnce({
+        sessions: [
+          {
+            sessionId: "session-1",
+            title: "第一条会话",
+            project: "AI-Code",
+            updatedAt: "2026-07-21T01:00:00Z",
+            archived: false,
+          },
+        ],
+        nextCursor: "v1:1",
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        sessions: [
+          {
+            sessionId: "session-1",
+            title: "第一条会话的重复投影",
+            project: "AI-Code",
+            updatedAt: "2026-07-21T01:02:00Z",
+            archived: false,
+          },
+          {
+            sessionId: "session-2",
+            title: "第二条会话",
+            project: "AI-Code",
+            updatedAt: "2026-07-21T01:01:00Z",
+            archived: true,
+          },
+        ],
+        nextCursor: null,
+        hasMore: false,
+      });
+    const client = new TauriApplicationServiceClient("dotnet");
+
+    const sessions = await client.listSessions();
+
+    expect(sessions.map((session) => session.sessionId)).toEqual(["session-1", "session-2"]);
+    expect(sessions[0]?.title).toBe("第一条会话");
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "application_service_request", {
+      backend: "dotnet",
+      method: "session/list",
+      params: { limit: 128 },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "application_service_request", {
+      backend: "dotnet",
+      method: "session/list",
+      params: { limit: 128, cursor: "v1:1" },
+    });
+  });
+
+  /**
+   * 验证 session/list 拒绝互相矛盾的终页状态。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects inconsistent session list page state", async () => {
+    invokeMock.mockResolvedValue({
+      sessions: [],
+      nextCursor: "v1:1",
+      hasMore: false,
+    });
+    const client = new TauriApplicationServiceClient("rust");
+
+    await expect(client.listSessions()).rejects.toThrow();
+  });
+
+  /**
+   * 验证 session/list 严格拒绝后端夹带的未知敏感字段。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects unknown session list page fields", async () => {
+    invokeMock.mockResolvedValue({
+      sessions: [],
+      nextCursor: null,
+      hasMore: false,
+      credential: "must-not-enter-ui",
+    });
+    const client = new TauriApplicationServiceClient("rust");
+
+    await expect(client.listSessions()).rejects.toThrow();
+  });
+
+  /**
+   * 验证 session/list cursor 只接受共同契约允许的有界 opaque 字符。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects invalid session list cursors", async () => {
+    invokeMock.mockResolvedValue({
+      sessions: [
+        {
+          sessionId: "session-1",
+          title: "会话",
+          project: "AI-Code",
+          updatedAt: "2026-07-21T01:00:00Z",
+          archived: false,
+        },
+      ],
+      nextCursor: "cursor with spaces",
+      hasMore: true,
+    });
+    const client = new TauriApplicationServiceClient("rust");
+
+    await expect(client.listSessions()).rejects.toThrow();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 验证 session/list 会拒绝超出共同摘要长度边界的展示字段。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects oversized session summaries", async () => {
+    invokeMock.mockResolvedValue({
+      sessions: [
+        {
+          sessionId: "session-1",
+          title: "会".repeat(97),
+          project: "AI-Code",
+          updatedAt: "2026-07-21T01:00:00Z",
+          archived: false,
+        },
+      ],
+      nextCursor: null,
+      hasMore: false,
+    });
+    const client = new TauriApplicationServiceClient("dotnet");
+
+    await expect(client.listSessions()).rejects.toThrow();
+  });
+
+  /**
+   * 验证 session/list 在服务重复 cursor 时失败关闭，不会无限读取。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects repeated session list cursors", async () => {
+    invokeMock.mockResolvedValue({
+      sessions: [
+        {
+          sessionId: "session-1",
+          title: "重复页",
+          project: "AI-Code",
+          updatedAt: "2026-07-21T01:00:00Z",
+          archived: false,
+        },
+      ],
+      nextCursor: "v1:1",
+      hasMore: true,
+    });
+    const client = new TauriApplicationServiceClient("dotnet");
+
+    await expect(client.listSessions()).rejects.toThrow(
+      "Session list pagination cursor did not advance",
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * 验证 session/list 拒绝只有重复 Session 的非终页，避免 live view 空转。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects session list pages without unique progress", async () => {
+    invokeMock
+      .mockResolvedValueOnce({
+        sessions: [
+          {
+            sessionId: "session-1",
+            title: "会话",
+            project: "AI-Code",
+            updatedAt: "2026-07-21T01:00:00Z",
+            archived: false,
+          },
+        ],
+        nextCursor: "v1:1",
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        sessions: [
+          {
+            sessionId: "session-1",
+            title: "重复会话",
+            project: "AI-Code",
+            updatedAt: "2026-07-21T01:01:00Z",
+            archived: false,
+          },
+        ],
+        nextCursor: "v1:2",
+        hasMore: true,
+      });
+    const client = new TauriApplicationServiceClient("rust");
+
+    await expect(client.listSessions()).rejects.toThrow(
+      "Session list pagination did not add any sessions",
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * 验证 session/list 在服务持续声明下一页时受固定页数上限约束。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects session lists exceeding the client page limit", async () => {
+    invokeMock.mockImplementation(
+      (_command: string, arguments_: { params?: { cursor?: string } }) => {
+        const currentOffset = Number(arguments_.params?.cursor?.slice(3) ?? "0");
+        const nextOffset = currentOffset + 1;
+        return Promise.resolve({
+          sessions: [
+            {
+              sessionId: `session-${nextOffset}`,
+              title: `会话 ${nextOffset}`,
+              project: "AI-Code",
+              updatedAt: "2026-07-21T01:00:00Z",
+              archived: false,
+            },
+          ],
+          nextCursor: `v1:${nextOffset}`,
+          hasMore: true,
+        });
+      },
+    );
+    const client = new TauriApplicationServiceClient("dotnet");
+
+    await expect(client.listSessions()).rejects.toThrow(
+      "Session list pagination exceeded the client page limit",
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(256);
+  });
 });

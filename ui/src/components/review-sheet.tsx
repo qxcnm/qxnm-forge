@@ -28,29 +28,28 @@ export function ReviewSheet({ open, onOpenChange }: ReviewSheetProps) {
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex w-[360px] max-w-[92vw] flex-col gap-0 p-0 sm:max-w-[400px]">
         <SheetHeader className="shrink-0 px-5 pb-4 pt-5 text-left">
-          <SheetTitle className="text-[14px]">变更审阅</SheetTitle>
-          <SheetDescription className="text-[11px]">当前任务的文件投影</SheetDescription>
+          <SheetTitle className="text-[14px]">预览变更</SheetTitle>
+          <SheetDescription className="text-[11px]">浏览器演示数据</SheetDescription>
         </SheetHeader>
         <Separator />
         <ScrollArea className="min-h-0 flex-1">
           <div className="p-4">
             <div className="mb-4 flex items-center gap-2 text-[12px] text-stone-700">
               <CheckCircle2 className="size-4 text-emerald-600" aria-hidden="true" />
-              <span>类型检查通过</span>
+              <span>模拟检查已完成</span>
             </div>
             <div className="space-y-1">
               {CHANGED_FILES.map((file) => (
-                <button
+                <div
                   key={file.path}
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-2.5 text-left text-[11px] hover:bg-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2.5 text-left text-[11px]"
                 >
                   <FileCode2 className="size-3.5 shrink-0 text-stone-400" aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-stone-700">
                     {file.path}
                   </span>
                   <span className="text-emerald-600">+{file.additions}</span>
-                </button>
+                </div>
               ))}
             </div>
           </div>

@@ -18,6 +18,8 @@ interface ConversationProps {
   readonly messages: readonly SubmittedMessage[];
   readonly busy: boolean;
   readonly showFixture: boolean;
+  readonly historyLoading: boolean;
+  readonly historyError: boolean;
 }
 
 /**
@@ -27,7 +29,14 @@ interface ConversationProps {
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
-export function Conversation({ backendLabel, messages, busy, showFixture }: ConversationProps) {
+export function Conversation({
+  backendLabel,
+  messages,
+  busy,
+  showFixture,
+  historyLoading,
+  historyError,
+}: ConversationProps) {
   return (
     <ScrollArea className="min-h-0 flex-1 bg-white">
       <div className="mx-auto w-full max-w-[760px] px-5 pb-8 pt-8 sm:px-8 sm:pt-12">
@@ -130,14 +139,8 @@ export function Conversation({ backendLabel, messages, busy, showFixture }: Conv
               className="mt-8 overflow-hidden rounded-lg bg-[#f6f6f5]"
               aria-label="变更摘要"
             >
-              <div className="flex h-9 items-center justify-between border-b border-stone-200/70 px-3 text-[11px] text-stone-600">
+              <div className="flex h-9 items-center border-b border-stone-200/70 px-3 text-[11px] text-stone-600">
                 <span>{CHANGED_FILES.length} 个文件已变更</span>
-                <button
-                  type="button"
-                  className="rounded px-1.5 py-1 text-stone-500 hover:bg-stone-200 hover:text-stone-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400"
-                >
-                  撤销
-                </button>
               </div>
               {CHANGED_FILES.map((file) => {
                 const FileIcon = file.icon;
@@ -176,6 +179,19 @@ export function Conversation({ backendLabel, messages, busy, showFixture }: Conv
               </div>
             ))}
           </section>
+        ) : null}
+
+        {historyLoading ? (
+          <div className="flex items-center gap-2 py-8 text-[11px] text-stone-400" role="status">
+            <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+            正在读取会话记录
+          </div>
+        ) : historyError ? (
+          <p className="py-8 text-[11px] text-red-600" role="alert">
+            无法读取会话记录
+          </p>
+        ) : !showFixture && messages.length === 0 && !busy ? (
+          <p className="py-8 text-[11px] text-stone-400">暂无会话消息</p>
         ) : null}
 
         {busy ? (

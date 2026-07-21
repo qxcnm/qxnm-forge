@@ -83,6 +83,18 @@ internal static class Program
                 "Provider 商业状态操作安全失败：" + exception.Kind).ConfigureAwait(false);
             return 8;
         }
+        catch (ProviderConnectionException exception)
+        {
+            await Console.Error.WriteLineAsync(
+                "Provider 连接状态操作安全失败：" + exception.Error.Details.Kind).ConfigureAwait(false);
+            return 8;
+        }
+        catch (SessionLifecycleException exception)
+        {
+            await Console.Error.WriteLineAsync(
+                "Session 生命周期操作安全失败：" + exception.Error.Details.Kind).ConfigureAwait(false);
+            return 8;
+        }
         catch (Exception exception) when (exception is IOException or JsonException or JournalCorruptException or JournalIncompatibleException)
         {
             await Console.Error.WriteLineAsync("qxnm-forge-dotnet failed safely: " + exception.GetType().Name).ConfigureAwait(false);
@@ -239,20 +251,24 @@ internal static class Program
         var environmentConformance =
             string.Equals(Environment.GetEnvironmentVariable("QXNM_FORGE_CONFORMANCE"), "1", StringComparison.Ordinal);
         var conformance = options.Conformance || environmentConformance;
-        var (sessionsRoot, ephemeral) = ResolveSessionsRoot(options.StateDirectory, conformance);
+        var allowCustomProviderLoopback =
+            ProviderRegistryFactory.IsCustomProviderLoopbackConformanceEnabled(options.Conformance);
+        var (stateRoot, ephemeral) = ResolveSessionsRoot(options.StateDirectory, conformance);
+        var sessionsRoot = Path.Combine(stateRoot, "sessions");
         try
         {
             await using var repository = new SessionRepository(sessionsRoot, options.Workspace);
             await using var providerRegistry = ProviderRegistryFactory.CreateFromEnvironment(
                 conformanceMode: conformance,
-                stateRoot: sessionsRoot,
-                workspace: options.Workspace);
+                stateRoot: stateRoot,
+                workspace: options.Workspace,
+                allowCustomProviderLoopback: allowCustomProviderLoopback);
             using var toolRegistry = new ToolRegistry(
                 options.Workspace,
                 options.Conformance,
                 environmentConformance);
             var applicationDatabase = await ApplicationDatabaseFactory.OpenFactoryAsync(
-                DatabaseConfiguration.ForStateRoot(sessionsRoot),
+                DatabaseConfiguration.ForStateRoot(stateRoot),
                 cancellationToken).ConfigureAwait(false);
             var profileModels = providerRegistry.ListModels()
                 .Select(static model => new AgentProfileModel(
@@ -264,13 +280,27 @@ internal static class Program
                 applicationDatabase,
                 profileModels,
                 toolRegistry.Names);
+            var providerConnectionService = new CustomProviderConnectionService(
+                stateRoot,
+                options.Workspace,
+                allowLoopbackHttp: allowCustomProviderLoopback);
+            var sessionLifecycleService = new SessionLifecycleService(
+                stateRoot,
+                options.Workspace,
+                repository);
             var agent = new AgentService(
                 repository,
                 providerRegistry,
                 toolRegistry,
                 ResolveApprovalTimeout(options.Conformance, environmentConformance),
                 profileService);
-            var daemon = new StdioDaemon(repository, agent, conformance, profileService);
+            var daemon = new StdioDaemon(
+                repository,
+                agent,
+                conformance,
+                profileService,
+                providerConnectionService,
+                sessionLifecycleService);
             await using var protocolOutput = OpenProtocolOutput();
             await daemon.RunAsync(
                 Console.OpenStandardInput(),
@@ -282,7 +312,7 @@ internal static class Program
         {
             if (ephemeral)
             {
-                TryDeleteDirectory(sessionsRoot);
+                TryDeleteDirectory(stateRoot);
             }
         }
     }
@@ -306,18 +336,19 @@ internal static class Program
             throw new ArgumentException("run requires a prompt on argv or stdin");
         }
 
-        var sessionsRoot = ResolveApplicationStateRoot(options.StateDirectory);
+        var stateRoot = ResolveApplicationStateRoot(options.StateDirectory);
+        var sessionsRoot = Path.Combine(stateRoot, "sessions");
         var apiFamily = options.ApiFamily;
         if (options.Provider != "faux" && apiFamily is null)
         {
-            apiFamily = new InstalledSponsoredRouteStore(sessionsRoot)
+            apiFamily = new InstalledSponsoredRouteStore(stateRoot)
                 .ResolveFamily(options.Provider, options.Model);
         }
 
         await using var repository = new SessionRepository(sessionsRoot, options.Workspace);
         using var toolRegistry = new ToolRegistry(options.Workspace);
         await using var providerRegistry = ProviderRegistryFactory.CreateFromEnvironment(
-            stateRoot: sessionsRoot,
+            stateRoot: stateRoot,
             workspace: options.Workspace);
         var agent = new AgentService(repository, providerRegistry, toolRegistry);
         var sessionId = options.Session ?? "session-" + Guid.NewGuid().ToString("N");
@@ -564,11 +595,13 @@ internal static class Program
                         ["--provider", "--workspace", "--state-dir"],
                         []);
                     var workspace = ResolveAuthWorkspace(GetSponsorOption(parsed, "--workspace"));
-                    var store = new ProviderCredentialStore(
+                    var service = new CustomProviderConnectionService(
                         ResolveApplicationStateRoot(GetSponsorOption(parsed, "--state-dir")),
                         workspace);
                     var secret = await ReadSecretFromStandardInputAsync(cancellationToken).ConfigureAwait(false);
-                    store.Set(RequireSponsorOption(parsed, "--provider"), secret);
+                    service.SetCredentialCoordinated(
+                        RequireSponsorOption(parsed, "--provider"),
+                        secret);
                     await Console.Out.WriteLineAsync(
                         "Provider credential 已保存；不会写入 workspace 或 Session。").ConfigureAwait(false);
                     return 0;
@@ -581,9 +614,9 @@ internal static class Program
                         ["--workspace", "--state-dir"],
                         ["--json"]);
                     var workspace = ResolveAuthWorkspace(GetSponsorOption(parsed, "--workspace"));
-                    var providers = new ProviderCredentialStore(
+                    var providers = new CustomProviderConnectionService(
                         ResolveApplicationStateRoot(GetSponsorOption(parsed, "--state-dir")),
-                        workspace).List();
+                        workspace).ListCredentialsCoordinated();
                     if (parsed.Flags.Contains("--json"))
                     {
                         await Console.Out.WriteLineAsync(JsonSerializer.Serialize(
@@ -614,9 +647,10 @@ internal static class Program
                         ["--provider", "--workspace", "--state-dir"],
                         []);
                     var workspace = ResolveAuthWorkspace(GetSponsorOption(parsed, "--workspace"));
-                    var removed = new ProviderCredentialStore(
+                    var removed = new CustomProviderConnectionService(
                         ResolveApplicationStateRoot(GetSponsorOption(parsed, "--state-dir")),
-                        workspace).Remove(RequireSponsorOption(parsed, "--provider"));
+                        workspace).RemoveCredentialCoordinated(
+                            RequireSponsorOption(parsed, "--provider"));
                     await Console.Out.WriteLineAsync(
                         removed ? "Provider credential 已移除。" : "Provider credential 不存在。").ConfigureAwait(false);
                     return 0;

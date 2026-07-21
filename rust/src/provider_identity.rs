@@ -45,6 +45,48 @@ const CAPABILITY_FEATURES: [&str; 7] = [
     "image_output",
 ];
 
+/// 冻结 manifest 当前拥有的全部 canonical Provider ID。
+///
+/// 该列表用于阻止用户自定义连接遮蔽内置 Provider；测试会与 `providers.v1.json` 双向核对，
+/// manifest 增删 Provider 时必须同步更新。
+const CANONICAL_PROVIDER_IDS: [&str; 35] = [
+    "amazon-bedrock",
+    "ant-ling",
+    "anthropic",
+    "azure-openai-responses",
+    "cerebras",
+    "cloudflare-ai-gateway",
+    "cloudflare-workers-ai",
+    "deepseek",
+    "fireworks",
+    "github-copilot",
+    "google",
+    "google-vertex",
+    "groq",
+    "huggingface",
+    "kimi-coding",
+    "minimax",
+    "minimax-cn",
+    "mistral",
+    "moonshotai",
+    "moonshotai-cn",
+    "nvidia",
+    "openai",
+    "openai-codex",
+    "opencode",
+    "opencode-go",
+    "openrouter",
+    "together",
+    "vercel-ai-gateway",
+    "xai",
+    "xiaomi",
+    "xiaomi-token-plan-ams",
+    "xiaomi-token-plan-cn",
+    "xiaomi-token-plan-sgp",
+    "zai",
+    "zai-coding-cn",
+];
+
 pub(crate) type RouteKey = (String, String);
 pub(crate) type AuthKey = (String, String);
 pub(crate) type ModelKey = (String, String, String);
@@ -653,6 +695,18 @@ pub(crate) fn is_provider_id(value: &str) -> bool {
         && bytes.iter().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-' || *byte == b'.'
         })
+}
+
+/// 功能：判断 Provider ID 是否已由冻结 canonical manifest 占用。
+///
+/// 输入：已验证或未经验证的候选 Provider ID。
+/// 输出：与 `providers.v1.json` 当前任一 Provider ID 精确相等时为 true。
+/// 不变量：列表保持 ASCII ordinal 升序，并由单元测试与冻结 manifest 双向核对。
+/// 失败：本方法不执行 I/O 且不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+pub(crate) fn is_canonical_provider_id(value: &str) -> bool {
+    CANONICAL_PROVIDER_IDS.binary_search(&value).is_ok()
 }
 
 /// 功能：判断字符串是否符合 manifest 环境变量名称闭集。
@@ -1327,6 +1381,32 @@ fn faux_model() -> AdvertisedModel {
     }
 }
 
+/// 功能：为已验证的自定义 OpenAI Chat 连接构造公开文本模型 descriptor。
+///
+/// 输入：启动快照固定的安全 Provider ID 与已验证 model ID。
+/// 输出：支持文本输入输出与 streaming、但不臆测 tools 的品牌中立 descriptor。
+/// 不变量：不含 endpoint、credential、产品品牌或动态推断能力；API family 固定为 `openai-completions`。
+/// 失败：调用方已完成输入验证，本方法不执行 I/O 且不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+pub(crate) fn custom_openai_chat_model(provider_id: &str, model_id: &str) -> AdvertisedModel {
+    AdvertisedModel {
+        provider_id: provider_id.to_owned(),
+        model_id: model_id.to_owned(),
+        display_name: model_id.to_owned(),
+        api_family: "openai-completions".to_owned(),
+        capabilities: AdvertisedModelCapabilities {
+            input: vec!["text".to_owned()],
+            output: vec!["text".to_owned()],
+            streaming: true,
+            tools: false,
+            reasoning: false,
+            context_tokens: None,
+            max_output_tokens: None,
+        },
+    }
+}
+
 /// 功能：提取公共 descriptor 的稳定三元排序键。
 ///
 /// 输入：一个已归一化 descriptor 引用。
@@ -1366,8 +1446,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        MAX_CATALOG_BYTES, MAX_MANIFEST_BYTES, build_advertisement, catalog_index,
-        load_json_object, manifest_index, validate_catalog_envelope, verify_frozen_digests,
+        CANONICAL_PROVIDER_IDS, MAX_CATALOG_BYTES, MAX_MANIFEST_BYTES, build_advertisement,
+        catalog_index, load_json_object, manifest_index, validate_catalog_envelope,
+        verify_frozen_digests,
     };
 
     /// 功能：读取代码固定 shared manifest/catalog，供本模块纯离线测试复用。
@@ -1396,6 +1477,13 @@ mod tests {
         let manifest = manifest_index(&manifest).map_err(|_| "manifest rejected")?;
         let catalog = catalog_index(&catalog, &manifest).map_err(|_| "catalog rejected")?;
         assert_eq!(manifest.provider_ids.len(), 35);
+        assert_eq!(
+            manifest.provider_ids,
+            CANONICAL_PROVIDER_IDS
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        );
         assert_eq!(manifest.routes.len(), 45);
         assert_eq!(catalog.values().map(Vec::len).sum::<usize>(), 1076);
         Ok(())

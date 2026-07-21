@@ -383,79 +383,75 @@ public sealed class AgentService
             provider = provider with { ApiFamily = providerAdapter.ApiFamily };
         }
 
-        var runtime = await sessions.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        await runtime.StateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        using var runtimeUse = await sessions.AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: true,
+            cancellationToken).ConfigureAwait(false);
+        var runtime = runtimeUse.Runtime;
+        if (runtime.ActiveRun is not null)
         {
-            if (runtime.ActiveRun is not null)
-            {
-                throw new InvalidOperationException("session is busy");
-            }
-
-            if (provider.Id == "faux" &&
-                (runtime.PendingScenario is null || runtime.PendingScenarioRecordId is null))
-            {
-                throw new InvalidOperationException("faux scenario is not configured");
-            }
-
-            await ValidateProviderInputAsync(
-                runtime.Journal,
-                input,
-                providerAdapter,
-                cancellationToken).ConfigureAwait(false);
-            await runtime.Journal.EnsureContinuationSupportedAsync(cancellationToken).ConfigureAwait(false);
-
-            var runId = "run-" + Guid.NewGuid().ToString("N");
-            var inputMessageId = "message-" + Guid.NewGuid().ToString("N");
-            var userMessage = new UserMessage(inputMessageId, "user", input.Content, DateTimeOffset.UtcNow);
-            await runtime.Journal.AppendAsync(
-                "message.appended",
-                new { Message = userMessage, RunId = runId },
-                cancellationToken).ConfigureAwait(false);
-            var acceptedData = new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["runId"] = runId,
-                ["inputMessageId"] = inputMessageId,
-                ["provider"] = provider,
-            };
-            if (provider.Id == "faux")
-            {
-                acceptedData["fauxScenarioRecordId"] = runtime.PendingScenarioRecordId;
-            }
-            if (profileBinding is not null)
-            {
-                acceptedData["agentProfileSnapshot"] = profileBinding.Snapshot;
-            }
-
-            await runtime.Journal.AppendAsync(
-                "run.accepted",
-                acceptedData,
-                cancellationToken).ConfigureAwait(false);
-
-            var contextMessages = await runtime.Journal.GetContextMessagesAsync(cancellationToken).ConfigureAwait(false);
-            var accepted = new AcceptedRun(
-                runtime,
-                runId,
-                inputMessageId,
-                provider,
-                providerAdapter,
-                runtime.PendingScenario,
-                contextMessages,
-                profileBinding,
-                interactiveApprovals &&
-                profileBinding?.Snapshot.DangerousActionMode != "deny");
-            if (provider.Id == "faux")
-            {
-                runtime.PendingScenario = null;
-                runtime.PendingScenarioRecordId = null;
-            }
-            runtime.ActiveRun = accepted;
-            return accepted;
+            throw new InvalidOperationException("session is busy");
         }
-        finally
+
+        if (provider.Id == "faux" &&
+            (runtime.PendingScenario is null || runtime.PendingScenarioRecordId is null))
         {
-            runtime.StateGate.Release();
+            throw new InvalidOperationException("faux scenario is not configured");
         }
+
+        await ValidateProviderInputAsync(
+            runtime.Journal,
+            input,
+            providerAdapter,
+            cancellationToken).ConfigureAwait(false);
+        await runtime.Journal.EnsureContinuationSupportedAsync(cancellationToken).ConfigureAwait(false);
+
+        var runId = "run-" + Guid.NewGuid().ToString("N");
+        var inputMessageId = "message-" + Guid.NewGuid().ToString("N");
+        var userMessage = new UserMessage(inputMessageId, "user", input.Content, DateTimeOffset.UtcNow);
+        await runtime.Journal.AppendAsync(
+            "message.appended",
+            new { Message = userMessage, RunId = runId },
+            cancellationToken).ConfigureAwait(false);
+        var acceptedData = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["runId"] = runId,
+            ["inputMessageId"] = inputMessageId,
+            ["provider"] = provider,
+        };
+        if (provider.Id == "faux")
+        {
+            acceptedData["fauxScenarioRecordId"] = runtime.PendingScenarioRecordId;
+        }
+        if (profileBinding is not null)
+        {
+            acceptedData["agentProfileSnapshot"] = profileBinding.Snapshot;
+        }
+
+        await runtime.Journal.AppendAsync(
+            "run.accepted",
+            acceptedData,
+            cancellationToken).ConfigureAwait(false);
+
+        var contextMessages = await runtime.Journal.GetContextMessagesAsync(cancellationToken).ConfigureAwait(false);
+        var accepted = new AcceptedRun(
+            runtime,
+            runId,
+            inputMessageId,
+            provider,
+            providerAdapter,
+            runtime.PendingScenario,
+            contextMessages,
+            profileBinding,
+            interactiveApprovals &&
+            profileBinding?.Snapshot.DangerousActionMode != "deny");
+        if (provider.Id == "faux")
+        {
+            runtime.PendingScenario = null;
+            runtime.PendingScenarioRecordId = null;
+        }
+        runtime.ActiveRun = accepted;
+        return accepted;
     }
 
     /// <summary>
@@ -520,38 +516,34 @@ public sealed class AgentService
         string runId,
         CancellationToken cancellationToken = default)
     {
-        var runtime = await sessions.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        await runtime.StateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        using var runtimeUse = await sessions.AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: true,
+            cancellationToken).ConfigureAwait(false);
+        var runtime = runtimeUse.Runtime;
+        if (runtime.TerminalRunIds.Contains(runId))
         {
-            if (runtime.TerminalRunIds.Contains(runId))
-            {
-                return "terminal";
-            }
-
-            var run = runtime.ActiveRun;
-            if (run is null || run.RunId != runId)
-            {
-                throw new KeyNotFoundException("run was not found");
-            }
-
-            if (run.CancellationRequested)
-            {
-                return "alreadyRequested";
-            }
-
-            await runtime.Journal.AppendAsync(
-                "run.cancellation_requested",
-                new { RunId = runId },
-                cancellationToken).ConfigureAwait(false);
-            run.CancellationRequested = true;
-            run.Cancellation.Cancel();
-            return "requested";
+            return "terminal";
         }
-        finally
+
+        var run = runtime.ActiveRun;
+        if (run is null || run.RunId != runId)
         {
-            runtime.StateGate.Release();
+            throw new KeyNotFoundException("run was not found");
         }
+
+        if (run.CancellationRequested)
+        {
+            return "alreadyRequested";
+        }
+
+        await runtime.Journal.AppendAsync(
+            "run.cancellation_requested",
+            new { RunId = runId },
+            cancellationToken).ConfigureAwait(false);
+        run.CancellationRequested = true;
+        run.Cancellation.Cancel();
+        return "requested";
     }
 
     /// <summary>
@@ -575,53 +567,49 @@ public sealed class AgentService
         CancellationToken cancellationToken = default)
     {
         ValidateApprovalDecision(decision);
-        var runtime = await sessions.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        await runtime.StateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        using var runtimeUse = await sessions.AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: true,
+            cancellationToken).ConfigureAwait(false);
+        var runtime = runtimeUse.Runtime;
+        var run = runtime.ActiveRun;
+        if (run is null || run.RunId != runId)
         {
-            var run = runtime.ActiveRun;
-            if (run is null || run.RunId != runId)
-            {
-                throw CreateApprovalConflict("approval_run_inactive");
-            }
+            throw CreateApprovalConflict("approval_run_inactive");
+        }
 
-            if (run.ResolvedApprovalIds.Contains(approvalId))
-            {
-                throw CreateApprovalConflict("approval_already_resolved");
-            }
+        if (run.ResolvedApprovalIds.Contains(approvalId))
+        {
+            throw CreateApprovalConflict("approval_already_resolved");
+        }
 
-            if (!run.PendingApprovals.TryGetValue(approvalId, out var pending))
-            {
-                throw CreateApprovalConflict("approval_not_found");
-            }
+        if (!run.PendingApprovals.TryGetValue(approvalId, out var pending))
+        {
+            throw CreateApprovalConflict("approval_not_found");
+        }
 
-            if (DateTimeOffset.UtcNow >= pending.Request.ExpiresAt)
-            {
-                var timeoutDecision = new ApprovalDecision("deny", "approval expired");
-                await AppendApprovalResolutionAsync(
-                    runtime,
-                    run,
-                    pending,
-                    timeoutDecision,
-                    "timeout",
-                    CancellationToken.None).ConfigureAwait(false);
-                throw CreateApprovalConflict("approval_expired");
-            }
-
+        if (DateTimeOffset.UtcNow >= pending.Request.ExpiresAt)
+        {
+            var timeoutDecision = new ApprovalDecision("deny", "approval expired");
             await AppendApprovalResolutionAsync(
                 runtime,
                 run,
                 pending,
-                decision,
-                "client",
-                cancellationToken,
-                completeWaiter: false).ConfigureAwait(false);
-            return new ApprovalResponseReceipt(run, pending, new ApprovalResolution(decision, "client"));
+                timeoutDecision,
+                "timeout",
+                CancellationToken.None).ConfigureAwait(false);
+            throw CreateApprovalConflict("approval_expired");
         }
-        finally
-        {
-            runtime.StateGate.Release();
-        }
+
+        await AppendApprovalResolutionAsync(
+            runtime,
+            run,
+            pending,
+            decision,
+            "client",
+            cancellationToken,
+            completeWaiter: false).ConfigureAwait(false);
+        return new ApprovalResponseReceipt(run, pending, new ApprovalResolution(decision, "client"));
     }
 
     /// <summary>
@@ -681,26 +669,22 @@ public sealed class AgentService
             throw new ArgumentException("queue is invalid", nameof(queue));
         }
 
-        var runtime = await sessions.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        await runtime.StateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        using var runtimeUse = await sessions.AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: true,
+            cancellationToken).ConfigureAwait(false);
+        var runtime = runtimeUse.Runtime;
+        if (runtime.ActiveRun is null || runtime.ActiveRun.RunId != runId)
         {
-            if (runtime.ActiveRun is null || runtime.ActiveRun.RunId != runId)
-            {
-                throw new KeyNotFoundException("run was not found");
-            }
+            throw new KeyNotFoundException("run was not found");
+        }
 
-            var queueItemId = "queue-" + Guid.NewGuid().ToString("N");
-            await runtime.Journal.AppendAsync(
-                "queue.appended",
-                new { RunId = runId, QueueItemId = queueItemId, Queue = queue, Input = input },
-                cancellationToken).ConfigureAwait(false);
-            return queueItemId;
-        }
-        finally
-        {
-            runtime.StateGate.Release();
-        }
+        var queueItemId = "queue-" + Guid.NewGuid().ToString("N");
+        await runtime.Journal.AppendAsync(
+            "queue.appended",
+            new { RunId = runId, QueueItemId = queueItemId, Queue = queue, Input = input },
+            cancellationToken).ConfigureAwait(false);
+        return queueItemId;
     }
 
     /// <summary>
@@ -2017,10 +2001,6 @@ public sealed class AgentService
 
             run.TerminalStatus = effectiveStatus;
             run.Runtime.TerminalRunIds.Add(run.RunId);
-            if (ReferenceEquals(run.Runtime.ActiveRun, run))
-            {
-                run.Runtime.ActiveRun = null;
-            }
         }
         finally
         {
@@ -2031,14 +2011,32 @@ public sealed class AgentService
         var eventData = effectiveStatus == "cancelled"
             ? new { Status = effectiveStatus, Usage = usage }
             : (object)new { Status = effectiveStatus, Error = effectiveError, Usage = usage };
-        await EmitAsync(
-            run.Runtime.Journal,
-            writer,
-            run.RunId,
-            null,
-            eventType,
-            eventData,
-            CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await EmitAsync(
+                run.Runtime.Journal,
+                writer,
+                run.RunId,
+                null,
+                eventType,
+                eventData,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            await run.Runtime.StateGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (ReferenceEquals(run.Runtime.ActiveRun, run))
+                {
+                    run.Runtime.ActiveRun = null;
+                }
+            }
+            finally
+            {
+                run.Runtime.StateGate.Release();
+            }
+        }
     }
 
     /// <summary>

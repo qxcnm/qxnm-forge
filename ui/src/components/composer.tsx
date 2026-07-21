@@ -21,6 +21,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getModelRouteKey } from "@/lib/model-route";
+import type { ComposerSubmitMode } from "@/store/workspace-ui-store";
 import type { ModelDescriptor, RuntimeEnvironment } from "@/types/application-service";
 import type { AgentProfile } from "@/types/agent-profile";
 
@@ -31,6 +32,7 @@ interface ComposerProps {
   readonly agentProfiles: readonly AgentProfile[];
   readonly selectedAgentProfileId: string | null;
   readonly runtimeEnvironment?: RuntimeEnvironment;
+  readonly submitMode: ComposerSubmitMode;
   readonly busy: boolean;
   readonly onValueChange: (value: string) => void;
   readonly onModelChange: (modelRouteKey: string) => void;
@@ -51,6 +53,7 @@ export function Composer({
   agentProfiles,
   selectedAgentProfileId,
   runtimeEnvironment,
+  submitMode,
   busy,
   onValueChange,
   onModelChange,
@@ -74,13 +77,18 @@ export function Composer({
   };
 
   /**
-   * 支持 Enter 发送与 Shift+Enter 换行。
+   * 按当前界面偏好处理 Enter 或组合键发送。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    const shouldSubmit =
+      event.key === "Enter" &&
+      (submitMode === "enter"
+        ? !event.shiftKey && !event.metaKey && !event.ctrlKey
+        : (event.metaKey || event.ctrlKey) && !event.shiftKey);
+    if (shouldSubmit) {
       event.preventDefault();
       if (!busy && value.trim().length > 0) {
         onSubmit();

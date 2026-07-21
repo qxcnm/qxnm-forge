@@ -18,6 +18,7 @@ public static class ProviderRegistryFactory
     /// <param name="conformanceMode">daemon 是否显式启用通用 conformance 功能。</param>
     /// <param name="stateRoot">可选工作区外状态根；普通生产用于加载本地推广 route。</param>
     /// <param name="workspace">与 stateRoot 成对提供的 canonical workspace。</param>
+    /// <param name="allowCustomProviderLoopback">是否已通过自定义 Provider loopback 的独立三门授权。</param>
     /// <returns>拥有全部原生 HTTP 资源的 registry。</returns>
     /// <remarks>presence 分支先于 transport policy、endpoint 与 credential 读取；生产 route 从冻结 manifest/catalog 同一快照生成广告与执行。</remarks>
     /// <exception cref="ProviderIdentityAdvertisementException">生产出现 presence 或 presence/snapshot 无效。</exception>
@@ -27,7 +28,8 @@ public static class ProviderRegistryFactory
         FauxProvider? fauxProvider = null,
         bool conformanceMode = false,
         string? stateRoot = null,
-        string? workspace = null)
+        string? workspace = null,
+        bool allowCustomProviderLoopback = false)
     {
         var routeConfiguration = Environment.GetEnvironmentVariable(
             ProviderExecutableRouteSnapshot.ConfigurationEnvironmentVariable);
@@ -72,10 +74,12 @@ public static class ProviderRegistryFactory
                 ProviderExecutableRouteSnapshot.Load(configurationPath: null),
                 ReadTransportOptions(),
                 stateRoot,
-                workspace);
+                workspace,
+                allowCustomProviderLoopback);
         }
 
         var providers = new List<IProvider> { fauxProvider ?? new FauxProvider() };
+        var customModels = new List<QxnmForge.Domain.ModelDescriptor>();
         var options = ReadTransportOptions();
         var openAiCredential = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
         var anthropicCredential = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
@@ -94,7 +98,14 @@ public static class ProviderRegistryFactory
         AddBedrockConverseStream(providers, options, conformance);
         AddOpenAiCodexResponses(providers, options, conformance);
         AddOpenRouterImages(providers, options, conformance, openRouterCredential);
-        return new ProviderRegistry(providers);
+        AddCustomProviderConnections(
+            providers,
+            customModels,
+            options,
+            stateRoot,
+            workspace,
+            allowCustomProviderLoopback);
+        return new ProviderRegistry(providers, executableModels: customModels);
     }
 
     /// <summary>
@@ -107,6 +118,7 @@ public static class ProviderRegistryFactory
     /// <param name="options">有界 HTTP/SSE/retry 策略。</param>
     /// <param name="stateRoot">可选本地推广商业状态根。</param>
     /// <param name="workspace">与 stateRoot 成对的 workspace 安全边界。</param>
+    /// <param name="allowCustomProviderLoopback">是否允许自定义连接使用 literal loopback HTTP。</param>
     /// <returns>route-keyed adapters 与同一模型快照闭合的 registry。</returns>
     /// <remarks>不变量：缺 credential route 在 initialize/models/list 消失；credential 值不传入 adapter 构造器。</remarks>
     private static ProviderRegistry CreateExecutableRegistry(
@@ -114,7 +126,8 @@ public static class ProviderRegistryFactory
         IReadOnlyList<ProviderExecutableRoutePlan> routes,
         ProviderTransportOptions options,
         string? stateRoot = null,
-        string? workspace = null)
+        string? workspace = null,
+        bool allowCustomProviderLoopback = false)
     {
         var providers = new List<IProvider> { fauxProvider };
         var models = new List<QxnmForge.Domain.ModelDescriptor>();
@@ -130,8 +143,63 @@ public static class ProviderRegistryFactory
         }
 
         AddSponsoredRoutes(providers, models, options, stateRoot, workspace);
+        AddCustomProviderConnections(
+            providers,
+            models,
+            options,
+            stateRoot,
+            workspace,
+            allowCustomProviderLoopback);
 
         return new ProviderRegistry(providers, executableModels: models);
+    }
+
+    /// <summary>
+    /// 功能：从同一启动快照注册已启用且 credential configured 的自定义 OpenAI Chat 连接。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="providers">目标原生 Provider 列表。</param>
+    /// <param name="models">与 adapter 一一闭合的模型描述列表。</param>
+    /// <param name="options">有界 HTTP/SSE 策略。</param>
+    /// <param name="stateRoot">可信应用状态根。</param>
+    /// <param name="workspace">CredentialStore 必须位于其外的 workspace。</param>
+    /// <param name="allowCustomProviderLoopback">是否允许持久化连接使用 literal loopback HTTP。</param>
+    /// <remarks>不变量：未启用或缺 credential 的连接不进入 initialize、models/list 或 adapter registry。</remarks>
+    private static void AddCustomProviderConnections(
+        List<IProvider> providers,
+        List<QxnmForge.Domain.ModelDescriptor> models,
+        ProviderTransportOptions options,
+        string? stateRoot,
+        string? workspace,
+        bool allowCustomProviderLoopback)
+    {
+        if (stateRoot is null || workspace is null)
+        {
+            return;
+        }
+
+        var credentials = new ProviderCredentialStore(stateRoot, workspace);
+        var configured = new HashSet<string>(credentials.List(), StringComparer.Ordinal);
+        var connections = new CustomProviderConnectionStore(
+            stateRoot,
+            allowCustomProviderLoopback).List();
+        var occupiedProviderIds = new HashSet<string>(
+            providers.Select(static provider => provider.Id),
+            StringComparer.Ordinal);
+        foreach (var connection in connections)
+        {
+            if (!connection.Enabled ||
+                !configured.Contains(connection.ProviderId) ||
+                !occupiedProviderIds.Add(connection.ProviderId))
+            {
+                continue;
+            }
+
+            providers.Add(CustomProviderConnectionAdapterFactory.Create(connection, credentials, options));
+            models.AddRange(
+                CustomProviderConnectionAdapterFactory.CreateModelDescriptors(connection));
+        }
     }
 
     /// <summary>
@@ -223,6 +291,24 @@ public static class ProviderRegistryFactory
             credential.Length <= 16_384 &&
             !credential.Contains('\r', StringComparison.Ordinal) &&
             !credential.Contains('\n', StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 功能：计算自定义 Provider literal loopback HTTP 的三重 conformance 授权。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="cliConformance">CLI 是否显式携带 `--conformance`。</param>
+    /// <returns>CLI、`QXNM_FORGE_CONFORMANCE=1` 与 `QXNM_FORGE_PROVIDER_CONFORMANCE=1` 同时满足时 true。</returns>
+    /// <remarks>不变量：任一门缺失或值不精确为 `1` 时均失败关闭；此结果只授权 literal loopback HTTP。</remarks>
+    public static bool IsCustomProviderLoopbackConformanceEnabled(bool cliConformance)
+    {
+        return cliConformance &&
+            string.Equals(
+                Environment.GetEnvironmentVariable("QXNM_FORGE_CONFORMANCE"),
+                "1",
+                StringComparison.Ordinal) &&
+            ProviderConformanceEnabled();
     }
 
     /// <summary>

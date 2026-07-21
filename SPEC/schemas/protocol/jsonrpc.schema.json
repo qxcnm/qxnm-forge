@@ -66,12 +66,22 @@
               "agentProfiles/create",
               "agentProfiles/update",
               "agentProfiles/delete",
+              "providerConnections/list",
+              "providerConnections/create",
+              "providerConnections/update",
+              "providerConnections/delete",
+              "providerCredentials/set",
+              "providerCredentials/remove",
               "run/start",
               "run/cancel",
               "run/steer",
               "run/followUp",
               "approval/respond",
               "session/get",
+              "session/list",
+              "session/archive",
+              "session/restore",
+              "session/delete",
               "session/branch/select",
               "session/compact",
               "terminal/open",
@@ -316,6 +326,21 @@
       },
       "additionalProperties": false
     },
+    "sessionListParams": {
+      "$ref": "../session/lifecycle.schema.json#/$defs/listParams"
+    },
+    "sessionLifecycleMutationParams": {
+      "$ref": "../session/lifecycle.schema.json#/$defs/mutationParams"
+    },
+    "sessionListResult": {
+      "$ref": "../session/lifecycle.schema.json#/$defs/listResult"
+    },
+    "sessionSummaryResult": {
+      "$ref": "../session/lifecycle.schema.json#/$defs/summaryResult"
+    },
+    "sessionDeleteResult": {
+      "$ref": "../session/lifecycle.schema.json#/$defs/deleteResult"
+    },
     "sessionBranchSelectParams": {
       "type": "object",
       "required": ["sessionId", "expectedHeadRecordId", "targetLeafRecordId"],
@@ -444,6 +469,53 @@
       },
       "additionalProperties": false
     },
+    "providerConnectionsListResult": {
+      "type": "object",
+      "required": ["connections"],
+      "properties": {
+        "connections": {
+          "type": "array",
+          "items": { "$ref": "../custom-provider-connection.schema.json#/$defs/connection" },
+          "maxItems": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "providerConnectionResult": {
+      "type": "object",
+      "required": ["connection", "restartRequired"],
+      "properties": {
+        "connection": { "$ref": "../custom-provider-connection.schema.json#/$defs/connection" },
+        "restartRequired": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "providerConnectionDeleteResult": {
+      "type": "object",
+      "required": ["deleted", "restartRequired"],
+      "properties": {
+        "deleted": { "const": true },
+        "restartRequired": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "providerCredentialSetParams": {
+      "type": "object",
+      "required": ["providerId", "credential"],
+      "properties": {
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
+        "credential": { "type": "string", "minLength": 1, "maxLength": 16384, "pattern": "^[^\\r\\n\\u0000]+$" }
+      },
+      "additionalProperties": false
+    },
+    "providerCredentialRemoveParams": {
+      "type": "object",
+      "required": ["providerId"],
+      "properties": {
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
     "shutdownParams": {
       "type": "object",
       "required": ["graceful"],
@@ -556,6 +628,48 @@
         "params": { "$ref": "#/$defs/agentProfilesDeleteParams" }
       }
     },
+    "providerConnectionsListRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "providerConnections/list" },
+        "params": { "$ref": "../custom-provider-connection.schema.json#/$defs/listParams" }
+      }
+    },
+    "providerConnectionsCreateRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "providerConnections/create" },
+        "params": { "$ref": "../custom-provider-connection.schema.json#/$defs/createParams" }
+      }
+    },
+    "providerConnectionsUpdateRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "providerConnections/update" },
+        "params": { "$ref": "../custom-provider-connection.schema.json#/$defs/updateParams" }
+      }
+    },
+    "providerConnectionsDeleteRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "providerConnections/delete" },
+        "params": { "$ref": "../custom-provider-connection.schema.json#/$defs/deleteParams" }
+      }
+    },
+    "providerCredentialsSetRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "providerCredentials/set" },
+        "params": { "$ref": "#/$defs/providerCredentialSetParams" }
+      }
+    },
+    "providerCredentialsRemoveRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "providerCredentials/remove" },
+        "params": { "$ref": "#/$defs/providerCredentialRemoveParams" }
+      }
+    },
     "runCancelRequest": {
       "$ref": "#/$defs/baseRequest",
       "properties": {
@@ -589,6 +703,34 @@
       "properties": {
         "method": { "const": "session/get" },
         "params": { "$ref": "#/$defs/sessionGetParams" }
+      }
+    },
+    "sessionListRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "session/list" },
+        "params": { "$ref": "#/$defs/sessionListParams" }
+      }
+    },
+    "sessionArchiveRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "session/archive" },
+        "params": { "$ref": "#/$defs/sessionLifecycleMutationParams" }
+      }
+    },
+    "sessionRestoreRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "session/restore" },
+        "params": { "$ref": "#/$defs/sessionLifecycleMutationParams" }
+      }
+    },
+    "sessionDeleteRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "session/delete" },
+        "params": { "$ref": "#/$defs/sessionLifecycleMutationParams" }
       }
     },
     "sessionBranchSelectRequest": {
@@ -638,12 +780,22 @@
         { "$ref": "#/$defs/agentProfilesCreateRequest" },
         { "$ref": "#/$defs/agentProfilesUpdateRequest" },
         { "$ref": "#/$defs/agentProfilesDeleteRequest" },
+        { "$ref": "#/$defs/providerConnectionsListRequest" },
+        { "$ref": "#/$defs/providerConnectionsCreateRequest" },
+        { "$ref": "#/$defs/providerConnectionsUpdateRequest" },
+        { "$ref": "#/$defs/providerConnectionsDeleteRequest" },
+        { "$ref": "#/$defs/providerCredentialsSetRequest" },
+        { "$ref": "#/$defs/providerCredentialsRemoveRequest" },
         { "$ref": "#/$defs/runStartRequest" },
         { "$ref": "#/$defs/runCancelRequest" },
         { "$ref": "#/$defs/runSteerRequest" },
         { "$ref": "#/$defs/runFollowUpRequest" },
         { "$ref": "#/$defs/approvalRespondRequest" },
         { "$ref": "#/$defs/sessionGetRequest" },
+        { "$ref": "#/$defs/sessionListRequest" },
+        { "$ref": "#/$defs/sessionArchiveRequest" },
+        { "$ref": "#/$defs/sessionRestoreRequest" },
+        { "$ref": "#/$defs/sessionDeleteRequest" },
         { "$ref": "#/$defs/sessionBranchSelectRequest" },
         { "$ref": "#/$defs/sessionCompactRequest" },
         { "$ref": "#/$defs/terminalOpenRequest" },
@@ -663,10 +815,16 @@
         { "$ref": "#/$defs/agentProfilesListResult" },
         { "$ref": "#/$defs/agentProfileResult" },
         { "$ref": "#/$defs/agentProfilesDeleteResult" },
+        { "$ref": "#/$defs/providerConnectionsListResult" },
+        { "$ref": "#/$defs/providerConnectionResult" },
+        { "$ref": "#/$defs/providerConnectionDeleteResult" },
+        { "$ref": "../custom-provider-connection.schema.json#/$defs/credentialStatus" },
         { "$ref": "#/$defs/runStartResult" },
         { "$ref": "#/$defs/acceptedResult" },
         { "$ref": "#/$defs/cancelResult" },
         { "$ref": "#/$defs/sessionGetResult" },
+        { "$ref": "#/$defs/sessionListResult" },
+        { "$ref": "#/$defs/sessionSummaryResult" },
         { "$ref": "#/$defs/sessionBranchSelectResult" },
         { "$ref": "#/$defs/sessionCompactResult" },
         { "$ref": "#/$defs/terminalOpenResult" },

@@ -145,6 +145,7 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
     private static readonly HashSet<string> ImplementationLanguages =
         ["dotnet", "rust", "go", "typescript", "python"];
 
+    private readonly SessionCoordinationLease coordinationLease;
     private readonly WriterLease writerLease;
     private readonly FileStream lockStream;
     private readonly FileStream journalStream;
@@ -176,6 +177,7 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
     /// <param name="sessionId">已验证会话 ID。</param>
     /// <param name="directoryPath">会话目录。</param>
     /// <param name="journalPath">journal 文件路径。</param>
+    /// <param name="coordinationLease">固定路径 per-ID 打开/删除 coordination lease。</param>
     /// <param name="writerLease">已提交 owner 且 listener 开放的 portable writer lease。</param>
     /// <param name="lockStream">独占 lock 句柄。</param>
     /// <param name="journalStream">append journal 句柄。</param>
@@ -183,6 +185,7 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
         string sessionId,
         string directoryPath,
         string journalPath,
+        SessionCoordinationLease coordinationLease,
         WriterLease writerLease,
         FileStream lockStream,
         FileStream journalStream)
@@ -190,6 +193,7 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
         SessionId = sessionId;
         DirectoryPath = directoryPath;
         JournalPath = journalPath;
+        this.coordinationLease = coordinationLease;
         this.writerLease = writerLease;
         this.lockStream = lockStream;
         this.journalStream = journalStream;
@@ -259,13 +263,23 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
 
         var root = Path.GetFullPath(sessionsRoot);
         var directory = Path.Combine(root, sessionId);
-        Directory.CreateDirectory(directory);
-
+        SessionCoordinationLease? coordinationLease = null;
         WriterLease? writerLease = null;
         FileStream? lockHandle = null;
         FileStream? journalHandle = null;
         try
         {
+            Directory.CreateDirectory(root);
+            coordinationLease = await SessionCoordinationLease.AcquireAsync(
+                root,
+                sessionId,
+                cancellationToken).ConfigureAwait(false);
+            if (SessionCoordinationLease.HasPendingTombstone(root, sessionId))
+            {
+                throw SessionWriterLeaseException.Locked();
+            }
+
+            Directory.CreateDirectory(directory);
             writerLease = await WriterLease.AcquireAsync(
                 directory,
                 sessionId,
@@ -285,9 +299,11 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
                 sessionId,
                 directory,
                 journalPath,
+                coordinationLease,
                 writerLease,
                 lockHandle,
                 journalHandle);
+            coordinationLease = null;
             writerLease = null;
             lockHandle = null;
             journalHandle = null;
@@ -376,6 +392,18 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
                 try
                 {
                     await writerLease.FinishReleaseAsync().ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    cleanupException ??= exception;
+                }
+            }
+
+            if (coordinationLease is not null)
+            {
+                try
+                {
+                    await coordinationLease.DisposeAsync().ConfigureAwait(false);
                 }
                 catch (Exception exception)
                 {
@@ -832,6 +860,15 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
             try
             {
                 await writerLease.FinishReleaseAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
+
+            try
+            {
+                await coordinationLease.DisposeAsync().ConfigureAwait(false);
             }
             catch (Exception exception)
             {

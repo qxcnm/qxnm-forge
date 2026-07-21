@@ -229,10 +229,75 @@ pub(crate) async fn application_service_request(
             "application service method is not allowed",
         ));
     }
-    ensure_connection(&app, &state, backend)
-        .await?
-        .request(&method, params)
-        .await
+    let connection = ensure_connection(&app, &state, backend).await?;
+    let result = connection.request(&method, params).await?;
+    if restarts_daemon_after_success(&method) {
+        state.connections.lock().await.remove(&backend);
+    }
+    Ok(result)
+}
+
+/// 把 Provider credential 送到本地 daemon 的专用写入边界。
+///
+/// 输入：后端、受限 Provider ID 与密码输入框中的 credential。
+/// 输出：只含 `credentialConfigured` 的脱敏结果。
+/// 不变量：此方法不属于通用 RPC allowlist；credential 不进入 argv、日志、Session 或返回值，成功后旧 daemon 必须退出。
+/// 失败：Provider ID、credential、连接、CredentialStore 或协议失败时返回脱敏错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+#[tauri::command]
+pub(crate) async fn provider_credential_set(
+    app: AppHandle,
+    state: tauri::State<'_, ApplicationServiceBridge>,
+    backend: BackendKind,
+    provider_id: String,
+    credential: String,
+) -> Result<Value, BridgeError> {
+    if !valid_provider_id(&provider_id) || !valid_credential(&credential) {
+        return Err(BridgeError::internal(
+            "provider credential input is invalid",
+        ));
+    }
+    let connection = ensure_connection(&app, &state, backend).await?;
+    let result = connection
+        .request(
+            "providerCredentials/set",
+            json!({"providerId":provider_id,"credential":credential}),
+        )
+        .await?;
+    state.connections.lock().await.remove(&backend);
+    Ok(result)
+}
+
+/// 删除本地 daemon `CredentialStore` 中指定 Provider 的 credential。
+///
+/// 输入：后端与受限 Provider ID。
+/// 输出：只含 `credentialConfigured:false` 的脱敏结果。
+/// 不变量：WebView 无法指定 state root、文件路径或任意 daemon 方法；成功后旧 daemon 必须退出。
+/// 失败：Provider ID、连接、CredentialStore 或协议失败时返回脱敏错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+#[tauri::command]
+pub(crate) async fn provider_credential_remove(
+    app: AppHandle,
+    state: tauri::State<'_, ApplicationServiceBridge>,
+    backend: BackendKind,
+    provider_id: String,
+) -> Result<Value, BridgeError> {
+    if !valid_provider_id(&provider_id) {
+        return Err(BridgeError::internal(
+            "provider credential input is invalid",
+        ));
+    }
+    let connection = ensure_connection(&app, &state, backend).await?;
+    let result = connection
+        .request(
+            "providerCredentials/remove",
+            json!({"providerId":provider_id}),
+        )
+        .await?;
+    state.connections.lock().await.remove(&backend);
+    Ok(result)
 }
 
 /// 在同一后端连接健康时复用，否则完成一次 fail-closed 重启与握手。
@@ -487,7 +552,49 @@ fn allowed_method(method: &str) -> bool {
             | "agentProfiles/create"
             | "agentProfiles/update"
             | "agentProfiles/delete"
+            | "providerConnections/list"
+            | "providerConnections/create"
+            | "providerConnections/update"
+            | "providerConnections/delete"
+            | "session/list"
+            | "session/archive"
+            | "session/restore"
+            | "session/delete"
     )
+}
+
+/// 判断成功响应后是否必须丢弃启动期 capability/model 快照。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn restarts_daemon_after_success(method: &str) -> bool {
+    matches!(
+        method,
+        "providerConnections/create" | "providerConnections/update" | "providerConnections/delete"
+    )
+}
+
+/// 验证 Provider ID 是有界、品牌中立的 ASCII 标识符。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn valid_provider_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (1..=128).contains(&bytes.len())
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-')
+        })
+}
+
+/// 验证 credential 可安全进入单个本地写入请求且不能注入协议行。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn valid_credential(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 16_384
+        && !value.bytes().any(|byte| matches!(byte, b'\r' | b'\n' | 0))
 }
 
 /// 构造实现专属但不可由 `WebView` 修改的 daemon argv。
@@ -652,7 +759,10 @@ fn terminate_process_tree(process_id: u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{BackendKind, allowed_method, daemon_arguments};
+    use super::{
+        BackendKind, allowed_method, daemon_arguments, restarts_daemon_after_success,
+        valid_credential, valid_provider_id,
+    };
     use std::path::Path;
 
     /// 验证 `WebView` allowlist 不开放测试、terminal 或任意 shell 方法。
@@ -662,10 +772,38 @@ mod tests {
     #[test]
     fn method_allowlist_is_narrow() {
         assert!(allowed_method("agentProfiles/create"));
+        assert!(allowed_method("providerConnections/list"));
+        assert!(allowed_method("session/archive"));
         assert!(allowed_method("run/start"));
+        assert!(!allowed_method("providerCredentials/set"));
         assert!(!allowed_method("faux/configure"));
         assert!(!allowed_method("terminal/open"));
         assert!(!allowed_method("shell/execute"));
+    }
+
+    /// 验证 Provider mutation 会刷新 daemon，而只读与 Session 请求不会误触发重启。
+    ///
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn provider_mutations_restart_capability_snapshot() {
+        assert!(restarts_daemon_after_success("providerConnections/create"));
+        assert!(restarts_daemon_after_success("providerConnections/update"));
+        assert!(!restarts_daemon_after_success("providerConnections/list"));
+        assert!(!restarts_daemon_after_success("session/archive"));
+    }
+
+    /// 验证专用 credential command 拒绝协议注入与非法 Provider ID。
+    ///
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn provider_credential_inputs_are_bounded() {
+        assert!(valid_provider_id("custom-newapi"));
+        assert!(!valid_provider_id("Custom NewAPI"));
+        assert!(valid_credential("test-only-secret"));
+        assert!(!valid_credential("line-one\nline-two"));
+        assert!(!valid_credential(""));
     }
 
     /// 验证两套 daemon argv 差异只包含 .NET 必需的 stdio 门。

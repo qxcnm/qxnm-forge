@@ -38,7 +38,14 @@ secret。相同 `entryId` 再次安装是显式替换；远程目录后续变化
 `provider-credential-store.schema.json` 定义。实现必须有界、严格解析、拒绝重复 Provider
 ID、拒绝 symlink/reparse file，并用独占 writer lock 和同目录临时文件更新。Unix 文件权限
 固定为 `0600`、私有目录为 `0700`。Windows ACL/DPAPI 尚未通过发布门禁前，不得声称系统
-密钥链级保护。
+密钥链级保护。v0.1 完整 JSON 文档的读取与写入硬上限均为 16 MiB，足以容纳 schema 允许的
+128 条、每条最多 16 KiB credential 及 JSON 转义开销；超过上限必须在发布前拒绝。
+
+用户自定义连接不是推广 route，单独遵循 ADR 0029 与
+`custom-provider-connection.schema.json`。它不得携带目录签名、返佣字段或 `relay-*` 身份，
+但复用同一 CredentialStore 的安全读写边界；连接配置文件本身不得包含 secret。通用 CLI 与
+自定义连接 RPC 的 credential mutation 必须共同遵守 `connection -> credential` 固定锁顺序，
+避免与连接改名或删除交错后留下不可达 secret。
 
 ## 运行时
 

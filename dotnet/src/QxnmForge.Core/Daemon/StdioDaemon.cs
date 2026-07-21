@@ -4,6 +4,7 @@ using QxnmForge.Agent;
 using QxnmForge.Domain;
 using QxnmForge.Protocol;
 using QxnmForge.Provider;
+using QxnmForge.Serialization;
 using QxnmForge.Session;
 
 namespace QxnmForge.Daemon;
@@ -22,6 +23,8 @@ public sealed class StdioDaemon
     private readonly SessionRepository sessions;
     private readonly AgentService agent;
     private readonly AgentProfileService? profiles;
+    private readonly CustomProviderConnectionService? providerConnections;
+    private readonly SessionLifecycleService? sessionLifecycle;
     private readonly bool conformanceMode;
     private readonly ConcurrentBag<Task> activeTasks = [];
 
@@ -34,16 +37,22 @@ public sealed class StdioDaemon
     /// <param name="agent">原生 .NET Agent 服务。</param>
     /// <param name="conformanceMode">是否允许 faux/configure 测试方法。</param>
     /// <param name="profiles">成功完成数据库 bootstrap 时注入的 production Profile 服务。</param>
+    /// <param name="providerConnections">工作区外 Provider 连接与凭据 application service。</param>
+    /// <param name="sessionLifecycle">真实 Session 摘要、归档与安全删除服务。</param>
     public StdioDaemon(
         SessionRepository sessions,
         AgentService agent,
         bool conformanceMode,
-        AgentProfileService? profiles = null)
+        AgentProfileService? profiles = null,
+        CustomProviderConnectionService? providerConnections = null,
+        SessionLifecycleService? sessionLifecycle = null)
     {
         this.sessions = sessions;
         this.agent = agent;
         this.conformanceMode = conformanceMode;
         this.profiles = profiles;
+        this.providerConnections = providerConnections;
+        this.sessionLifecycle = sessionLifecycle;
     }
 
     /// <summary>
@@ -217,6 +226,24 @@ public sealed class StdioDaemon
                 case "agentProfiles/delete" when profiles is not null:
                     await DeleteAgentProfileAsync(request, writer, cancellationToken).ConfigureAwait(false);
                     break;
+                case "providerConnections/list" when providerConnections is not null:
+                    await ListProviderConnectionsAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "providerConnections/create" when providerConnections is not null:
+                    await CreateProviderConnectionAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "providerConnections/update" when providerConnections is not null:
+                    await UpdateProviderConnectionAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "providerConnections/delete" when providerConnections is not null:
+                    await DeleteProviderConnectionAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "providerCredentials/set" when providerConnections is not null:
+                    await SetProviderCredentialAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "providerCredentials/remove" when providerConnections is not null:
+                    await RemoveProviderCredentialAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "run/start":
                     acceptedRuns.Add(await StartRunAsync(
                         request,
@@ -232,6 +259,18 @@ public sealed class StdioDaemon
                     break;
                 case "session/get":
                     await GetSessionAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "session/list" when sessionLifecycle is not null:
+                    await ListSessionsAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "session/archive" when sessionLifecycle is not null:
+                    await ArchiveSessionAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "session/restore" when sessionLifecycle is not null:
+                    await RestoreSessionAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "session/delete" when sessionLifecycle is not null:
+                    await DeleteSessionAsync(request, writer, cancellationToken).ConfigureAwait(false);
                     break;
                 case "session/branch/select":
                     await SelectSessionBranchAsync(request, writer, cancellationToken).ConfigureAwait(false);
@@ -262,7 +301,15 @@ public sealed class StdioDaemon
         {
             await writer.WriteErrorAsync(request.Id, exception.Error, cancellationToken).ConfigureAwait(false);
         }
+        catch (ProviderConnectionException exception)
+        {
+            await writer.WriteErrorAsync(request.Id, exception.Error, cancellationToken).ConfigureAwait(false);
+        }
         catch (SessionMutationException exception)
+        {
+            await writer.WriteErrorAsync(request.Id, exception.Error, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SessionLifecycleException exception)
         {
             await writer.WriteErrorAsync(request.Id, exception.Error, cancellationToken).ConfigureAwait(false);
         }
@@ -437,6 +484,141 @@ public sealed class StdioDaemon
     }
 
     /// <summary>
+    /// 功能：列出 application service 扫描到的真实 Session 摘要与归档状态。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">session/list 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>成功响应 flush 后的任务。</returns>
+    private async Task ListSessionsAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var (offset, limit) = ProtocolCodec.ParseSessionList(request.Params);
+        var result = CreateSessionsListPage(
+            request.Id,
+            sessionLifecycle!.List(),
+            offset,
+            limit);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            result,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：按 cursor offset 构造不超过协议单帧上限的 Session 摘要页。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="requestId">用于精确测量完整 JSON-RPC 响应的 request ID。</param>
+    /// <param name="sessions">已按稳定服务顺序排列的全部摘要。</param>
+    /// <param name="offset">cursor 解析出的零基偏移。</param>
+    /// <param name="limit">客户端请求的 1..128 页大小。</param>
+    /// <returns>完整帧一定不超过 maxFrameBytes 的分页结果。</returns>
+    private static SessionsListResult CreateSessionsListPage(
+        JsonElement requestId,
+        IReadOnlyList<SessionSummary> sessions,
+        int offset,
+        int limit)
+    {
+        var boundedOffset = Math.Min(offset, sessions.Count);
+        var count = Math.Min(limit, sessions.Count - boundedOffset);
+        while (count >= 0)
+        {
+            var hasMore = boundedOffset + count < sessions.Count;
+            var result = new SessionsListResult(
+                sessions.Skip(boundedOffset).Take(count).ToArray(),
+                hasMore ? "v1:" + (boundedOffset + count).ToString(
+                    System.Globalization.CultureInfo.InvariantCulture) : null,
+                hasMore);
+            var frame = new JsonRpcSuccessResponse<SessionsListResult>("2.0", requestId, result);
+            if ((count > 0 || !hasMore) &&
+                JsonSerializer.SerializeToUtf8Bytes(frame, JsonDefaults.Options).Length <= MaxFrameBytes)
+            {
+                return result;
+            }
+
+            count--;
+        }
+
+        throw SessionLifecycleException.Store("session_lifecycle_store_invalid");
+    }
+
+    /// <summary>
+    /// 功能：在 Session 静止时持久化归档状态并返回真实摘要。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">session/archive 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>归档状态 durable 后响应 flush 的任务。</returns>
+    private async Task ArchiveSessionAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var sessionId = ProtocolCodec.ParseSessionLifecycleMutation(request.Params);
+        var summary = await sessionLifecycle!.ArchiveAsync(
+            sessionId,
+            cancellationToken).ConfigureAwait(false);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new SessionSummaryResult(summary),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：在 Session 静止时移除归档状态并返回真实摘要。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">session/restore 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>恢复状态 durable 后响应 flush 的任务。</returns>
+    private async Task RestoreSessionAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var sessionId = ProtocolCodec.ParseSessionLifecycleMutation(request.Params);
+        var summary = await sessionLifecycle!.RestoreAsync(
+            sessionId,
+            cancellationToken).ConfigureAwait(false);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new SessionSummaryResult(summary),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：在 Session 静止健康时执行 tombstone 安全删除。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">session/delete 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>完整普通树删除后响应 flush 的任务。</returns>
+    private async Task DeleteSessionAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var sessionId = ProtocolCodec.ParseSessionLifecycleMutation(request.Params);
+        await sessionLifecycle!.DeleteAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new SessionDeleteResult(Deleted: true),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// 功能：严格解析 branch request，并仅在 branch.selected durable 后返回三个一致 record ID。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -516,6 +698,145 @@ public sealed class StdioDaemon
         await writer.WriteSuccessAsync(
             request.Id,
             new ModelsListResult(agent.ListModels(providerId)),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：返回全部不含 secret 的自定义 Provider 连接和凭据 presence。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">providerConnections/list 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>成功响应 flush 后的任务。</returns>
+    private async Task ListProviderConnectionsAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        ProtocolCodec.ParseProviderConnectionsList(request.Params);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new ProviderConnectionsListResult(providerConnections!.List()),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：严格解析并创建 revision 1 的非敏感 Provider 连接。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">providerConnections/create 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>durable 回执 flush 后的任务。</returns>
+    private async Task CreateProviderConnectionAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var input = ProtocolCodec.ParseProviderConnectionsCreate(request.Params);
+        var connection = providerConnections!.Create(input);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new ProviderConnectionResult(connection, RestartRequired: true),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：严格解析并按 revision CAS 更新非敏感 Provider 连接。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">providerConnections/update 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>durable 回执 flush 后的任务。</returns>
+    private async Task UpdateProviderConnectionAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var (connectionId, expectedRevision, input) =
+            ProtocolCodec.ParseProviderConnectionsUpdate(request.Params);
+        var connection = providerConnections!.Update(connectionId, expectedRevision, input);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new ProviderConnectionResult(connection, RestartRequired: true),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：严格解析并按 revision CAS 删除连接及其 credential。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">providerConnections/delete 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>删除回执 flush 后的任务。</returns>
+    private async Task DeleteProviderConnectionAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var (connectionId, expectedRevision) =
+            ProtocolCodec.ParseProviderConnectionsDelete(request.Params);
+        providerConnections!.Delete(connectionId, expectedRevision);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new ProviderConnectionDeleteResult(Deleted: true, RestartRequired: true),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：把瞬时 credential 写入独立 CredentialStore，并只返回 presence。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">providerCredentials/set 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>脱敏状态 flush 后的任务。</returns>
+    private async Task SetProviderCredentialAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var (providerId, credential) = ProtocolCodec.ParseProviderCredentialsSet(request.Params);
+        providerConnections!.SetCredential(providerId, credential);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new ProviderCredentialStatusResult(
+                providerId,
+                CredentialConfigured: true,
+                RestartRequired: true),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：移除独立 CredentialStore 中的 Provider secret，并只返回 false presence。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">providerCredentials/remove 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>脱敏状态 flush 后的任务。</returns>
+    private async Task RemoveProviderCredentialAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var providerId = ProtocolCodec.ParseProviderCredentialsRemove(request.Params);
+        providerConnections!.RemoveCredential(providerId);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new ProviderCredentialStatusResult(
+                providerId,
+                CredentialConfigured: false,
+                RestartRequired: true),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -656,6 +977,30 @@ public sealed class StdioDaemon
                     "agentProfiles/create",
                     "agentProfiles/update",
                     "agentProfiles/delete",
+                ]);
+        }
+
+        if (providerConnections is not null)
+        {
+            methods.AddRange(
+                [
+                    "providerConnections/list",
+                    "providerConnections/create",
+                    "providerConnections/update",
+                    "providerConnections/delete",
+                    "providerCredentials/set",
+                    "providerCredentials/remove",
+                ]);
+        }
+
+        if (sessionLifecycle is not null)
+        {
+            methods.AddRange(
+                [
+                    "session/list",
+                    "session/archive",
+                    "session/restore",
+                    "session/delete",
                 ]);
         }
 

@@ -7,7 +7,7 @@
 
 未来 QXNM Forge Web/Desktop/Mobile UI 使用 TypeScript + React。UI 是客户端，不是第三套 Agent runtime：它 MUST 通过品牌中立 JSON-RPC/HTTP application service 使用 Rust 或 .NET 后端，MUST NOT 直接读取 SQLite、portable Session、CredentialStore 或许可证文件。
 
-Open UI 代码位于本发行的 `ui/`；Pro UI 可以增加收费页面和 entitlement 展示，但公共组件、wire DTO 与主题 token 保持兼容。当前可运行前端仍默认使用 faux 交互预览；生产 Agent Profile contract 已冻结，但在真实 transport 接通和 capability 广告前，UI 不得声称已连接生产服务。
+Open UI 代码位于本发行的 `ui/`；Pro UI 可以增加收费页面和 entitlement 展示，但公共组件、wire DTO 与主题 token 保持兼容。浏览器默认使用 faux 交互预览，Tauri 桌面壳通过受限 bridge 连接所选 Rust 或 .NET application service；任何入口仍必须按真实 capability 广告启用，不能把浏览器预览状态冒充生产持久化结果。
 
 ## Application service
 
@@ -19,6 +19,8 @@ UI transport 可以是 loopback HTTP + WebSocket，也可以桥接现有 NDJSON 
 - 把用户可见错误脱敏后映射为稳定 wire error。
 
 UI 只维护可丢弃的视图状态。刷新或重连后必须能从 application service 重建 transcript、pending approval、queue、usage、retry、compaction 和 entitlement 投影。
+
+UI 可以在同源浏览器存储中保存闭合的非敏感界面偏好，包括后端选择、输入快捷键、导航宽度和减少动态效果。持久化 key 必须保持品牌中立，并使用显式版本；该快照不得包含 Provider credential、连接导入原文、Session、消息、审批、工具授权、Agent Profile、宿主路径或远程 endpoint。损坏、未知版本或存储不可用时必须回退安全默认值，不能阻断 application service 初始化。
 
 ## 自定义智能体与当前交互预览
 
@@ -39,6 +41,23 @@ UI 只维护可丢弃的视图状态。刷新或重连后必须能从 applicatio
 - profile 不得保存 Provider secret、OAuth token、真实卡密、数据库连接串、私有 endpoint、真实宿主路径或待执行命令。完整模型 identity 也不是 credential。
 - Android 生产客户端只能连接经过认证和加密的远程 HTTPS/WebSocket application service，不得启动 Rust/.NET CLI sidecar，不得向 WebView 暴露本地 shell、terminal 或宿主 workspace。服务端必须把 Android 传入的 profile 视为不可信请求，在每次运行重新校验模型 identity、工具交集、审批、workspace 边界与授权；移动凭据只能在最终使用边界从平台 Keystore 获取。
 - Community faux 数据只能引用公开 capability 和脱敏模型标识，不得出现 Pro entitlement、私有 endpoint、收费 fixture 或授权绕过逻辑。
+
+## Provider 设置、Session 与插件状态
+
+Provider 设置遵循 ADR 0029。连接配置与 credential 必须分两次提交；credential 输入只能保留
+在密码框组件的局部状态，提交后立即清空，不得进入 TanStack Query cache、Zustand、
+`localStorage`、错误消息或分析事件。`providerConnections/list` 只返回
+`credentialConfigured`。界面可以把受支持的第三方 JSON 映射成普通输入 DTO，但不得保存
+原始 JSON 或把 `_type` 当成新的 transport 权限。
+
+会话列表、归档、恢复和删除只能调用 application service。React 不得枚举 Session 目录、
+读取 journal 或删除 artifact。删除使用明确确认；服务未广告对应方法时，界面展示不可用状态，
+不能仅从列表移除来伪装持久化成功。
+
+插件/Computer 页面是 capability 投影，不是 WebView 插件 runtime。只有
+`initialize.capabilities.tools` 实际包含 `computer.*` 且后端提供对应权限/审批时，界面才能
+显示可启用控制；否则必须明确显示“不可用”。React 不能加载插件提供的 JS/HTML，也不能因
+展示插件卡片而追加工具 ID。动态扩展的安装、签名、隔离与工具目录留待后续 ADR。
 
 ## 高定制化
 

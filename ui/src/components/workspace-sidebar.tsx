@@ -1,36 +1,157 @@
 import {
+  Archive,
+  ArchiveIcon,
   Bot,
-  ChevronDown,
   CirclePlus,
-  Clock3,
+  Ellipsis,
   Folder,
-  FolderPlus,
   PanelLeftClose,
   Pin,
+  Puzzle,
   Settings,
-  Sparkles,
   SquareTerminal,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { SessionFixture } from "@/data/workspace-fixtures";
 import { cn } from "@/lib/utils";
-import { useWorkspaceUiStore } from "@/store/workspace-ui-store";
+import { useWorkspaceUiStore, type WorkspaceView } from "@/store/workspace-ui-store";
+import type { SessionSummary } from "@/types/application-service";
 
 interface WorkspaceSidebarProps {
   readonly onRequestClose?: () => void;
   readonly onCreateSession: () => void;
-  readonly onOpenAgents: () => void;
+  readonly onOpenView: (view: Exclude<WorkspaceView, "conversation">) => void;
   readonly onSelectSession: (sessionId: string) => void;
+  readonly onArchiveSession: (session: SessionSummary) => void;
+  readonly onDeleteSession: (session: SessionSummary) => void;
   readonly navigationDisabled?: boolean;
-  readonly sessions: readonly SessionFixture[];
+  readonly canArchiveSessions: boolean;
+  readonly canDeleteSessions: boolean;
+  readonly busySessionIds: ReadonlySet<string>;
+  readonly sessions: readonly SessionSummary[];
+  readonly workspaceName: string;
+}
+
+interface SessionNavigationItemProps {
+  readonly session: SessionSummary;
+  readonly selected: boolean;
+  readonly navigationDisabled: boolean;
+  readonly actionsDisabled: boolean;
+  readonly canArchive: boolean;
+  readonly canDelete: boolean;
+  readonly onSelect: () => void;
+  readonly onArchive: () => void;
+  readonly onDelete: () => void;
 }
 
 /**
- * 展示项目导航与仅用于预览的最近 Session 列表。
+ * 将 Session 更新时间显示为稳定的紧凑标签。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function getSessionAge(updatedAt: string): string {
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - Date.parse(updatedAt)) / 60_000));
+  if (elapsedMinutes < 1) {
+    return "刚刚";
+  }
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes} 分钟`;
+  }
+  if (elapsedMinutes < 1_440) {
+    return `${Math.floor(elapsedMinutes / 60)} 小时`;
+  }
+  return `${Math.floor(elapsedMinutes / 1_440)} 天`;
+}
+
+/**
+ * 展示单条 Session 导航与归档、删除操作菜单。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function SessionNavigationItem({
+  session,
+  selected,
+  navigationDisabled,
+  actionsDisabled,
+  canArchive,
+  canDelete,
+  onSelect,
+  onArchive,
+  onDelete,
+}: SessionNavigationItemProps) {
+  return (
+    <div
+      className={cn(
+        "group flex h-8 min-w-0 items-center rounded-md pr-1 transition-colors hover:bg-stone-200/80",
+        selected && "bg-[#e7e7e5] text-stone-950",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        disabled={navigationDisabled}
+        className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 disabled:pointer-events-none disabled:opacity-50"
+        aria-label={session.title}
+      >
+        {session.status === "active" ? (
+          <span className="size-1.5 shrink-0 rounded-full bg-sky-500" aria-label="正在进行" />
+        ) : (
+          <Pin className="size-3 shrink-0 text-stone-400" aria-hidden="true" />
+        )}
+        <span className="min-w-0 flex-1 truncate">{session.title}</span>
+        {session.status === "approval" ? (
+          <span className="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">
+            待审批
+          </span>
+        ) : (
+          <span className="shrink-0 text-[9px] text-stone-400 group-hover:hidden">
+            {getSessionAge(session.updatedAt)}
+          </span>
+        )}
+      </button>
+      {canArchive || canDelete ? <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-6 shrink-0 text-stone-400 opacity-100 data-[state=open]:opacity-100 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+            disabled={actionsDisabled}
+            aria-label={`${session.title} 更多操作`}
+          >
+            <Ellipsis className="size-3.5" aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" side="right" className="w-36">
+          {canArchive ? <DropdownMenuItem className="text-[11px]" onSelect={onArchive}>
+            <ArchiveIcon className="size-3.5" aria-hidden="true" />
+            归档
+          </DropdownMenuItem> : null}
+          {canArchive && canDelete ? <DropdownMenuSeparator /> : null}
+          {canDelete ? <DropdownMenuItem className="text-[11px] text-red-600 focus:text-red-600" onSelect={onDelete}>
+            <Trash2 className="size-3.5" aria-hidden="true" />
+            删除
+          </DropdownMenuItem> : null}
+        </DropdownMenuContent>
+      </DropdownMenu> : null}
+    </div>
+  );
+}
+
+/**
+ * 展示项目导航、真实一级页面入口与可管理的最近 Session 列表。
  *
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
@@ -38,10 +159,16 @@ interface WorkspaceSidebarProps {
 export function WorkspaceSidebar({
   onRequestClose,
   onCreateSession,
-  onOpenAgents,
+  onOpenView,
   onSelectSession,
+  onArchiveSession,
+  onDeleteSession,
   navigationDisabled = false,
+  canArchiveSessions,
+  canDeleteSessions,
+  busySessionIds,
   sessions,
+  workspaceName,
 }: WorkspaceSidebarProps) {
   const activeSessionId = useWorkspaceUiStore((state) => state.activeSessionId);
   const activeView = useWorkspaceUiStore((state) => state.activeView);
@@ -87,7 +214,7 @@ export function WorkspaceSidebar({
             "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75",
             activeView === "agents" && "bg-[#e7e7e5] text-stone-950",
           )}
-          onClick={onOpenAgents}
+          onClick={() => onOpenView("agents")}
         >
           <Bot className="size-4 text-stone-500" aria-hidden="true" />
           智能体
@@ -95,18 +222,26 @@ export function WorkspaceSidebar({
         <Button
           type="button"
           variant="ghost"
-          className="h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75"
+          className={cn(
+            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75",
+            activeView === "plugins" && "bg-[#e7e7e5] text-stone-950",
+          )}
+          onClick={() => onOpenView("plugins")}
         >
-          <Clock3 className="size-4 text-stone-500" aria-hidden="true" />
-          自动任务
+          <Puzzle className="size-4 text-stone-500" aria-hidden="true" />
+          插件
         </Button>
         <Button
           type="button"
           variant="ghost"
-          className="h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75"
+          className={cn(
+            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75",
+            activeView === "archive" && "bg-[#e7e7e5] text-stone-950",
+          )}
+          onClick={() => onOpenView("archive")}
         >
-          <Sparkles className="size-4 text-stone-500" aria-hidden="true" />
-          技能
+          <Archive className="size-4 text-stone-500" aria-hidden="true" />
+          已归档
         </Button>
       </div>
 
@@ -118,83 +253,29 @@ export function WorkspaceSidebar({
             最近任务
           </div>
           <div className="space-y-0.5">
-            {sessions.slice(0, 3).map((session) => (
-              <button
-                key={session.id}
-                type="button"
-                onClick={() => onSelectSession(session.id)}
-                disabled={navigationDisabled}
-                className={cn(
-                  "group flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[12px] transition-colors hover:bg-stone-200/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 disabled:pointer-events-none disabled:opacity-50",
-                  activeView === "conversation" &&
-                    activeSessionId === session.id &&
-                    "bg-[#e7e7e5] text-stone-950",
-                )}
-              >
-                {session.status === "active" ? (
-                  <span className="size-1.5 shrink-0 rounded-full bg-sky-500" aria-label="正在进行" />
-                ) : (
-                  <Pin className="size-3 shrink-0 text-stone-400" aria-hidden="true" />
-                )}
-                <span className="min-w-0 flex-1 truncate">{session.title}</span>
-                {session.status === "approval" ? (
-                  <span className="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">
-                    待审批
-                  </span>
-                ) : (
-                  <span className="shrink-0 text-[10px] text-stone-400 group-hover:text-stone-500">
-                    {session.age}
-                  </span>
-                )}
-              </button>
+            {sessions.map((session) => (
+              <SessionNavigationItem
+                key={session.sessionId}
+                session={session}
+                selected={activeView === "conversation" && activeSessionId === session.sessionId}
+                navigationDisabled={navigationDisabled}
+                actionsDisabled={navigationDisabled || busySessionIds.has(session.sessionId)}
+                canArchive={canArchiveSessions}
+                canDelete={canDeleteSessions}
+                onSelect={() => onSelectSession(session.sessionId)}
+                onArchive={() => onArchiveSession(session)}
+                onDelete={() => onDeleteSession(session)}
+              />
             ))}
           </div>
 
-          <div className="mb-1 mt-4 flex h-7 items-center justify-between px-2 text-[11px] font-medium text-stone-500">
-            <span>工作区</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-6 text-stone-400 hover:text-stone-700"
-                  aria-label="添加工作区"
-                >
-                  <FolderPlus className="size-3.5" aria-hidden="true" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">添加工作区</TooltipContent>
-            </Tooltip>
+          <div className="mb-1 mt-4 flex h-7 items-center px-2 text-[11px] font-medium text-stone-500">
+            工作区
           </div>
 
-          <button
-            type="button"
-            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-stone-700 hover:bg-stone-200/80"
-          >
+          <div className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-stone-700">
             <Folder className="size-3.5 text-stone-500" aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate">AI-Code</span>
-            <ChevronDown className="size-3 text-stone-400" aria-hidden="true" />
-          </button>
-
-          <div className="ml-3 mt-0.5 space-y-0.5 border-l border-stone-200 pl-2">
-            {sessions.slice(0, 4).map((session) => (
-              <button
-                key={`workspace-${session.id}`}
-                type="button"
-                onClick={() => onSelectSession(session.id)}
-                disabled={navigationDisabled}
-                className={cn(
-                  "flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[12px] hover:bg-stone-200/80 disabled:pointer-events-none disabled:opacity-50",
-                  activeView === "conversation" &&
-                    activeSessionId === session.id &&
-                    "bg-[#e7e7e5] text-stone-950",
-                )}
-              >
-                <Bot className="size-3.5 shrink-0 text-stone-400" aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate">{session.title}</span>
-              </button>
-            ))}
+            <span className="min-w-0 flex-1 truncate">{workspaceName}</span>
           </div>
         </div>
       </ScrollArea>
@@ -203,7 +284,11 @@ export function WorkspaceSidebar({
         <Button
           type="button"
           variant="ghost"
-          className="h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75"
+          className={cn(
+            "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-stone-700 hover:bg-stone-200/75",
+            activeView === "settings" && "bg-[#e7e7e5] text-stone-950",
+          )}
+          onClick={() => onOpenView("settings")}
         >
           <Settings className="size-4 text-stone-500" aria-hidden="true" />
           设置

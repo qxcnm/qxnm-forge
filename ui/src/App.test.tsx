@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import App from "@/App";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { resetMockApplicationServiceState } from "@/lib/mock-application-service";
 import { useWorkspaceUiStore } from "@/store/workspace-ui-store";
 
 /**
@@ -31,6 +32,8 @@ function renderApp() {
 
 describe("QXNM Forge workspace", () => {
   beforeEach(() => {
+    window.localStorage.clear();
+    resetMockApplicationServiceState();
     useWorkspaceUiStore.setState({
       backend: "rust",
       activeSessionId: "desktop-shell",
@@ -38,6 +41,9 @@ describe("QXNM Forge workspace", () => {
       activeAgentProfileId: null,
       mobileSidebarOpen: false,
       reviewOpen: false,
+      composerSubmitMode: "enter",
+      sidebarWidth: "standard",
+      reduceMotion: false,
     });
   });
 
@@ -79,7 +85,7 @@ describe("QXNM Forge workspace", () => {
   });
 
   /**
-   * 验证变更审阅抽屉可打开并返回主会话。
+   * 验证浏览器预览变更抽屉可打开并返回主会话。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
@@ -87,11 +93,11 @@ describe("QXNM Forge workspace", () => {
   it("opens and closes the review sheet", async () => {
     renderApp();
 
-    fireEvent.click(screen.getByLabelText("打开变更审阅"));
-    expect(await screen.findByRole("heading", { name: "变更审阅" })).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("打开预览变更"));
+    expect(await screen.findByRole("heading", { name: "预览变更" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "返回会话" }));
-    expect(screen.queryByRole("heading", { name: "变更审阅" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "预览变更" })).not.toBeInTheDocument();
   });
 
   /**
@@ -160,6 +166,10 @@ describe("QXNM Forge workspace", () => {
     fireEvent.click(screen.getByLabelText("发送任务"));
     act(() => useWorkspaceUiStore.getState().setBackend("dotnet"));
 
+    expect(
+      screen.queryByText(/运行已由 Rust capability 画像接受/),
+    ).not.toBeInTheDocument();
+    act(() => useWorkspaceUiStore.getState().setBackend("rust"));
     expect(
       await screen.findByText(/运行已由 Rust capability 画像接受.*当前选择“编码助手”内存预览/),
     ).toBeInTheDocument();
@@ -317,9 +327,195 @@ describe("QXNM Forge workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
     const secondPreviewSessionId = useWorkspaceUiStore.getState().activeSessionId;
 
-    expect(firstPreviewSessionId).toMatch(/^preview-/);
+    expect(firstPreviewSessionId).toMatch(/^ui-preview:/);
     expect(firstPreviewSessionId).not.toBe(originalSessionId);
-    expect(secondPreviewSessionId).toMatch(/^preview-/);
+    expect(secondPreviewSessionId).toMatch(/^ui-preview:/);
     expect(secondPreviewSessionId).not.toBe(firstPreviewSessionId);
+  });
+
+  /**
+   * 验证插件、设置与 New API 导入均使用真实控件，Computer 缺少能力时保持不可用。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("navigates to plugin and provider settings workspaces", async () => {
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "插件" }));
+    expect(await screen.findByRole("heading", { name: "插件" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "启用 Computer 插件" })).not.toBeInTheDocument();
+    expect(await screen.findByText("后端未安装")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "配置工具" }));
+    expect(await screen.findByText("工具请求子集")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    expect(await screen.findByRole("heading", { name: "设置" })).toBeInTheDocument();
+    const providersTab = screen.getByRole("tab", { name: "提供商" });
+    fireEvent.mouseDown(providersTab, { button: 0, ctrlKey: false });
+    fireEvent.click(providersTab);
+    expect(
+      await screen.findByRole("heading", { name: "新建提供商" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Base URL")).toHaveValue("");
+
+    fireEvent.change(screen.getByLabelText("导入 New API 连接 JSON"), {
+      target: {
+        value:
+          '{"_type":"newapi_channel_conn","key":"test-only-key","url":"https://api.example"}',
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    expect(screen.getByLabelText("名称")).toHaveValue("星思研 New API");
+    expect(screen.getByLabelText("Provider ID")).toHaveValue("newapi-gzxsy");
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://api.example/v1");
+    expect(screen.getByLabelText("Logo 资源 ID")).toHaveValue("newapi-gzxsy");
+    expect(screen.getByAltText("提供商 Logo 预览")).toHaveAttribute(
+      "src",
+      "/providers/newapi-gzxsy.jpg",
+    );
+    expect(screen.getByLabelText("API Key")).toHaveValue("test-only-key");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("已保存，预览已更新")).toBeInTheDocument();
+    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(
+      screen.getByRole("button", { name: "编辑提供商 星思研 New API" }),
+    ).toBeInTheDocument();
+    expect(JSON.stringify(window.localStorage)).not.toContain("test-only-key");
+  });
+
+  /**
+   * 验证非敏感界面设置会即时影响输入器、桌面侧栏与动态效果。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("applies and stores functional interface preferences", async () => {
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    await screen.findByRole("heading", { name: "设置" });
+    fireEvent.click(screen.getByText("Ctrl / ⌘ Enter"));
+    expect(useWorkspaceUiStore.getState().composerSubmitMode).toBe("mod-enter");
+
+    const appearanceTab = screen.getByRole("tab", { name: "外观" });
+    fireEvent.mouseDown(appearanceTab, { button: 0, ctrlKey: false });
+    fireEvent.click(appearanceTab);
+    fireEvent.click(screen.getByText("紧凑"));
+    fireEvent.click(screen.getByRole("switch", { name: "减少动态效果" }));
+
+    expect(useWorkspaceUiStore.getState().sidebarWidth).toBe("compact");
+    expect(useWorkspaceUiStore.getState().reduceMotion).toBe(true);
+    expect(document.querySelector("[data-reduce-motion='true']")).toBeInTheDocument();
+    expect(document.querySelector("aside.md\\:block")).toHaveClass("w-[260px]");
+    expect(window.localStorage.getItem("agent-client.ui-preferences.v1")).toContain(
+      '"composerSubmitMode":"mod-enter"',
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
+    const composer = await screen.findByLabelText("任务消息");
+    await waitFor(() => expect(screen.getByLabelText("选择模型")).toBeEnabled());
+    fireEvent.change(composer, { target: { value: "组合键发送测试" } });
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
+    expect(composer).toHaveValue("组合键发送测试");
+    fireEvent.keyDown(composer, { key: "Enter", code: "Enter", ctrlKey: true });
+    expect(composer).toHaveValue("");
+    expect(await screen.findByText("组合键发送测试")).toBeInTheDocument();
+  });
+
+  /**
+   * 验证 Agent 工具请求子集可以选择并保存服务真实广告的工具。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("selects and saves an advertised agent tool subset", async () => {
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "智能体" }));
+    await screen.findByLabelText("名称");
+    const toolsTab = screen.getByRole("tab", { name: "工具" });
+    fireEvent.mouseDown(toolsTab, { button: 0, ctrlKey: false });
+    fireEvent.click(toolsTab);
+    await screen.findByText("工具请求子集");
+    const fileReadCheckbox = screen.getByRole("checkbox", { name: /读取文件/ });
+    await waitFor(() => expect(fileReadCheckbox).toBeEnabled());
+    fireEvent.click(fileReadCheckbox);
+    expect(fileReadCheckbox).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("已保存到本次预览")).toBeInTheDocument();
+    expect(fileReadCheckbox).toBeChecked();
+  });
+
+  /**
+   * 验证 Session 可从侧栏归档、恢复并在确认后永久删除。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("archives restores and permanently deletes a session", async () => {
+    renderApp();
+    const sessionTitle = "统一后端能力协议";
+
+    fireEvent.keyDown(
+      await screen.findByRole("button", { name: `${sessionTitle} 更多操作` }),
+      { key: "Enter", code: "Enter" },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "归档" }));
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: `${sessionTitle} 更多操作` }),
+      ).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "已归档" }));
+    expect(await screen.findByText(sessionTitle)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "恢复" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "恢复" })).not.toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(
+      await screen.findByRole("button", { name: `${sessionTitle} 更多操作` }),
+      { key: "Enter", code: "Enter" },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "归档" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: `永久删除 ${sessionTitle}` }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: `永久删除“${sessionTitle}”？` }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(sessionTitle)).not.toBeInTheDocument();
+    });
+  });
+
+  /**
+   * 验证旧后端归档响应不会在切换后改写新后端的活动 Session。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("isolates late session lifecycle responses by backend", async () => {
+    renderApp();
+    const activeTitle = "实现跨平台桌面端";
+
+    fireEvent.keyDown(
+      await screen.findByRole("button", { name: `${activeTitle} 更多操作` }),
+      { key: "Enter", code: "Enter" },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "归档" }));
+    act(() => useWorkspaceUiStore.getState().setBackend("dotnet"));
+    expect(await screen.findByText("qxnm-forge-dotnet")).toBeInTheDocument();
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+    expect(useWorkspaceUiStore.getState().activeSessionId).toBe("desktop-shell");
   });
 });

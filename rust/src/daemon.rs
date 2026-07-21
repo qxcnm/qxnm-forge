@@ -21,8 +21,16 @@ use crate::protocol::{
     SessionGetParams, is_valid_request_id, parse_strict_request,
 };
 use crate::provider::{FauxProvider, FauxScenario};
-use crate::provider_identity::{ProviderIdentityAdvertisement, default_models, is_provider_id};
+use crate::provider_connection::{
+    CustomProviderConnectionRuntime, ProviderConnectionsCreateParams,
+    ProviderConnectionsDeleteParams, ProviderConnectionsListParams,
+    ProviderConnectionsUpdateParams, ProviderCredentialsRemoveParams, ProviderCredentialsSetParams,
+};
+use crate::provider_identity::{
+    AdvertisedModel, ProviderIdentityAdvertisement, default_models, is_provider_id, model_key,
+};
 use crate::provider_route::ProviderRouteSnapshot;
+use crate::session_lifecycle::{SessionLifecycleService, lifecycle_busy, parse_session_cursor};
 use crate::terminal::{TerminalAfterResponse, TerminalManager, TerminalNotification};
 
 const MAX_FRAME_BYTES: usize = 1_048_576;
@@ -64,6 +72,29 @@ struct ModelsListParams {
     provider_id: Option<Value>,
 }
 
+/// `session/list` 的严格可选 cursor 与 page limit 参数。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SessionListParams {
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// `session/archive|restore|delete` 的严格唯一 Session 引用参数。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SessionLifecycleMutationParams {
+    session_id: String,
+}
+
 /// qxnm-forge Rust 的 UTF-8 NDJSON JSON-RPC daemon。
 pub struct Daemon {
     agent: Arc<Agent>,
@@ -75,6 +106,8 @@ pub struct Daemon {
     conformance_mode: bool,
     provider_identity: Option<ProviderIdentityAdvertisement>,
     provider_route: Option<ProviderRouteSnapshot>,
+    provider_connections: CustomProviderConnectionRuntime,
+    session_lifecycle: SessionLifecycleService,
     terminal: TerminalManager,
     event_sender: mpsc::Sender<crate::domain::EventEnvelope>,
     event_receiver: Option<mpsc::Receiver<crate::domain::EventEnvelope>>,
@@ -84,9 +117,10 @@ pub struct Daemon {
 impl Daemon {
     /// 功能：创建 stdio daemon，并建立 Agent/terminal 两条有界事件通道。
     ///
-    /// 输入：完整 Agent、faux provider、互斥的可选 identity/route 快照和 CLI 选定 workspace。
+    /// 输入：完整 Agent、faux provider、Profile/Provider connection services、互斥 identity/route、
+    /// 自定义 Provider 启动快照和 CLI 选定 workspace。
     /// 输出：初始化前的连接状态；terminal 只有 conformance + fixture-only 双门控时可用。
-    /// 不变量：identity 广告不注册 adapter；route 广告与 Agent adapter 来自同一启动快照；构造不启动 Provider、工具或 PTY；
+    /// 不变量：identity 广告不注册 adapter；canonical/custom 广告与 Agent adapter 来自同一启动快照；构造不启动 Provider、工具或 PTY；
     /// `QXNM_FORGE_CONFORMANCE=1` 单独不授权 terminal。
     /// 失败：terminal workspace 无法 canonicalize 时返回结构化参数错误。
     /// 作者：高宏顺
@@ -97,12 +131,14 @@ impl Daemon {
         agent_profiles: AgentProfileService,
         provider_identity: Option<ProviderIdentityAdvertisement>,
         provider_route: Option<ProviderRouteSnapshot>,
+        provider_connections: CustomProviderConnectionRuntime,
         workspace: impl AsRef<std::path::Path>,
     ) -> Result<Self, AgentError> {
         let conformance_mode = std::env::var("QXNM_FORGE_CONFORMANCE").as_deref() == Ok("1");
         let (event_sender, event_receiver) = mpsc::channel(256);
         let (terminal, terminal_event_receiver) =
             TerminalManager::new(workspace, conformance_mode)?;
+        let session_lifecycle = SessionLifecycleService::new(agent.session_store())?;
         Ok(Self {
             agent,
             faux,
@@ -113,6 +149,8 @@ impl Daemon {
             conformance_mode,
             provider_identity,
             provider_route,
+            provider_connections,
+            session_lifecycle,
             terminal,
             event_sender,
             event_receiver: Some(event_receiver),
@@ -400,6 +438,72 @@ impl Daemon {
                     .await?;
                 Ok((json!({"deleted":true}), None))
             }
+            "providerConnections/list" => {
+                let _: ProviderConnectionsListParams = parse_params(request.params)?;
+                Ok((
+                    json!({"connections":self.provider_connections.service().list()?}),
+                    None,
+                ))
+            }
+            "providerConnections/create" => {
+                let params: ProviderConnectionsCreateParams = parse_params(request.params)?;
+                let connection = self
+                    .provider_connections
+                    .service()
+                    .create(params.connection)?;
+                Ok((
+                    json!({"connection":connection,"restartRequired":true}),
+                    None,
+                ))
+            }
+            "providerConnections/update" => {
+                let params: ProviderConnectionsUpdateParams = parse_params(request.params)?;
+                let connection = self.provider_connections.service().update(
+                    &params.connection_id,
+                    params.expected_revision,
+                    params.connection,
+                )?;
+                Ok((
+                    json!({"connection":connection,"restartRequired":true}),
+                    None,
+                ))
+            }
+            "providerConnections/delete" => {
+                let params: ProviderConnectionsDeleteParams = parse_params(request.params)?;
+                let _ = self
+                    .provider_connections
+                    .service()
+                    .delete(&params.connection_id, params.expected_revision)?;
+                Ok((json!({"deleted":true,"restartRequired":true}), None))
+            }
+            "providerCredentials/set" => {
+                let params: ProviderCredentialsSetParams = parse_params(request.params)?;
+                self.provider_connections
+                    .service()
+                    .set_credential(&params.provider_id, &params.credential)?;
+                Ok((
+                    json!({
+                        "providerId":params.provider_id,
+                        "credentialConfigured":true,
+                        "restartRequired":true
+                    }),
+                    None,
+                ))
+            }
+            "providerCredentials/remove" => {
+                let params: ProviderCredentialsRemoveParams = parse_params(request.params)?;
+                self.provider_connections
+                    .service()
+                    .remove_credential(&params.provider_id)?;
+                Ok((
+                    json!({
+                        "providerId":params.provider_id,
+                        "credentialConfigured":false,
+                        "restartRequired":true
+                    }),
+                    None,
+                ))
+            }
             "models/list" => {
                 let params: ModelsListParams = parse_params(request.params)?;
                 let provider_id = match params.provider_id {
@@ -414,13 +518,7 @@ impl Daemon {
                         ));
                     }
                 };
-                let models = if let Some(advertisement) = &self.provider_identity {
-                    advertisement.models(provider_id.as_deref())
-                } else if let Some(snapshot) = &self.provider_route {
-                    snapshot.models(provider_id.as_deref())
-                } else {
-                    default_models(provider_id.as_deref())
-                };
+                let models = self.advertised_models(provider_id.as_deref());
                 Ok((json!({"models":models}), None))
             }
             "run/start" => {
@@ -504,7 +602,18 @@ impl Daemon {
                         Err(error) => return Err(error),
                     }
                 }
+                if let Some(family) = self.provider_connections.snapshot().resolve(
+                    &params.provider.id,
+                    &params.provider.model_id,
+                    params.provider.api_family.as_deref(),
+                ) {
+                    params.provider.api_family = Some(family);
+                }
                 if params.provider.id != "faux"
+                    && !self
+                        .provider_connections
+                        .snapshot()
+                        .contains_provider(&params.provider.id)
                     && !matches!(
                         params.provider.id.as_str(),
                         "openai-compatible"
@@ -610,6 +719,44 @@ impl Daemon {
                 })?;
                 Ok((value, None))
             }
+            "session/list" => {
+                let params: SessionListParams = parse_params(request.params)?;
+                let offset = parse_session_cursor(params.cursor.as_deref())?;
+                let limit = params
+                    .limit
+                    .unwrap_or_else(SessionLifecycleService::default_page_limit);
+                let summaries = self.session_lifecycle.list().await?;
+                let page =
+                    SessionLifecycleService::create_page(&summaries, offset, limit, &request.id)?;
+                let value = serde_json::to_value(page).map_err(|_| {
+                    AgentError::new(
+                        ErrorCode::InternalError,
+                        "session list response serialization failed",
+                    )
+                })?;
+                Ok((value, None))
+            }
+            "session/archive" => {
+                let params: SessionLifecycleMutationParams = parse_params(request.params)?;
+                self.ensure_session_lifecycle_idle(&params.session_id)
+                    .await?;
+                let session = self.session_lifecycle.archive(&params.session_id).await?;
+                Ok((json!({"session":session}), None))
+            }
+            "session/restore" => {
+                let params: SessionLifecycleMutationParams = parse_params(request.params)?;
+                self.ensure_session_lifecycle_idle(&params.session_id)
+                    .await?;
+                let session = self.session_lifecycle.restore(&params.session_id).await?;
+                Ok((json!({"session":session}), None))
+            }
+            "session/delete" => {
+                let params: SessionLifecycleMutationParams = parse_params(request.params)?;
+                self.ensure_session_lifecycle_idle(&params.session_id)
+                    .await?;
+                self.session_lifecycle.delete(&params.session_id).await?;
+                Ok((json!({"deleted":true}), None))
+            }
             "session/branch/select" => {
                 let params: SessionBranchSelectParams = parse_params(request.params)?;
                 let result = self.agent.select_session_branch(params).await?;
@@ -658,6 +805,25 @@ impl Daemon {
                 format!("unknown RPC method: {}", request.method),
             )),
         }
+    }
+
+    /// 功能：在 archive、restore 或 delete 前拒绝本进程 active run 与 pending faux 配置。
+    ///
+    /// 输入：严格 DTO 解码后的 Session ID。
+    /// 输出：Agent RunControl 和未绑定 faux 队列均不存在时成功。
+    /// 不变量：daemon 串行 dispatch 保证检查到文件 mutation 返回间不会接受新的 run/configure 请求；外部 writer 由文件锁复核。
+    /// 失败：任一内存工作仍存在时返回可重试 `session_busy`，且不读取或修改 journal。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    async fn ensure_session_lifecycle_idle(&self, session_id: &str) -> Result<(), AgentError> {
+        self.agent
+            .ensure_session_mutation_quiescent(session_id)
+            .await
+            .map_err(|_| lifecycle_busy(session_id))?;
+        if self.faux.has_pending_configuration(session_id).await {
+            return Err(lifecycle_busy(session_id));
+        }
+        Ok(())
     }
 
     /// 功能：在分派 terminal RPC 前验证客户端事件协商与宿主 PTY 策略能力。
@@ -717,6 +883,10 @@ impl Daemon {
         } else {
             self.agent.provider_capabilities()
         };
+        let providers = self
+            .provider_connections
+            .snapshot()
+            .merged_provider_capabilities(providers);
         let tools = self.agent.tool_capabilities();
         let mut methods = vec!["initialize"];
         if self.conformance_mode {
@@ -727,6 +897,12 @@ impl Daemon {
             "agentProfiles/create",
             "agentProfiles/update",
             "agentProfiles/delete",
+            "providerConnections/list",
+            "providerConnections/create",
+            "providerConnections/update",
+            "providerConnections/delete",
+            "providerCredentials/set",
+            "providerCredentials/remove",
             "models/list",
             "run/start",
             "run/cancel",
@@ -734,6 +910,10 @@ impl Daemon {
             "run/followUp",
             "approval/respond",
             "session/get",
+            "session/list",
+            "session/archive",
+            "session/restore",
+            "session/delete",
             "session/branch/select",
             "session/compact",
         ]);
@@ -802,13 +982,7 @@ impl Daemon {
         &self,
         profile: &AgentProfileInput,
     ) -> Result<(), AgentError> {
-        let models = if let Some(advertisement) = &self.provider_identity {
-            advertisement.models(None)
-        } else if let Some(snapshot) = &self.provider_route {
-            snapshot.models(None)
-        } else {
-            default_models(None)
-        };
+        let models = self.advertised_models(None);
         let model_matches = serde_json::to_value(models)
             .ok()
             .and_then(|value| value.as_array().cloned())
@@ -833,6 +1007,27 @@ impl Daemon {
             return Err(agent_profile_invalid());
         }
         Ok(())
+    }
+
+    /// 功能：从 canonical 路由与自定义启动快照生成同源模型列表。
+    ///
+    /// 输入：可选 Provider ID 精确过滤。
+    /// 输出：按 `(providerId, modelId, apiFamily)` 排序且与已注册 adapter 一致的 descriptor。
+    /// 不变量：identity-only 分支的自定义快照为空；CRUD 后不会在本进程动态扩大能力。
+    /// 失败：本方法不执行 I/O 且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn advertised_models(&self, provider_id: Option<&str>) -> Vec<AdvertisedModel> {
+        let mut models = if let Some(advertisement) = &self.provider_identity {
+            advertisement.models(provider_id)
+        } else if let Some(snapshot) = &self.provider_route {
+            snapshot.models(provider_id)
+        } else {
+            default_models(provider_id)
+        };
+        models.extend(self.provider_connections.snapshot().models(provider_id));
+        models.sort_by_key(model_key);
+        models
     }
 }
 

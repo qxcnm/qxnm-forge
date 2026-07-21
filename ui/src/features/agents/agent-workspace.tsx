@@ -49,6 +49,7 @@ import type {
   AgentProfile,
   AgentProfileInput,
   AgentProfileService,
+  AgentToolPresentation,
   DangerousActionMode,
   ResponseStyle,
 } from "@/types/agent-profile";
@@ -60,6 +61,10 @@ interface AgentWorkspaceProps {
   readonly profileQueryKey: QueryKey;
   readonly models: readonly ModelDescriptor[];
   readonly supportedToolIds: readonly string[];
+  readonly canCreate: boolean;
+  readonly canUpdate: boolean;
+  readonly canDelete: boolean;
+  readonly initialEditorTab?: "profile" | "tools";
   readonly onOpenMobileSidebar: () => void;
   readonly onNavigationStateChange: (state: AgentWorkspaceNavigationState) => void;
 }
@@ -88,6 +93,9 @@ const PERMISSION_LABELS = {
   workspace_write: "写入",
   process: "进程",
   shell: "Shell",
+  computer_observe: "屏幕只读",
+  computer_interact: "电脑控制",
+  extension: "扩展",
 } as const;
 
 /**
@@ -165,6 +173,10 @@ export function AgentWorkspace({
   profileQueryKey,
   models,
   supportedToolIds,
+  canCreate,
+  canUpdate,
+  canDelete,
+  initialEditorTab = "profile",
   onOpenMobileSidebar,
   onNavigationStateChange,
 }: AgentWorkspaceProps) {
@@ -186,9 +198,28 @@ export function AgentWorkspace({
     () => new Set(supportedToolIds),
     [supportedToolIds],
   );
+  const toolPresentations = useMemo(() => {
+    const knownToolIds = new Set(AGENT_TOOL_PRESENTATIONS.map((tool) => tool.toolId));
+    const dynamicToolIds = new Set([
+      ...supportedToolIds,
+      ...(draft?.requestedToolIds ?? []),
+    ]);
+    const dynamicTools: AgentToolPresentation[] = [...dynamicToolIds]
+      .filter((toolId) => !knownToolIds.has(toolId))
+      .sort()
+      .map((toolId) => ({
+        toolId,
+        displayName: toolId,
+        description: "application service 广告的扩展工具",
+        permissionClass: "extension",
+        dangerous: true,
+      }));
+    return [...AGENT_TOOL_PRESENTATIONS, ...dynamicTools];
+  }, [draft?.requestedToolIds, supportedToolIds]);
   const selectedProfile = profiles.find((profile) => profile.profileId === selectedProfileId);
   const currentInput = selectedProfile ? profileToInput(selectedProfile) : null;
   const isNewProfile = draft !== null && selectedProfileId === null;
+  const editorReadOnly = isNewProfile ? !canCreate : !canUpdate;
   const isDirty =
     draft !== null &&
     (isNewProfile || JSON.stringify(draft) !== JSON.stringify(currentInput));
@@ -316,6 +347,9 @@ export function AgentWorkspace({
    * 邮箱：18272669457@163.com
    */
   const beginCreate = () => {
+    if (!canCreate) {
+      return;
+    }
     const emptyProfile = createEmptyProfile(models);
     if (!emptyProfile) {
       setErrorMessage("当前服务没有可用于智能体的模型");
@@ -428,7 +462,7 @@ export function AgentWorkspace({
    */
   const handleSave = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!draft || navigationLocked) {
+    if (!draft || navigationLocked || editorReadOnly) {
       return;
     }
     if (selectedProfileId && editingRevision !== null) {
@@ -450,7 +484,7 @@ export function AgentWorkspace({
    * 邮箱：18272669457@163.com
    */
   const handleDuplicate = () => {
-    if (!draft || navigationLocked) {
+    if (!draft || navigationLocked || !canCreate) {
       return;
     }
     saveMutation.mutate({
@@ -505,7 +539,7 @@ export function AgentWorkspace({
    * 邮箱：18272669457@163.com
    */
   const handleToolChange = (toolId: string, checked: boolean) => {
-    if (!draft || !supportedToolIdSet.has(toolId)) {
+    if (!draft || (checked && !supportedToolIdSet.has(toolId))) {
       return;
     }
     updateDraft({
@@ -527,7 +561,7 @@ export function AgentWorkspace({
       return;
     }
     const dangerousToolIds = new Set(
-      AGENT_TOOL_PRESENTATIONS.filter((tool) => tool.dangerous).map((tool) => tool.toolId),
+      toolPresentations.filter((tool) => tool.dangerous).map((tool) => tool.toolId),
     );
     updateDraft({
       ...draft,
@@ -556,7 +590,7 @@ export function AgentWorkspace({
           <Bot className="size-4 shrink-0 text-stone-500" aria-hidden="true" />
           <h1 className="truncate text-[13px] font-semibold text-stone-900">智能体</h1>
           <Badge variant="secondary" className="h-5 rounded px-1.5 text-[9px] font-medium">
-            内存预览
+            {service.mode === "application-service" ? "已持久化" : "内存预览"}
           </Badge>
         </div>
         <Button
@@ -565,7 +599,7 @@ export function AgentWorkspace({
           size="sm"
           className="h-8 gap-1.5 rounded-md px-2.5 text-[11px] shadow-none"
           onClick={handleCreate}
-          disabled={models.length === 0 || navigationLocked}
+          disabled={models.length === 0 || navigationLocked || !canCreate}
         >
           <Plus className="size-3.5" aria-hidden="true" />
           新建
@@ -688,7 +722,7 @@ export function AgentWorkspace({
                     {isNewProfile ? "尚未保存" : `revision ${editingRevision ?? 1}`}
                   </p>
                 </div>
-                {selectedProfile ? (
+                {selectedProfile && canCreate ? (
                   <Button
                     type="button"
                     variant="ghost"
@@ -701,7 +735,7 @@ export function AgentWorkspace({
                     <Copy className="size-3.5" aria-hidden="true" />
                   </Button>
                 ) : null}
-                {selectedProfile ? (
+                {selectedProfile && canDelete ? (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <Button
@@ -719,7 +753,9 @@ export function AgentWorkspace({
                       <AlertDialogHeader>
                         <AlertDialogTitle>删除“{selectedProfile.displayName}”？</AlertDialogTitle>
                         <AlertDialogDescription>
-                          仅删除本次内存预览中的投影，刷新页面后默认数据会重新出现。
+                          {service.mode === "application-service"
+                            ? "该配置会从 application service 永久删除，此操作无法撤销。"
+                            : "仅删除本次内存预览中的投影，刷新页面后默认数据会重新出现。"}
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
@@ -738,7 +774,7 @@ export function AgentWorkspace({
                   type="submit"
                   size="sm"
                   className="h-8 gap-1.5 rounded-md px-2.5 text-[11px] shadow-none"
-                  disabled={!isDirty || navigationLocked}
+                  disabled={!isDirty || navigationLocked || editorReadOnly}
                 >
                   {saveMutation.isPending ? (
                     <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
@@ -749,9 +785,9 @@ export function AgentWorkspace({
                 </Button>
               </div>
 
-              <fieldset disabled={navigationLocked} className="contents">
+              <fieldset disabled={navigationLocked || editorReadOnly} className="contents">
               <ScrollArea className="min-h-0 flex-1">
-                <Tabs defaultValue="profile" className="mx-auto w-full max-w-[820px] px-4 pb-8 pt-4 sm:px-7 sm:pt-6">
+                <Tabs defaultValue={initialEditorTab} className="mx-auto w-full max-w-[820px] px-4 pb-8 pt-4 sm:px-7 sm:pt-6">
                   <TabsList className="grid h-9 w-full grid-cols-4 rounded-md bg-stone-100 p-1">
                     <TabsTrigger value="profile" className="text-[11px]">配置</TabsTrigger>
                     <TabsTrigger value="instructions" className="text-[11px]">指令</TabsTrigger>
@@ -864,15 +900,17 @@ export function AgentWorkspace({
                       <p className="mt-1 text-[10px] leading-4 text-stone-500">未被当前服务广告的工具不可选择；空集合表示禁用全部工具。</p>
                     </div>
                     <div className="divide-y divide-stone-100 border-y border-stone-100">
-                      {AGENT_TOOL_PRESENTATIONS.map((tool) => {
+                      {toolPresentations.map((tool) => {
                         const advertised = supportedToolIdSet.has(tool.toolId);
                         const deniedByMode = tool.dangerous && draft.dangerousActionMode === "deny";
-                        const disabled = !advertised || deniedByMode;
+                        const selected = draft.requestedToolIds.includes(tool.toolId);
+                        const disabled =
+                          (!advertised && !selected) || (deniedByMode && !selected);
                         return (
                           <div key={tool.toolId} className="flex min-h-16 items-center gap-3 py-2.5">
                             <Checkbox
                               id={`agent-tool-${tool.toolId}`}
-                              checked={draft.requestedToolIds.includes(tool.toolId)}
+                              checked={selected}
                               disabled={disabled}
                               onCheckedChange={(checked) => handleToolChange(tool.toolId, checked === true)}
                             />
@@ -882,7 +920,11 @@ export function AgentWorkspace({
                                 <span className="rounded bg-stone-100 px-1.5 py-0.5 text-[8px] font-normal text-stone-500">{PERMISSION_LABELS[tool.permissionClass]}</span>
                               </span>
                               <span className="mt-0.5 block text-[10px] leading-4 text-stone-500">
-                                {advertised ? tool.description : "当前服务未广告此工具"}
+                                {advertised
+                                  ? tool.description
+                                  : selected
+                                    ? "当前服务未广告；取消选择后保存"
+                                    : "当前服务未广告此工具"}
                               </span>
                             </Label>
                           </div>
