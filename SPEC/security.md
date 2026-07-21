@@ -177,6 +177,10 @@ claimed until a separate platform gate passes.
 daemon，不能接受 argv、state root、workspace、文件路径或方法名。非敏感连接列表只报告
 `credentialConfigured`，不得返回 credential、hash、前后缀或可用于离线验证的摘要。连接
 mutation 后必须重建启动期 Provider/model capability 快照。
+`providerConnections/discoverModels` 只能由用户显式触发，并在 daemon 最终 HTTP 边界读取
+credential。实现必须禁止 redirect，设置 20 秒总时限和 1 MiB 响应上限，拒绝空目录、畸形
+JSON、超过 512 项的模型目录及 CAS 冲突；失败信息不得回显 URL、认证 header、响应正文或
+credential。`models/list` 继续是零网络、零 credential 读取的启动快照查询。
 
 Session 列表、归档和永久删除遵循 ADR 0030。Web UI 只能接收脱敏摘要，不能直接访问
 journal、归档文件、SQLite 或宿主 Session 目录。Session 固定隔离在 `stateRoot/sessions`，

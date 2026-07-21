@@ -238,6 +238,9 @@ public sealed class StdioDaemon
                 case "providerConnections/delete" when providerConnections is not null:
                     await DeleteProviderConnectionAsync(request, writer, cancellationToken).ConfigureAwait(false);
                     break;
+                case "providerConnections/discoverModels" when providerConnections is not null:
+                    await DiscoverProviderModelsAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "providerCredentials/set" when providerConnections is not null:
                     await SetProviderCredentialAsync(request, writer, cancellationToken).ConfigureAwait(false);
                     break;
@@ -791,6 +794,35 @@ public sealed class StdioDaemon
     }
 
     /// <summary>
+    /// 功能：显式发现远端模型，并按请求前 revision CAS 发布新的模型 allowlist。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">providerConnections/discoverModels 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">20 秒总时限之外的 daemon 取消信号。</param>
+    /// <returns>durable 脱敏回执 flush 后的任务。</returns>
+    private async Task DiscoverProviderModelsAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var (connectionId, expectedRevision) =
+            ProtocolCodec.ParseProviderConnectionsDiscoverModels(request.Params);
+        var connection = await providerConnections!.DiscoverModelsAsync(
+            connectionId,
+            expectedRevision,
+            cancellationToken).ConfigureAwait(false);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new ProviderModelDiscoveryResult(
+                connection,
+                connection.ModelIds.Count,
+                RestartRequired: true),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// 功能：把瞬时 credential 写入独立 CredentialStore，并只返回 presence。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -988,6 +1020,7 @@ public sealed class StdioDaemon
                     "providerConnections/create",
                     "providerConnections/update",
                     "providerConnections/delete",
+                    "providerConnections/discoverModels",
                     "providerCredentials/set",
                     "providerCredentials/remove",
                 ]);

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -187,6 +188,260 @@ public sealed class CustomProviderConnectionTests
     }
 
     /// <summary>
+    /// 功能：确认模型目录严格解析后按 ordinal 排序、去重，并允许完整 512 项结果。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    [Fact]
+    public void ModelDiscoveryParserSortsDeduplicatesAndAcceptsMaximumCount()
+    {
+        var sorted = CustomProviderConnectionService.ParseDiscoveredModels(
+            Encoding.UTF8.GetBytes(
+                "{\"object\":\"list\",\"metadata\":{\"nested\":{\"tier\":\"standard\"}},\"data\":[{\"id\":\"z-model\",\"object\":\"model\",\"created\":1,\"owned_by\":\"test\"},{\"id\":\"a-model\"},{\"id\":\"z-model\"}]}"));
+        Assert.Equal(["a-model", "z-model"], sorted);
+
+        var maximum = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            data = Enumerable.Range(0, 512).Select(index => new { id = $"model-{index:D3}" }),
+        });
+        Assert.Equal(512, CustomProviderConnectionService.ParseDiscoveredModels(maximum).Count);
+    }
+
+    /// <summary>
+    /// 功能：确认重复键、缺少关键字段、空目录、控制字符、超长 UTF-8 ID 与 513 个唯一模型均失败关闭。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    [Fact]
+    public void ModelDiscoveryParserRejectsMalformedOrUnboundedDirectories()
+    {
+        var tooMany = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            data = Enumerable.Range(0, 513).Select(index => new { id = $"model-{index:D3}" }),
+        });
+        var invalidPayloads = new List<byte[]>
+        {
+            Encoding.UTF8.GetBytes("{\"data\":[],\"data\":[]}"),
+            Encoding.UTF8.GetBytes("{\"data\":[{\"id\":\"model-a\",\"id\":\"model-b\"}]}"),
+            Encoding.UTF8.GetBytes("{\"metadata\":{\"nested\":{\"tier\":1,\"tier\":2}},\"data\":[{\"id\":\"model-a\"}]}"),
+            Encoding.UTF8.GetBytes("{\"data\":[{\"id\":\"model-a\",\"metadata\":[{\"tier\":1,\"tier\":2}]}]}"),
+            Encoding.UTF8.GetBytes("{\"object\":\"list\"}"),
+            Encoding.UTF8.GetBytes("{\"data\":[{\"object\":\"model\"}]}"),
+            Encoding.UTF8.GetBytes("{\"data\":[]}"),
+            Encoding.UTF8.GetBytes("{\"data\":[{\"id\":\"bad\\u0001model\"}]}"),
+            JsonSerializer.SerializeToUtf8Bytes(new { data = new[] { new { id = new string('界', 86) } } }),
+            tooMany,
+        };
+
+        foreach (var payload in invalidPayloads)
+        {
+            var exception = Assert.Throws<ProviderConnectionException>(() =>
+                CustomProviderConnectionService.ParseDiscoveredModels(payload));
+            Assert.Equal(-32005, exception.Error.Code);
+            Assert.Equal("provider_model_discovery_failed", exception.Error.Details.Kind);
+        }
+    }
+
+    /// <summary>
+    /// 功能：确认发现使用同源 /models Bearer GET，并只替换模型、递增 revision 与保持其他配置。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    [Fact]
+    public async Task ModelDiscoveryUsesBearerGetAndPublishesOnlyModels()
+    {
+        using var temporary = new TemporaryDirectory();
+        var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+        var stateRoot = Path.Combine(temporary.Path, "state");
+        var handler = new DiscoveryResponseHandler(
+            HttpStatusCode.OK,
+            Encoding.UTF8.GetBytes("{\"data\":[{\"id\":\"model-z\"},{\"id\":\"model-a\"},{\"id\":\"model-z\"}]}"));
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var service = new CustomProviderConnectionService(
+            stateRoot,
+            workspace,
+            allowLoopbackHttp: false,
+            client);
+        var created = service.Create(CreateInput("discovery", "Discovery") with
+        {
+            ModelIds = [],
+            LogoAssetId = "discovery-logo",
+        });
+        service.SetCredential("discovery", Credential);
+
+        FileStream? credentialLock = null;
+        handler.BeforeResponse = () => credentialLock = new FileStream(
+            Path.Combine(stateRoot, "credentials", "provider-credentials.lock"),
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None);
+        ProviderConnection discovered;
+        try
+        {
+            discovered = await service.DiscoverModelsAsync(
+                created.ConnectionId,
+                created.Revision,
+                CancellationToken.None);
+        }
+        finally
+        {
+            credentialLock?.Dispose();
+        }
+
+        Assert.Equal(HttpMethod.Get, handler.Method);
+        Assert.Equal("https://example.invalid/v1/models", handler.RequestUri?.AbsoluteUri);
+        Assert.True(handler.SawExpectedBearer);
+        Assert.Equal(2, discovered.Revision);
+        Assert.Equal(["model-a", "model-z"], discovered.ModelIds);
+        Assert.Equal(created.DisplayName, discovered.DisplayName);
+        Assert.Equal(created.ProviderId, discovered.ProviderId);
+        Assert.Equal(created.BaseUrl, discovered.BaseUrl);
+        Assert.Equal(created.LogoAssetId, discovered.LogoAssetId);
+        Assert.Equal(created.Enabled, discovered.Enabled);
+        Assert.Equal(created.CreatedAt, discovered.CreatedAt);
+        Assert.True(discovered.CredentialConfigured);
+    }
+
+    /// <summary>
+    /// 功能：确认畸形、超限与非成功远端响应不修改连接，且错误不泄漏正文、URL 或 credential。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    [Fact]
+    public async Task ModelDiscoveryRemoteFailuresAreRedactedAndNonMutating()
+    {
+        var cases = new (HttpStatusCode Status, byte[] Body)[]
+        {
+            (HttpStatusCode.OK, Encoding.UTF8.GetBytes("private-remote-body-" + Credential)),
+            (HttpStatusCode.OK, new byte[(1024 * 1024) + 1]),
+            (HttpStatusCode.Created, Encoding.UTF8.GetBytes("{\"data\":[{\"id\":\"must-not-persist\"}]}")),
+            (HttpStatusCode.BadGateway, Encoding.UTF8.GetBytes("gateway-private-body")),
+        };
+
+        foreach (var item in cases)
+        {
+            using var temporary = new TemporaryDirectory();
+            var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+            var stateRoot = Path.Combine(temporary.Path, "state");
+            var handler = new DiscoveryResponseHandler(item.Status, item.Body);
+            using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            var service = new CustomProviderConnectionService(
+                stateRoot,
+                workspace,
+                allowLoopbackHttp: false,
+                client);
+            var created = service.Create(CreateInput("failure", "Failure"));
+            service.SetCredential("failure", Credential);
+
+            var exception = await Assert.ThrowsAsync<ProviderConnectionException>(() =>
+                service.DiscoverModelsAsync(
+                    created.ConnectionId,
+                    created.Revision,
+                    CancellationToken.None));
+
+            var error = JsonSerializer.Serialize(exception.Error, JsonDefaults.Options);
+            Assert.Equal(-32005, exception.Error.Code);
+            Assert.DoesNotContain(Credential, error, StringComparison.Ordinal);
+            Assert.DoesNotContain("example.invalid", error, StringComparison.Ordinal);
+            Assert.DoesNotContain("private-body", error, StringComparison.Ordinal);
+            var unchanged = Assert.Single(service.List());
+            Assert.Equal(created.Revision, unchanged.Revision);
+            Assert.Equal(created.ModelIds, unchanged.ModelIds);
+        }
+    }
+
+    /// <summary>
+    /// 功能：确认远端请求期间发生的并发连接更新赢得 CAS，发现结果不能覆盖新配置。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    [Fact]
+    public async Task ModelDiscoveryCasConflictPreservesConcurrentUpdate()
+    {
+        using var temporary = new TemporaryDirectory();
+        var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+        var stateRoot = Path.Combine(temporary.Path, "state");
+        var handler = new DiscoveryResponseHandler(
+            HttpStatusCode.OK,
+            Encoding.UTF8.GetBytes("{\"data\":[{\"id\":\"remote-model\"}]}"));
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var service = new CustomProviderConnectionService(
+            stateRoot,
+            workspace,
+            allowLoopbackHttp: false,
+            client);
+        var created = service.Create(CreateInput("concurrent", "Before"));
+        service.SetCredential("concurrent", Credential);
+        handler.BeforeResponse = () => service.Update(
+            created.ConnectionId,
+            created.Revision,
+            CreateInput("concurrent", "Concurrent") with { ModelIds = ["user-model"] });
+
+        var exception = await Assert.ThrowsAsync<ProviderConnectionException>(() =>
+            service.DiscoverModelsAsync(
+                created.ConnectionId,
+                created.Revision,
+                CancellationToken.None));
+
+        Assert.Equal("provider_connection_revision_conflict", exception.Error.Details.Kind);
+        var current = Assert.Single(service.List());
+        Assert.Equal(2, current.Revision);
+        Assert.Equal("Concurrent", current.DisplayName);
+        Assert.Equal(["user-model"], current.ModelIds);
+    }
+
+    /// <summary>
+    /// 功能：确认 daemon 广告并执行模型发现 RPC，返回计数、重启要求且 stdout 不含 secret。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    [Fact]
+    public async Task DaemonModelDiscoveryRpcIsAdvertisedAndRedacted()
+    {
+        using var temporary = new TemporaryDirectory();
+        var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+        var stateRoot = Path.Combine(temporary.Path, "state");
+        var handler = new DiscoveryResponseHandler(
+            HttpStatusCode.OK,
+            Encoding.UTF8.GetBytes("{\"data\":[{\"id\":\"rpc-b\"},{\"id\":\"rpc-a\"}]}"));
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var connections = new CustomProviderConnectionService(
+            stateRoot,
+            workspace,
+            allowLoopbackHttp: false,
+            client);
+        var created = connections.Create(CreateInput("rpc.discovery", "RPC") with { ModelIds = [] });
+        connections.SetCredential("rpc.discovery", Credential);
+        await using var repository = new SessionRepository(stateRoot, workspace);
+        await using var registry = new ProviderRegistry([new FauxProvider()]);
+        using var tools = new ToolRegistry(workspace);
+        var daemon = new StdioDaemon(
+            repository,
+            new QxnmForge.Agent.AgentService(repository, registry, tools),
+            conformanceMode: false,
+            profiles: null,
+            connections);
+
+        var frames = await ExchangeAsync(
+            daemon,
+            InitializeRequest("init-discovery") + "\n" +
+            "{\"jsonrpc\":\"2.0\",\"id\":\"discover\",\"method\":\"providerConnections/discoverModels\",\"params\":{\"connectionId\":\"" +
+            created.ConnectionId + "\",\"expectedRevision\":1}}\n");
+
+        var methods = frames[0].GetProperty("result").GetProperty("capabilities").GetProperty("methods");
+        Assert.Contains(methods.EnumerateArray(), static item =>
+            item.GetString() == "providerConnections/discoverModels");
+        var result = frames[1].GetProperty("result");
+        Assert.Equal(2, result.GetProperty("discoveredCount").GetInt32());
+        Assert.True(result.GetProperty("restartRequired").GetBoolean());
+        Assert.Equal(2, result.GetProperty("connection").GetProperty("revision").GetInt64());
+        Assert.DoesNotContain(
+            Credential,
+            string.Join('\n', frames.Select(static frame => frame.GetRawText())),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// 功能：确认 RPC 只接受 closed camelCase shape、广告全部方法且绝不回显 credential。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -276,8 +531,10 @@ public sealed class CustomProviderConnectionTests
         _ = service.Create(CreateInput("ready", "Ready"));
         _ = service.Create(CreateInput("missing-key", "Missing Key"));
         _ = service.Create(CreateInput("disabled", "Disabled") with { Enabled = false });
+        _ = service.Create(CreateInput("undiscovered", "Undiscovered") with { ModelIds = [] });
         service.SetCredential("ready", Credential);
         service.SetCredential("disabled", Credential);
+        service.SetCredential("undiscovered", Credential);
 
         using var environment = new ProviderEnvironmentIsolation();
         await using var registry = ProviderRegistryFactory.CreateFromEnvironment(
@@ -289,6 +546,8 @@ public sealed class CustomProviderConnectionTests
         Assert.Equal(["model-a"], advertisement.Models);
         Assert.DoesNotContain(registry.Advertisements, static item => item.Id == "missing-key");
         Assert.DoesNotContain(registry.Advertisements, static item => item.Id == "disabled");
+        Assert.DoesNotContain(registry.Advertisements, static item => item.Id == "undiscovered");
+        Assert.DoesNotContain(registry.Providers, static item => item.Id == "undiscovered");
 
         var model = Assert.Single(registry.ListModels("ready"));
         Assert.Equal("model-a", model.ModelId);
@@ -538,6 +797,68 @@ public sealed class CustomProviderConnectionTests
             null);
         return (Uri)(method.Invoke(provider, [request])
             ?? throw new InvalidOperationException("provider endpoint was null"));
+    }
+
+    /// <summary>
+    /// 功能：返回固定模型目录响应，并只记录发现请求的非敏感断言状态。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    private sealed class DiscoveryResponseHandler(
+        HttpStatusCode statusCode,
+        byte[] body) : HttpMessageHandler
+    {
+        /// <summary>
+        /// 功能：取得测试观察到的请求方法。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        internal HttpMethod? Method { get; private set; }
+
+        /// <summary>
+        /// 功能：取得测试观察到的公开模型目录 URI。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        internal Uri? RequestUri { get; private set; }
+
+        /// <summary>
+        /// 功能：取得请求是否携带预期 Bearer credential，不保留原始 header。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        internal bool SawExpectedBearer { get; private set; }
+
+        /// <summary>
+        /// 功能：取得构造响应前可选执行的并发测试动作。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        internal Action? BeforeResponse { get; set; }
+
+        /// <summary>
+        /// 功能：记录非敏感请求形状并返回每次独立的固定响应。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        /// <param name="request">模型发现 GET。</param>
+        /// <param name="cancellationToken">发现总时限与调用方取消信号。</param>
+        /// <returns>状态和正文由测试构造的内存响应。</returns>
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Method = request.Method;
+            RequestUri = request.RequestUri;
+            SawExpectedBearer = request.Headers.TryGetValues("Authorization", out var values) &&
+                values.Single() == "Bearer " + Credential;
+            BeforeResponse?.Invoke();
+            return Task.FromResult(new HttpResponseMessage(statusCode)
+            {
+                Content = new ByteArrayContent(body),
+            });
+        }
     }
 
     /// <summary>

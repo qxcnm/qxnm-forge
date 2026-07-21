@@ -263,7 +263,11 @@ Profile 字段、边界、模型三元组与运行快照以 `agent-profile.schem
 - `providerConnections/update {connectionId,expectedRevision,connection}` 使用 CAS 并返回
   `{connection,restartRequired:true}`；
 - `providerConnections/delete {connectionId,expectedRevision}` 返回
-  `{deleted:true,restartRequired:true}`。
+  `{deleted:true,restartRequired:true}`；
+- `providerConnections/discoverModels {connectionId,expectedRevision}` 是用户显式触发的远端
+  模型发现，成功以 CAS 仅替换该连接的 `modelIds`，返回
+  `{connection,discoveredCount,restartRequired:true}`。它使用 ADR 0029 的 redirect、时限、正文
+  和模型数量边界；失败不得修改连接或泄漏 endpoint、credential 与远端正文。
 
 本地管理边界还定义 `providerCredentials/set {providerId,credential}` 与
 `providerCredentials/remove {providerId}`，成功只返回
@@ -271,6 +275,9 @@ Profile 字段、边界、模型三元组与运行快照以 `agent-profile.schem
 转发器开放。credential 绝不进入 connection DTO、模型、Session、日志或错误。连接 mutation
 成功后旧 daemon capability 快照必须失效；新的 `models/list` 与 initialize Provider 广告从
 同一启用且 credential 可用的连接快照重建。
+
+`models/list` 不执行 Provider 请求；远端发现只能通过上述显式 mutation 发生。模型发现成功后
+旧 daemon capability 快照同样必须失效，客户端重新 `initialize` 后才能使用新模型三元组。
 
 - `run/cancel {sessionId, runId}` is idempotent. It returns the current
   `cancellationState`: `requested`, `alreadyRequested`, or `terminal`. A return

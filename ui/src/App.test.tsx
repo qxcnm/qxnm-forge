@@ -412,6 +412,9 @@ describe("QXNM Forge workspace", () => {
       "/providers/newapi-gzxsy.jpg",
     );
     expect(screen.getByLabelText("API Key")).toHaveValue("test-only-key");
+    fireEvent.change(screen.getByLabelText("模型 ID"), {
+      target: { value: "gpt-5" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText("已保存，预览已更新")).toBeInTheDocument();

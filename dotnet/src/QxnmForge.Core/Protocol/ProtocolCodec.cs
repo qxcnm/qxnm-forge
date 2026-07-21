@@ -487,6 +487,23 @@ public static class ProtocolCodec
     }
 
     /// <summary>
+    /// 功能：严格解析 providerConnections/discoverModels 的连接 ID 与 CAS revision。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">只允许 connectionId 与 expectedRevision 的 params。</param>
+    /// <returns>目标 connectionId 与用户确认的 expectedRevision。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知、类型或 revision 错误。</exception>
+    public static (string ConnectionId, long ExpectedRevision) ParseProviderConnectionsDiscoverModels(
+        JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "connectionId", "expectedRevision");
+        return (
+            RequireString(parameters, "connectionId"),
+            RequirePositiveSafeInteger(parameters, "expectedRevision"));
+    }
+
+    /// <summary>
     /// 功能：严格解析 providerCredentials/set 的 Provider ID 与瞬时 credential。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -774,7 +791,7 @@ public static class ProtocolCodec
             "enabled");
         var modelIdsElement = RequireProperty(element, "modelIds");
         if (modelIdsElement.ValueKind != JsonValueKind.Array ||
-            modelIdsElement.GetArrayLength() is < 1 or > 64)
+            modelIdsElement.GetArrayLength() > 512)
         {
             throw InvalidParams("modelIds is invalid", "connection.modelIds");
         }

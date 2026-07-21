@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using QxnmForge.Domain;
 using QxnmForge.Serialization;
@@ -13,7 +15,7 @@ namespace QxnmForge.Provider;
 /// <param name="ProviderId">连接间唯一的品牌中立安全 ID。</param>
 /// <param name="ApiFamily">当前固定为 openai-completions。</param>
 /// <param name="BaseUrl">无认证信息、query 或 fragment 的 HTTPS base URL。</param>
-/// <param name="ModelIds">1..64 个唯一模型 ID。</param>
+/// <param name="ModelIds">0..512 个唯一模型 ID；为空时连接尚不可执行。</param>
 /// <param name="LogoAssetId">可选的本地公开 Logo 资源安全 ID。</param>
 /// <param name="Enabled">是否允许下次 daemon 启动注册该连接。</param>
 public sealed record ProviderConnectionInput(
@@ -186,6 +188,22 @@ public sealed class ProviderConnectionException : Exception
     }
 
     /// <summary>
+    /// 功能：创建不泄漏 endpoint、credential 或远端正文的模型发现失败错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="retryable">传输或远端临时失败时为 true，目录或凭据无效时为 false。</param>
+    /// <returns>固定 provider_model_discovery_failed 错误。</returns>
+    internal static ProviderConnectionException DiscoveryFailed(bool retryable)
+    {
+        return new ProviderConnectionException(new PortableError(
+            -32005,
+            "provider model discovery failed",
+            retryable,
+            new ErrorDetails("provider_model_discovery_failed")));
+    }
+
+    /// <summary>
     /// 功能：把底层文件异常收敛为固定的连接存储错误。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -269,6 +287,45 @@ public sealed class CustomProviderConnectionStore
         {
             using var stateLock = AcquireLock();
             return ReadDocumentUnlocked().Connections.Select(Clone).ToArray();
+        }
+        catch (ProviderCommercialStateException exception)
+        {
+            throw MapCommercialException(exception);
+        }
+    }
+
+    /// <summary>
+    /// 功能：以 connection ID 和 expected revision 读取模型发现使用的精确防御性快照。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="connectionId">服务签发的连接 ID。</param>
+    /// <param name="expectedRevision">用户确认的当前 revision。</param>
+    /// <returns>网络请求前固定的非敏感连接快照。</returns>
+    /// <remarks>不变量：本方法不读取 credential，也不在等待远端期间持有连接锁。</remarks>
+    /// <exception cref="ProviderConnectionException">连接缺失、CAS 冲突或存储不可用。</exception>
+    internal ProviderConnectionConfiguration ReadExact(
+        string connectionId,
+        long expectedRevision)
+    {
+        ValidateSafeId(connectionId, "connectionId");
+        ValidateExpectedRevision(expectedRevision);
+        try
+        {
+            using var stateLock = AcquireLock();
+            var current = ReadDocumentUnlocked().Connections.FirstOrDefault(connection =>
+                string.Equals(connection.ConnectionId, connectionId, StringComparison.Ordinal));
+            if (current is null)
+            {
+                throw ProviderConnectionException.NotFound(connectionId);
+            }
+
+            if (current.Revision != expectedRevision)
+            {
+                throw ProviderConnectionException.RevisionConflict();
+            }
+
+            return Clone(current);
         }
         catch (ProviderCommercialStateException exception)
         {
@@ -484,6 +541,73 @@ public sealed class CustomProviderConnectionStore
     }
 
     /// <summary>
+    /// 功能：在远端发现完成后以原 revision CAS 仅发布新的模型 allowlist。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="connectionId">服务签发的连接 ID。</param>
+    /// <param name="expectedRevision">网络请求前读取的 revision。</param>
+    /// <param name="modelIds">已严格解析、去重并按 ordinal 排序的非空模型集合。</param>
+    /// <returns>revision 精确加一并 durable 发布后的连接配置。</returns>
+    /// <remarks>不变量：显示名、Provider ID、family、base URL、Logo、enabled 与创建时间保持不变。</remarks>
+    /// <exception cref="ProviderConnectionException">模型无效、连接缺失、CAS 冲突或存储失败。</exception>
+    internal ProviderConnectionConfiguration ReplaceDiscoveredModels(
+        string connectionId,
+        long expectedRevision,
+        IReadOnlyList<string> modelIds)
+    {
+        ValidateSafeId(connectionId, "connectionId");
+        ValidateExpectedRevision(expectedRevision);
+        var replacement = modelIds?.ToArray()
+            ?? throw ProviderConnectionException.Invalid("modelIds");
+        ValidateModelIds(replacement, allowEmpty: false);
+        try
+        {
+            using var stateLock = AcquireLock();
+            var document = ReadDocumentUnlocked();
+            var current = document.Connections.FirstOrDefault(connection =>
+                string.Equals(connection.ConnectionId, connectionId, StringComparison.Ordinal));
+            if (current is null)
+            {
+                throw ProviderConnectionException.NotFound(connectionId);
+            }
+
+            if (current.Revision != expectedRevision)
+            {
+                throw ProviderConnectionException.RevisionConflict();
+            }
+
+            if (current.Revision >= MaxSafeInteger)
+            {
+                throw ProviderConnectionException.Invalid("expectedRevision");
+            }
+
+            var updatedAt = GetUtcNow();
+            if (updatedAt < current.UpdatedAt)
+            {
+                updatedAt = current.UpdatedAt;
+            }
+
+            var updated = current with
+            {
+                Revision = current.Revision + 1,
+                ModelIds = replacement,
+                UpdatedAt = updatedAt,
+            };
+            var connections = document.Connections
+                .Select(connection => connection.ConnectionId == connectionId ? updated : connection)
+                .OrderBy(static item => item.ConnectionId, StringComparer.Ordinal)
+                .ToArray();
+            WriteDocumentUnlocked(new ProviderConnectionDocument(SchemaVersion, connections));
+            return Clone(updated);
+        }
+        catch (ProviderCommercialStateException exception)
+        {
+            throw MapCommercialException(exception);
+        }
+    }
+
+    /// <summary>
     /// 功能：以 expected revision 原子删除连接配置并返回其 Provider ID。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -671,23 +795,63 @@ public sealed class CustomProviderConnectionStore
         }
 
         ValidateBaseUrl(input.BaseUrl, allowLoopbackHttp);
-        if (input.ModelIds.Count is < 1 or > 64)
+        ValidateModelIds(input.ModelIds, allowEmpty: true);
+
+        if (input.LogoAssetId is not null)
+        {
+            ValidateSafeId(input.LogoAssetId, "logoAssetId");
+        }
+    }
+
+    /// <summary>
+    /// 功能：验证模型 allowlist 的数量、UTF-8 字节长度、控制字符与 ordinal 唯一性。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="modelIds">候选模型集合。</param>
+    /// <param name="allowEmpty">普通连接输入允许尚未发现模型，发现结果不允许为空。</param>
+    /// <exception cref="ProviderConnectionException">集合或任一模型 ID 不满足冻结边界。</exception>
+    private static void ValidateModelIds(IReadOnlyList<string> modelIds, bool allowEmpty)
+    {
+        if (modelIds is null ||
+            modelIds.Count > 512 ||
+            (!allowEmpty && modelIds.Count == 0))
         {
             throw ProviderConnectionException.Invalid("modelIds");
         }
 
         var models = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var modelId in input.ModelIds)
+        foreach (var modelId in modelIds)
         {
-            if (!IsBoundedText(modelId, 256) || !models.Add(modelId))
+            if (!IsValidModelId(modelId) || !models.Add(modelId))
             {
                 throw ProviderConnectionException.Invalid("modelIds");
             }
         }
+    }
 
-        if (input.LogoAssetId is not null)
+    /// <summary>
+    /// 功能：判断模型 ID 是否为 1..256 UTF-8 字节且不含控制字符或无效代理项。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="value">候选模型 ID。</param>
+    /// <returns>满足 wire 与持久化共同边界时为 true。</returns>
+    internal static bool IsValidModelId(string value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Any(static character => char.IsControl(character)))
         {
-            ValidateSafeId(input.LogoAssetId, "logoAssetId");
+            return false;
+        }
+
+        try
+        {
+            return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)
+                .GetByteCount(value) <= 256;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
         }
     }
 
@@ -1010,8 +1174,12 @@ public sealed class CustomProviderConnectionStore
 /// </summary>
 public sealed class CustomProviderConnectionService
 {
+    private const int MaximumDiscoveryBytes = 1024 * 1024;
+    private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromSeconds(20);
+    private static readonly HttpClient SharedDiscoveryHttpClient = CreateDiscoveryHttpClient();
     private readonly ProviderCredentialStore credentials;
     private readonly CustomProviderConnectionStore connections;
+    private readonly HttpClient discoveryHttpClient;
 
     /// <summary>
     /// 功能：从可信 state root、workspace 与 conformance 模式创建连接服务。
@@ -1026,9 +1194,29 @@ public sealed class CustomProviderConnectionService
         string stateRoot,
         string workspace,
         bool allowLoopbackHttp = false)
+        : this(stateRoot, workspace, allowLoopbackHttp, SharedDiscoveryHttpClient)
+    {
+    }
+
+    /// <summary>
+    /// 功能：为测试注入不会访问真实网络的模型发现 HTTP client。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="stateRoot">隔离应用状态根。</param>
+    /// <param name="workspace">CredentialStore 必须逃离的 workspace。</param>
+    /// <param name="allowLoopbackHttp">是否允许 conformance literal loopback HTTP。</param>
+    /// <param name="discoveryHttpClient">由测试控制响应的 client；服务不取得其所有权。</param>
+    internal CustomProviderConnectionService(
+        string stateRoot,
+        string workspace,
+        bool allowLoopbackHttp,
+        HttpClient discoveryHttpClient)
     {
         connections = new CustomProviderConnectionStore(stateRoot, allowLoopbackHttp);
         credentials = new ProviderCredentialStore(stateRoot, workspace);
+        this.discoveryHttpClient = discoveryHttpClient
+            ?? throw new ArgumentNullException(nameof(discoveryHttpClient));
     }
 
     /// <summary>
@@ -1102,6 +1290,37 @@ public sealed class CustomProviderConnectionService
             });
 
         return Project(connection, ListConfiguredProviderIds());
+    }
+
+    /// <summary>
+    /// 功能：显式请求自定义 Provider 模型目录，并以原 revision CAS 仅更新模型 allowlist。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="connectionId">服务签发的连接 ID。</param>
+    /// <param name="expectedRevision">用户触发发现时看到的 revision。</param>
+    /// <param name="cancellationToken">调用方取消信号；另有固定 20 秒总时限。</param>
+    /// <returns>已 durable 发布且不包含 credential 的连接投影。</returns>
+    /// <remarks>不变量：credential 仅在最终 GET 请求边界读取；任何远端或 CAS 失败都不修改连接。</remarks>
+    /// <exception cref="ProviderConnectionException">凭据、传输、目录、CAS 或存储失败。</exception>
+    public async Task<ProviderConnection> DiscoverModelsAsync(
+        string connectionId,
+        long expectedRevision,
+        CancellationToken cancellationToken)
+    {
+        var connection = connections.ReadExact(connectionId, expectedRevision);
+        var endpoint = BuildDiscoveryEndpoint(connection.BaseUrl);
+        var modelIds = await FetchModelsAsync(
+            endpoint,
+            connection.ProviderId,
+            cancellationToken).ConfigureAwait(false);
+        var updated = connections.ReplaceDiscoveredModels(
+            connectionId,
+            expectedRevision,
+            modelIds);
+        return Project(
+            updated,
+            new HashSet<string>([updated.ProviderId], StringComparer.Ordinal));
     }
 
     /// <summary>
@@ -1254,6 +1473,301 @@ public sealed class CustomProviderConnectionService
         {
             throw MapCredentialException(exception);
         }
+    }
+
+    /// <summary>
+    /// 功能：发送单次禁止 redirect 的 Bearer GET，并读取不超过 1 MiB 的严格模型目录。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="endpoint">读取 credential 前已完成规范化的同源 `/models` endpoint。</param>
+    /// <param name="providerId">网络前固定、用于最终边界读取 credential 的 Provider ID。</param>
+    /// <param name="cancellationToken">调用方取消信号。</param>
+    /// <returns>去重并按 ordinal 排序的 1..512 个模型 ID。</returns>
+    /// <exception cref="ProviderConnectionException">状态、大小、传输、超时或 JSON 不满足边界。</exception>
+    private async Task<IReadOnlyList<string>> FetchModelsAsync(
+        Uri endpoint,
+        string providerId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!credentials.TryReadForRequest(providerId, out var credential) ||
+                credential is null)
+            {
+                throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            if (!request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + credential))
+            {
+                throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+            }
+
+            using var totalCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            totalCancellation.CancelAfter(DiscoveryTimeout);
+            using var response = await discoveryHttpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                totalCancellation.Token).ConfigureAwait(false);
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                throw ProviderConnectionException.DiscoveryFailed(IsRetryable(response.StatusCode));
+            }
+
+            var bytes = await ReadDiscoveryBodyAsync(
+                response,
+                totalCancellation.Token).ConfigureAwait(false);
+            return ParseDiscoveredModels(bytes);
+        }
+        catch (ProviderConnectionException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            throw ProviderConnectionException.DiscoveryFailed(retryable: true);
+        }
+        catch (HttpRequestException)
+        {
+            throw ProviderConnectionException.DiscoveryFailed(retryable: true);
+        }
+        catch (IOException)
+        {
+            throw ProviderConnectionException.DiscoveryFailed(retryable: true);
+        }
+        catch (Exception exception) when (exception is ArgumentException or JsonException)
+        {
+            throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+        }
+    }
+
+    /// <summary>
+    /// 功能：在读取 credential 前构造同源且不含 query 的模型发现 endpoint。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="baseUrl">已由持久化连接验证的非敏感 base URL。</param>
+    /// <returns>字面追加 `/models` 的绝对 URI。</returns>
+    /// <exception cref="ProviderConnectionException">URI 状态意外失效时返回固定脱敏错误。</exception>
+    private static Uri BuildDiscoveryEndpoint(string baseUrl)
+    {
+        try
+        {
+            return NativeProviderEndpoint.Append(
+                new Uri(baseUrl, UriKind.Absolute),
+                "/models");
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException)
+        {
+            throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+        }
+    }
+
+    /// <summary>
+    /// 功能：流式读取模型目录并同时执行 Content-Length 与实际字节硬上限。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="response">已确认成功且仍由调用方持有的响应。</param>
+    /// <param name="cancellationToken">20 秒总时限与调用方取消的组合信号。</param>
+    /// <returns>长度不超过 1 MiB 的独立字节数组。</returns>
+    /// <exception cref="ProviderConnectionException">声明或实际响应超过上限。</exception>
+    private static async Task<byte[]> ReadDiscoveryBodyAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.Content.Headers.ContentLength is > MaximumDiscoveryBytes)
+        {
+            throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+        }
+
+        await using var input = await response.Content
+            .ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var output = new MemoryStream();
+        var buffer = new byte[8192];
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                return output.ToArray();
+            }
+
+            if (output.Length + read > MaximumDiscoveryBytes)
+            {
+                throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+            }
+
+            output.Write(buffer, 0, read);
+        }
+    }
+
+    /// <summary>
+    /// 功能：严格提取 OpenAI-compatible 模型目录的 data 数组与每项 id，同时忽略非关键元数据。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="bytes">已通过 1 MiB 上限的 UTF-8 JSON。</param>
+    /// <returns>去重、ordinal 排序且非空的模型 ID 数组。</returns>
+    /// <exception cref="ProviderConnectionException">JSON shape、模型 ID 或数量不合法。</exception>
+    internal static IReadOnlyList<string> ParseDiscoveredModels(ReadOnlyMemory<byte> bytes)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = 8,
+            });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+            }
+
+            ValidateNoDuplicateDiscoveryKeys(root);
+            JsonElement data = default;
+            foreach (var property in root.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "data", StringComparison.Ordinal))
+                {
+                    if (property.Value.ValueKind != JsonValueKind.Array)
+                    {
+                        throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+                    }
+
+                    data = property.Value;
+                }
+            }
+
+            if (data.ValueKind != JsonValueKind.Array)
+            {
+                throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+            }
+
+            var modelIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in data.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+                }
+
+                string? modelId = null;
+                foreach (var property in item.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, "id", StringComparison.Ordinal))
+                    {
+                        if (property.Value.ValueKind != JsonValueKind.String)
+                        {
+                            throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+                        }
+
+                        modelId = property.Value.GetString();
+                    }
+                }
+
+                if (modelId is null || !CustomProviderConnectionStore.IsValidModelId(modelId))
+                {
+                    throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+                }
+
+                _ = modelIds.Add(modelId);
+                if (modelIds.Count > 512)
+                {
+                    throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+                }
+            }
+
+            if (modelIds.Count == 0)
+            {
+                throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+            }
+
+            return modelIds.Order(StringComparer.Ordinal).ToArray();
+        }
+        catch (ProviderConnectionException)
+        {
+            throw;
+        }
+        catch (JsonException)
+        {
+            throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+        }
+    }
+
+    /// <summary>
+    /// 功能：递归拒绝模型目录及被忽略元数据中任意层级的重复 JSON key。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="value">当前模型目录 JSON 节点。</param>
+    /// <remarks>不变量：属性名按 ordinal 比较；数组内每个 object 都递归验证。</remarks>
+    /// <exception cref="ProviderConnectionException">发现重复 key 时返回固定脱敏发现错误。</exception>
+    private static void ValidateNoDuplicateDiscoveryKeys(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in value.EnumerateObject())
+            {
+                if (!names.Add(property.Name))
+                {
+                    throw ProviderConnectionException.DiscoveryFailed(retryable: false);
+                }
+
+                ValidateNoDuplicateDiscoveryKeys(property.Value);
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+            {
+                ValidateNoDuplicateDiscoveryKeys(item);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 功能：判断远端状态是否代表适合稍后重试的临时失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="statusCode">未向调用方公开的远端 HTTP 状态。</param>
+    /// <returns>408、429 或 5xx 时为 true。</returns>
+    private static bool IsRetryable(HttpStatusCode statusCode)
+    {
+        var numeric = (int)statusCode;
+        return statusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests ||
+            numeric >= 500;
+    }
+
+    /// <summary>
+    /// 功能：创建进程级共享且禁止 redirect、proxy、cookie 与自动解压的模型发现 client。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>连接超时十秒、总时限由每次操作独立控制的 HttpClient。</returns>
+    private static HttpClient CreateDiscoveryHttpClient()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.None,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            UseCookies = false,
+            UseProxy = false,
+        };
+        return new HttpClient(handler, disposeHandler: true)
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
     }
 
     /// <summary>

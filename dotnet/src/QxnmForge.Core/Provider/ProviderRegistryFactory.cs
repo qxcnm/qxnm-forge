@@ -190,6 +190,7 @@ public static class ProviderRegistryFactory
         foreach (var connection in connections)
         {
             if (!connection.Enabled ||
+                connection.ModelIds.Count == 0 ||
                 !configured.Contains(connection.ProviderId) ||
                 !occupiedProviderIds.Add(connection.ProviderId))
             {

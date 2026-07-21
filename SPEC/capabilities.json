@@ -3402,7 +3402,7 @@
         "SPEC/schemas/custom-provider-connection.schema.json",
         "ui/src/features/settings/provider-settings.tsx"
       ],
-      "notes": "已实现严格非敏感 CRUD、revision CAS、独立 CredentialStore、固定锁顺序、保留 Provider 命名空间、启动快照、模型 allowlist 与脱敏 RPC；未知模型只保守广告 text/streaming。尚无 Rust/.NET 共同动态 CRUD/credential/HTTP mock runner，Windows ACL/keychain 与真实兼容服务也未验证，因此保持 implemented。"
+      "notes": "已实现严格非敏感 CRUD、revision CAS、独立 CredentialStore、固定锁顺序、保留 Provider 命名空间、启动快照、模型 allowlist、显式有界 /models 发现与脱敏 RPC；未知模型只保守广告 text/streaming。尚无 Rust/.NET 共同动态 CRUD/credential/HTTP mock runner，Windows ACL/keychain 与真实兼容服务也未验证，因此保持 implemented。"
     },
     {
       "implementation": "dotnet",
@@ -3420,7 +3420,7 @@
         "SPEC/schemas/custom-provider-connection.schema.json",
         "ui/src/features/settings/provider-settings.tsx"
       ],
-      "notes": "已实现严格非敏感 CRUD、revision CAS、独立 CredentialStore、固定锁顺序、保留 Provider 命名空间、启动快照、模型 allowlist 与脱敏 RPC；未知模型只保守广告 text/streaming。尚无 Rust/.NET 共同动态 CRUD/credential/HTTP mock runner，Windows ACL/keychain 与真实兼容服务也未验证，因此保持 implemented。"
+      "notes": "已实现严格非敏感 CRUD、revision CAS、独立 CredentialStore、固定锁顺序、保留 Provider 命名空间、启动快照、模型 allowlist、显式有界 /models 发现与脱敏 RPC；未知模型只保守广告 text/streaming。尚无 Rust/.NET 共同动态 CRUD/credential/HTTP mock runner，Windows ACL/keychain 与真实兼容服务也未验证，因此保持 implemented。"
     },
     {
       "implementation": "rust",

@@ -143,6 +143,44 @@ describe("TauriApplicationServiceClient", () => {
   });
 
   /**
+   * 验证模型发现只发送连接 CAS 标识，并严格校验返回计数与脱敏 allowlist。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("discovers provider models without sending credentials from React", async () => {
+    invokeMock.mockResolvedValue({
+      connection: {
+        connectionId: "connection-1",
+        revision: 2,
+        displayName: "Example Provider",
+        providerId: "custom.example",
+        baseUrl: "https://api.example.invalid/v1",
+        apiFamily: "openai-completions",
+        modelIds: ["model-a", "model-b"],
+        logoAssetId: null,
+        enabled: true,
+        credentialConfigured: true,
+        createdAt: "2026-07-21T00:00:00Z",
+        updatedAt: "2026-07-22T00:00:00Z",
+      },
+      discoveredCount: 2,
+      restartRequired: true,
+    });
+    const client = new TauriApplicationServiceClient("dotnet");
+
+    const result = await client.discoverProviderModels("connection-1", 1);
+
+    expect(result.discoveredCount).toBe(2);
+    expect(invokeMock).toHaveBeenCalledWith("application_service_request", {
+      backend: "dotnet",
+      method: "providerConnections/discoverModels",
+      params: { connectionId: "connection-1", expectedRevision: 1 },
+    });
+    expect(JSON.stringify(invokeMock.mock.calls)).not.toMatch(/credential|apiKey|secret/i);
+  });
+
+  /**
    * 验证 host 即使返回额外 secret 字段，前端严格 schema 仍拒绝该投影。
    *
    * 作者：高宏顺

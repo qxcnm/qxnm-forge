@@ -23,8 +23,9 @@ use crate::protocol::{
 use crate::provider::{FauxProvider, FauxScenario};
 use crate::provider_connection::{
     CustomProviderConnectionRuntime, ProviderConnectionsCreateParams,
-    ProviderConnectionsDeleteParams, ProviderConnectionsListParams,
-    ProviderConnectionsUpdateParams, ProviderCredentialsRemoveParams, ProviderCredentialsSetParams,
+    ProviderConnectionsDeleteParams, ProviderConnectionsDiscoverModelsParams,
+    ProviderConnectionsListParams, ProviderConnectionsUpdateParams,
+    ProviderCredentialsRemoveParams, ProviderCredentialsSetParams,
 };
 use crate::provider_identity::{
     AdvertisedModel, ProviderIdentityAdvertisement, default_models, is_provider_id, model_key,
@@ -468,6 +469,23 @@ impl Daemon {
                     None,
                 ))
             }
+            "providerConnections/discoverModels" => {
+                let params: ProviderConnectionsDiscoverModelsParams = parse_params(request.params)?;
+                let connection = self
+                    .provider_connections
+                    .service()
+                    .discover_models(&params.connection_id, params.expected_revision)
+                    .await?;
+                let discovered_count = connection.model_ids.len();
+                Ok((
+                    json!({
+                        "connection":connection,
+                        "discoveredCount":discovered_count,
+                        "restartRequired":true
+                    }),
+                    None,
+                ))
+            }
             "providerConnections/delete" => {
                 let params: ProviderConnectionsDeleteParams = parse_params(request.params)?;
                 let _ = self
@@ -900,6 +918,7 @@ impl Daemon {
             "providerConnections/list",
             "providerConnections/create",
             "providerConnections/update",
+            "providerConnections/discoverModels",
             "providerConnections/delete",
             "providerCredentials/set",
             "providerCredentials/remove",

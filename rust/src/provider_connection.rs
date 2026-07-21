@@ -7,6 +7,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[cfg(windows)]
 use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
@@ -14,7 +15,10 @@ use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use fs2::FileExt as _;
-use reqwest::Url;
+use futures_util::StreamExt as _;
+use reqwest::header::{AUTHORIZATION, HeaderValue};
+use reqwest::redirect::Policy;
+use reqwest::{StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -35,6 +39,10 @@ use crate::provider_identity::{
 const DOCUMENT_SCHEMA_VERSION: &str = "0.1";
 const MAX_DOCUMENT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 128;
+const MAX_MODEL_IDS: usize = 512;
+const MAX_MODEL_ID_BYTES: usize = 256;
+const MAX_MODEL_DISCOVERY_BYTES: usize = 1024 * 1024;
+const MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const API_FAMILY: &str = "openai-completions";
 #[cfg(windows)]
@@ -92,6 +100,14 @@ pub struct ProviderConnectionsUpdateParams {
     pub connection: CustomProviderConnectionInput,
 }
 
+/// `providerConnections/discoverModels` 的严格参数。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderConnectionsDiscoverModelsParams {
+    pub connection_id: String,
+    pub expected_revision: u64,
+}
+
 /// `providerConnections/delete` 的严格参数。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -138,6 +154,18 @@ struct StoredConnection {
 struct ConnectionDocument {
     schema_version: String,
     connections: Vec<StoredConnection>,
+}
+
+/// OpenAI-compatible 模型目录中必须存在的最小响应根对象。
+#[derive(Debug, Deserialize)]
+struct ModelDiscoveryResponse {
+    data: Vec<ModelDiscoveryItem>,
+}
+
+/// OpenAI-compatible 模型目录单项中必须存在的最小字段。
+#[derive(Debug, Deserialize)]
+struct ModelDiscoveryItem {
+    id: String,
 }
 
 /// 在作用域结束时释放 Provider 连接文档的跨进程 writer lock。
@@ -317,6 +345,77 @@ impl CustomProviderConnectionStore {
         };
         document.connections[index] = connection.clone();
         sort_connections(&mut document.connections);
+        self.write_document_unlocked(&document)?;
+        Ok(connection)
+    }
+
+    /// 功能：以 connection ID 与 revision 读取一次模型发现使用的不可变连接快照。
+    ///
+    /// 输入：安全 connection ID 与 JSON 安全整数范围内的期望 revision。
+    /// 输出：精确命中的完整非敏感连接副本。
+    /// 不变量：只在读取文档期间持有连接锁；调用方联网期间不持锁。
+    /// 失败：ID、revision、目标、CAS、锁或文档无效时返回不含实例值的结构化错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn read_for_model_discovery(
+        &self,
+        connection_id: &str,
+        expected_revision: u64,
+    ) -> Result<StoredConnection, AgentError> {
+        validate_safe_id(connection_id, 128, "connectionId")?;
+        validate_revision(expected_revision)?;
+        let _lock = self.acquire_lock()?;
+        let document = self.read_document_unlocked()?;
+        let connection = document
+            .connections
+            .into_iter()
+            .find(|connection| connection.connection_id == connection_id)
+            .ok_or_else(connection_not_found)?;
+        if connection.revision != expected_revision {
+            return Err(revision_conflict());
+        }
+        Ok(connection)
+    }
+
+    /// 功能：以原 revision CAS 仅替换一条连接的已发现模型 allowlist。
+    ///
+    /// 输入：模型发现前的 connection ID、revision，以及已验证、去重和排序的非空模型列表。
+    /// 输出：模型列表已 durable 发布且 revision 精确加一的新记录。
+    /// 不变量：除 `modelIds`、`revision`、`updatedAt` 外所有字段保持原值；CAS 失败不修改文档。
+    /// 失败：目标、CAS、模型边界、revision 溢出、锁或原子发布失败时原记录保持不变。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn replace_discovered_models(
+        &self,
+        connection_id: &str,
+        expected_revision: u64,
+        model_ids: Vec<String>,
+    ) -> Result<StoredConnection, AgentError> {
+        validate_safe_id(connection_id, 128, "connectionId")?;
+        validate_revision(expected_revision)?;
+        if !model_ids_are_valid(&model_ids, false) {
+            return Err(model_discovery_invalid_response());
+        }
+        let _lock = self.acquire_lock()?;
+        let mut document = self.read_document_unlocked()?;
+        let index = document
+            .connections
+            .iter()
+            .position(|connection| connection.connection_id == connection_id)
+            .ok_or_else(connection_not_found)?;
+        if document.connections[index].revision != expected_revision {
+            return Err(revision_conflict());
+        }
+        let previous = &document.connections[index];
+        let mut connection = previous.clone();
+        connection.revision = previous
+            .revision
+            .checked_add(1)
+            .filter(|revision| *revision <= MAX_SAFE_INTEGER)
+            .ok_or_else(revision_conflict)?;
+        connection.model_ids = model_ids;
+        connection.updated_at = current_timestamp_not_before(&previous.updated_at);
+        document.connections[index] = connection.clone();
         self.write_document_unlocked(&document)?;
         Ok(connection)
     }
@@ -606,6 +705,35 @@ impl CustomProviderConnectionService {
         Ok(project_connection(connection, &configured))
     }
 
+    /// 功能：显式请求自定义 Provider 的严格模型目录，并以 CAS 更新模型 allowlist。
+    ///
+    /// 输入：connection ID 与开始联网前精确匹配的期望 revision。
+    /// 输出：只替换模型列表、revision 加一的脱敏连接投影。
+    /// 不变量：连接锁不跨网络请求持有；credential 仅在最终 HTTP 边界读取；成功后不再次读取 credential store。
+    /// 失败：credential、endpoint、超时、网络、状态、正文、解析、模型边界或 CAS 失败均不得修改连接。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub async fn discover_models(
+        &self,
+        connection_id: &str,
+        expected_revision: u64,
+    ) -> Result<CustomProviderConnectionView, AgentError> {
+        let snapshot = self
+            .connections
+            .read_for_model_discovery(connection_id, expected_revision)?;
+        let endpoint = native_endpoint(&snapshot.base_url, "/models", &[])?;
+        let client = build_model_discovery_client()?;
+        let credential = self.credentials.read_for_request(&snapshot.provider_id)?;
+        let model_ids = fetch_discovered_model_ids(&client, endpoint, credential).await?;
+        let connection = self.connections.replace_discovered_models(
+            connection_id,
+            expected_revision,
+            model_ids,
+        )?;
+        let configured = BTreeSet::from([connection.provider_id.clone()]);
+        Ok(project_connection(connection, &configured))
+    }
+
     /// 功能：以 CAS 删除一条非敏感 Provider 连接。
     ///
     /// 输入：connection ID 与期望 revision。
@@ -709,7 +837,7 @@ impl CustomProviderConnectionService {
 
     /// 功能：构造本次进程生命周期固定的可执行 Provider 快照。
     ///
-    /// 输出：仅包含启动瞬间 enabled 且 credentialConfigured 的连接及模型。
+    /// 输出：仅包含启动瞬间 enabled、有非空模型 allowlist 且 credentialConfigured 的连接及模型。
     /// 不变量：快照保存非敏感配置和 CredentialStore 句柄但不保存 secret；运行时重新检查 presence。
     /// 失败：连接文档或 CredentialStore 无法安全读取时 daemon 启动失败关闭。
     /// 作者：高宏顺
@@ -725,7 +853,11 @@ impl CustomProviderConnectionService {
             .connections
             .list()?
             .into_iter()
-            .filter(|connection| connection.enabled && configured.contains(&connection.provider_id))
+            .filter(|connection| {
+                connection.enabled
+                    && !connection.model_ids.is_empty()
+                    && configured.contains(&connection.provider_id)
+            })
             .collect();
         Ok(CustomProviderRuntimeSnapshot {
             connections,
@@ -1026,6 +1158,126 @@ fn project_connection(
     }
 }
 
+/// 功能：构造模型发现专用的固定安全 HTTP 客户端。
+///
+/// 输出：禁止代理和重定向、总时限固定为 20 秒且保持 TLS 校验的客户端。
+/// 不变量：不从环境读取代理配置，不自动跨 origin 转发 Bearer header。
+/// 失败：HTTP/TLS 客户端初始化失败时返回不含底层错误的 ProviderUnavailable。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn build_model_discovery_client() -> Result<reqwest::Client, AgentError> {
+    reqwest::Client::builder()
+        .redirect(Policy::none())
+        .no_proxy()
+        .timeout(MODEL_DISCOVERY_TIMEOUT)
+        .build()
+        .map_err(|_| model_discovery_unavailable())
+}
+
+/// 功能：执行一次 Bearer 认证的模型目录 GET，并解析为规范化模型列表。
+///
+/// 输入：固定安全客户端、已规范化 `/models` URL，以及最终请求边界读取的 credential 所有权。
+/// 输出：严格响应中去重并按 ordinal 排序的 1..512 个模型 ID。
+/// 不变量：只接受 200；正文按流累计且最多 1 MiB；credential 不进入错误、日志或返回值。
+/// 失败：header、超时、传输、状态、响应超限或严格解析失败时返回固定脱敏错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+async fn fetch_discovered_model_ids(
+    client: &reqwest::Client,
+    endpoint: Url,
+    credential: String,
+) -> Result<Vec<String>, AgentError> {
+    let mut authorization = HeaderValue::from_str(&format!("Bearer {credential}"))
+        .map_err(|_| model_discovery_unavailable())?;
+    authorization.set_sensitive(true);
+    let request = client.get(endpoint).header(AUTHORIZATION, authorization);
+    drop(credential);
+
+    let response = request
+        .send()
+        .await
+        .map_err(map_model_discovery_transport_error)?;
+    if response.status() != StatusCode::OK {
+        return Err(model_discovery_http_error());
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_MODEL_DISCOVERY_BYTES as u64)
+    {
+        return Err(model_discovery_output_limit());
+    }
+
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(map_model_discovery_transport_error)?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_MODEL_DISCOVERY_BYTES {
+            return Err(model_discovery_output_limit());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    parse_discovered_model_ids(&bytes)
+}
+
+/// 功能：严格解析 OpenAI-compatible 模型目录并规范化模型 ID。
+///
+/// 输入：已通过 1 MiB 网络正文上限的原始字节。
+/// 输出：去重、ordinal 排序且非空的最多 512 个合法模型 ID。
+/// 不变量：递归拒绝重复 JSON key；只投影根 `data` 和每项 `id`，忽略其余元数据；模型 ID 以 UTF-8 字节数计 1..256 且无控制字符。
+/// 失败：UTF-8、JSON、DTO、ID 或空目录错误返回 ProviderError，模型数量超限返回 OutputLimitExceeded。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn parse_discovered_model_ids(bytes: &[u8]) -> Result<Vec<String>, AgentError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| model_discovery_invalid_response())?;
+    let value = parse_strict_value(text).map_err(|_| model_discovery_invalid_response())?;
+    let response: ModelDiscoveryResponse =
+        serde_json::from_value(value).map_err(|_| model_discovery_invalid_response())?;
+    let mut model_ids = BTreeSet::new();
+    for item in response.data {
+        if !model_id_is_valid(&item.id) {
+            return Err(model_discovery_invalid_response());
+        }
+        model_ids.insert(item.id);
+        if model_ids.len() > MAX_MODEL_IDS {
+            return Err(model_discovery_output_limit());
+        }
+    }
+    if model_ids.is_empty() {
+        return Err(model_discovery_invalid_response());
+    }
+    Ok(model_ids.into_iter().collect())
+}
+
+/// 功能：验证一个模型 ID 的冻结字节和字符边界。
+///
+/// 输入：来自 RPC 或远端模型目录的 UTF-8 字符串。
+/// 输出：字节数为 1..256 且不含 Unicode 控制字符时为 true。
+/// 不变量：使用字节长度而非字符数量，与跨语言协议限制一致。
+/// 失败：本函数不执行 I/O 且不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn model_id_is_valid(value: &str) -> bool {
+    !value.is_empty() && value.len() <= MAX_MODEL_ID_BYTES && !value.chars().any(char::is_control)
+}
+
+/// 功能：验证持久化模型 allowlist 的容量、单项边界与唯一性。
+///
+/// 输入：模型 ID 切片，以及是否允许尚未完成模型发现的空列表。
+/// 输出：全部冻结约束满足时为 true。
+/// 不变量：列表最多 512 项；非空项均满足统一模型 ID 边界且不得重复。
+/// 失败：本函数不执行 I/O 且不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn model_ids_are_valid(model_ids: &[String], allow_empty: bool) -> bool {
+    if (!allow_empty && model_ids.is_empty()) || model_ids.len() > MAX_MODEL_IDS {
+        return false;
+    }
+    let mut unique = BTreeSet::new();
+    model_ids
+        .iter()
+        .all(|model_id| model_id_is_valid(model_id) && unique.insert(model_id))
+}
+
 /// 功能：验证完整连接文档的版本、容量、唯一性、排序无关字段边界。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -1101,7 +1353,7 @@ fn validate_stored_connection(
 
 /// 功能：验证 RPC 连接输入的全部品牌中立边界。
 ///
-/// 输入：显示名、Provider ID、唯一模型列表、可选 Logo ID、family、base URL 与 enabled。
+/// 输入：显示名、Provider ID、0..512 项唯一模型列表、可选 Logo ID、family、base URL 与 enabled。
 /// 输出：全部字段满足约束时成功。
 /// 不变量：生产 URL 仅 HTTPS；conformance 例外仅允许字面 `127.0.0.1` HTTP。
 /// 失败：任一字段无效时返回不回显实例值的 `invalid_params`。
@@ -1129,18 +1381,8 @@ fn validate_connection_input(
         return Err(invalid_connection("apiFamily", "Provider API family 无效"));
     }
     validate_base_url(&input.base_url, allow_conformance_loopback)?;
-    if input.model_ids.is_empty() || input.model_ids.len() > 64 {
+    if !model_ids_are_valid(&input.model_ids, true) {
         return Err(invalid_connection("modelIds", "Provider 模型列表无效"));
-    }
-    let mut models = BTreeSet::new();
-    for model_id in &input.model_ids {
-        if model_id.is_empty()
-            || model_id.chars().count() > 256
-            || model_id.chars().any(char::is_control)
-            || !models.insert(model_id)
-        {
-            return Err(invalid_connection("modelIds", "Provider 模型列表无效"));
-        }
     }
     if let Some(logo_asset_id) = &input.logo_asset_id {
         validate_safe_id(logo_asset_id, 128, "logoAssetId")?;
@@ -1483,6 +1725,60 @@ fn provider_id_conflict() -> AgentError {
         .with_details(json!({"kind":"provider_id_conflict"}))
 }
 
+/// 功能：把模型发现 reqwest 错误收敛为不含网络私有细节的稳定错误。
+///
+/// 输入：可能携带 URL 或底层连接文本的 reqwest 错误。
+/// 输出：超时映射为 Timeout，其余传输失败映射为 ProviderUnavailable。
+/// 不变量：不传播原错误消息、URL、header 或响应内容。
+/// 失败：本函数只转换错误且不返回成功值。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn map_model_discovery_transport_error(error: reqwest::Error) -> AgentError {
+    if error.is_timeout() {
+        AgentError::new(ErrorCode::Timeout, "Provider 模型发现超时")
+            .retryable(true)
+            .with_details(json!({"kind":"provider_model_discovery_timeout"}))
+    } else {
+        model_discovery_unavailable()
+    }
+}
+
+/// 功能：构造模型发现客户端、凭据 header 或传输不可用的固定错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn model_discovery_unavailable() -> AgentError {
+    AgentError::new(ErrorCode::ProviderUnavailable, "Provider 模型发现不可用")
+        .retryable(true)
+        .with_details(json!({"kind":"provider_model_discovery_unavailable"}))
+}
+
+/// 功能：构造模型目录返回非 200 状态时的固定错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn model_discovery_http_error() -> AgentError {
+    AgentError::new(ErrorCode::ProviderError, "Provider 模型目录请求失败")
+        .with_details(json!({"kind":"provider_model_discovery_http_error"}))
+}
+
+/// 功能：构造模型目录正文或模型数量超过冻结上限的固定错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn model_discovery_output_limit() -> AgentError {
+    AgentError::new(
+        ErrorCode::OutputLimitExceeded,
+        "Provider 模型目录超过输出上限",
+    )
+    .with_details(json!({"kind":"provider_model_discovery_output_limit"}))
+}
+
+/// 功能：构造模型目录 JSON、DTO、ID 或空目录无效的固定错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn model_discovery_invalid_response() -> AgentError {
+    AgentError::new(ErrorCode::ProviderError, "Provider 模型目录响应无效")
+        .with_details(json!({"kind":"provider_model_discovery_invalid_response"}))
+}
+
 /// 功能：把 CredentialStore 内部错误收敛为 Provider connection 固定 store 分类。
 ///
 /// 输入：可能包含内部操作 kind、但已保证不含 credential 值的结构化错误。
@@ -1566,13 +1862,21 @@ fn connection_store_error(kind: &str, message: impl Into<String>) -> AgentError 
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
+    use reqwest::Url;
     use serde_json::json;
     use tempfile::tempdir;
 
     use super::{
         CustomProviderConnectionInput, CustomProviderConnectionService,
-        CustomProviderConnectionStore, ProviderConnectionsCreateParams, validate_base_url,
+        CustomProviderConnectionStore, ProviderConnectionsCreateParams,
+        ProviderConnectionsDiscoverModelsParams, build_model_discovery_client,
+        fetch_discovered_model_ids, parse_discovered_model_ids, validate_base_url,
     };
     use crate::commercial_state::ProviderCredentialStore;
 
@@ -1914,6 +2218,196 @@ mod tests {
         Ok(())
     }
 
+    /// 功能：验证模型目录严格解析、去重排序以及冻结的 ID 和数量边界。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn parses_discovered_models_strictly() -> Result<(), Box<dyn std::error::Error>> {
+        let models = parse_discovered_model_ids(
+            br#"{
+                "object":"list",
+                "request_id":"request-redacted",
+                "data":[
+                    {"id":"model-b","object":"model","created":1,"owned_by":"provider"},
+                    {"id":"model-a","metadata":{"tier":"standard"}},
+                    {"id":"model-b"}
+                ]
+            }"#,
+        )?;
+        assert_eq!(models, vec!["model-a".to_owned(), "model-b".to_owned()]);
+
+        for invalid in [
+            br#"{"data":[]}"#.as_slice(),
+            br#"{}"#.as_slice(),
+            br#"{"data":{}}"#.as_slice(),
+            br#"{"data":[{}]}"#.as_slice(),
+            br#"{"data":[{"id":1}]}"#.as_slice(),
+            br#"{"data":[{"id":"first","id":"second"}]}"#.as_slice(),
+            br#"{"data":[],"data":[{"id":"model-a"}]}"#.as_slice(),
+            br#"{"data":[{"id":"model-a","metadata":{"tier":1,"tier":2}}]}"#.as_slice(),
+            br#"{"data":[{"id":""}]}"#.as_slice(),
+            br#"{"data":[{"id":"bad\u0000id"}]}"#.as_slice(),
+        ] {
+            let error = parse_discovered_model_ids(invalid)
+                .expect_err("strict model response must be rejected");
+            assert_eq!(error.code, crate::error::ErrorCode::ProviderError);
+        }
+
+        let oversized_id = serde_json::to_vec(&json!({
+            "data":[{"id":"x".repeat(257)}]
+        }))?;
+        let oversized_error = parse_discovered_model_ids(&oversized_id)
+            .expect_err("257-byte model ID must be rejected");
+        assert_eq!(oversized_error.code, crate::error::ErrorCode::ProviderError);
+
+        let too_many = serde_json::to_vec(&json!({
+            "data":(0..513)
+                .map(|index| json!({"id":format!("model-{index:03}")}))
+                .collect::<Vec<_>>()
+        }))?;
+        let limit_error =
+            parse_discovered_model_ids(&too_many).expect_err("513 unique models must be rejected");
+        assert_eq!(
+            limit_error.code,
+            crate::error::ErrorCode::OutputLimitExceeded
+        );
+        Ok(())
+    }
+
+    /// 功能：验证连接输入允许空与 512 项模型，同时空模型连接不会进入可执行快照。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn accepts_model_input_bounds_and_excludes_empty_runtime_connection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempdir()?;
+        let state = root.path().join("state");
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(&workspace)?;
+        let service = service(&state, &workspace)?;
+
+        let mut empty = input("empty-models", true);
+        empty.model_ids.clear();
+        let _ = service.create(empty)?;
+        service.set_credential("empty-models", "empty-model-secret")?;
+        let snapshot = service.runtime_snapshot()?;
+        assert!(!snapshot.contains_provider("empty-models"));
+        assert!(snapshot.models(None).is_empty());
+        assert!(snapshot.build_providers()?.is_empty());
+
+        let mut maximum = input("maximum-models", true);
+        maximum.model_ids = (0..512).map(|index| format!("model-{index:03}")).collect();
+        let maximum_created = service.create(maximum.clone())?;
+        assert_eq!(maximum_created.model_ids.len(), 512);
+
+        maximum.provider_id = "too-many-models".to_owned();
+        maximum.model_ids.push("model-512".to_owned());
+        let error = service
+            .create(maximum)
+            .expect_err("513 input models must be rejected");
+        assert_eq!(error.code, crate::error::ErrorCode::InvalidParams);
+        assert_eq!(error.details["field"], "modelIds");
+        Ok(())
+    }
+
+    /// 功能：验证模型发现的 CAS 仅替换模型字段，且 stale revision 不修改已发布连接。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn discovered_models_replace_only_models_with_cas() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempdir()?;
+        let state = root.path().join("state");
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(&workspace)?;
+        let service = service(&state, &workspace)?;
+        let created = service.create(input("discovery-cas", true))?;
+        let before = service
+            .connections
+            .read_for_model_discovery(&created.connection_id, created.revision)?;
+        thread::sleep(Duration::from_millis(2));
+
+        let discovered = vec!["discovered-a".to_owned(), "discovered-z".to_owned()];
+        let updated = service.connections.replace_discovered_models(
+            &created.connection_id,
+            created.revision,
+            discovered.clone(),
+        )?;
+        let mut expected = before.clone();
+        expected.revision += 1;
+        expected.model_ids = discovered;
+        expected.updated_at.clone_from(&updated.updated_at);
+        assert_eq!(updated, expected);
+        assert!(updated.updated_at >= before.updated_at);
+
+        let conflict = service
+            .connections
+            .replace_discovered_models(
+                &created.connection_id,
+                created.revision,
+                vec!["must-not-persist".to_owned()],
+            )
+            .expect_err("stale discovery CAS must fail");
+        assert_eq!(conflict.code, crate::error::ErrorCode::Conflict);
+        let persisted = service
+            .connections
+            .read_for_model_discovery(&created.connection_id, updated.revision)?;
+        assert_eq!(persisted, updated);
+        Ok(())
+    }
+
+    /// 功能：验证模型发现发送固定 GET 与 Bearer header，并规范化本机 mock 响应。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn fetches_models_with_bearer_authentication() -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let address = listener.local_addr()?;
+        let (request_sender, request_receiver) = mpsc::channel();
+        let server = thread::spawn(move || -> Result<(), std::io::Error> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let _ = request_sender.send(String::from_utf8_lossy(&request).into_owned());
+            let body = br#"{"data":[{"id":"model-z"},{"id":"model-a"},{"id":"model-z"}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(response.as_bytes())?;
+            stream.write_all(body)?;
+            stream.flush()?;
+            Ok(())
+        });
+
+        let endpoint = Url::parse(&format!("http://{address}/models"))?;
+        let models = fetch_discovered_model_ids(
+            &build_model_discovery_client()?,
+            endpoint,
+            "model-discovery-canary".to_owned(),
+        )
+        .await?;
+        server
+            .join()
+            .map_err(|_| std::io::Error::other("model mock server panicked"))??;
+        let request = request_receiver.recv_timeout(Duration::from_secs(2))?;
+        assert!(request.starts_with("GET /models HTTP/1.1\r\n"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer model-discovery-canary\r\n")
+        );
+        assert_eq!(models, vec!["model-a".to_owned(), "model-z".to_owned()]);
+        Ok(())
+    }
+
     /// 功能：验证 RPC input 使用 strict camelCase 并拒绝未知字段。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1932,5 +2426,13 @@ mod tests {
             }
         });
         assert!(serde_json::from_value::<ProviderConnectionsCreateParams>(value).is_err());
+        assert!(
+            serde_json::from_value::<ProviderConnectionsDiscoverModelsParams>(json!({
+                "connectionId":"connection-test",
+                "expectedRevision":1,
+                "credential":"must-not-be-accepted"
+            }))
+            .is_err()
+        );
     }
 }

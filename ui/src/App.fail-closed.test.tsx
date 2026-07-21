@@ -127,6 +127,8 @@ function createTestService(
       overrides.createProviderConnection ?? base.createProviderConnection.bind(base),
     updateProviderConnection:
       overrides.updateProviderConnection ?? base.updateProviderConnection.bind(base),
+    discoverProviderModels:
+      overrides.discoverProviderModels ?? base.discoverProviderModels.bind(base),
     deleteProviderConnection:
       overrides.deleteProviderConnection ?? base.deleteProviderConnection.bind(base),
     setProviderCredential:

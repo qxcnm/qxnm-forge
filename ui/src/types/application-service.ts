@@ -85,6 +85,13 @@ export interface ProviderConnectionMutationResult {
   readonly restartRequired: true;
 }
 
+/** Provider 远端模型发现成功后的严格脱敏响应。 */
+export interface ProviderModelDiscoveryResult {
+  readonly connection: ProviderConnection;
+  readonly discoveredCount: number;
+  readonly restartRequired: true;
+}
+
 /** Provider 连接删除后的严格响应。 */
 export interface ProviderConnectionDeleteResult {
   readonly deleted: true;
@@ -467,6 +474,20 @@ export interface ApplicationServiceClient extends AgentProfileService {
     expectedRevision: number,
     input: ProviderConnectionInput,
   ): Promise<ProviderConnectionMutationResult>;
+
+  /**
+   * 显式请求后端发现并保存一条连接的 OpenAI-compatible 模型目录。
+   *
+   * 输入：最近读取的连接标识与 revision；输出：只含脱敏连接和模型数量。
+   * 不变量：UI 不读取 credential、不自行请求 endpoint，并以服务返回 revision 替换旧草稿。
+   * 失败：凭据缺失、网络/响应边界失败、空目录或 CAS 冲突时拒绝且不猜测模型。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  discoverProviderModels(
+    connectionId: string,
+    expectedRevision: number,
+  ): Promise<ProviderModelDiscoveryResult>;
 
   /**
    * 删除 Provider 连接及其关联凭据。

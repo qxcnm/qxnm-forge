@@ -8,6 +8,7 @@ import {
   createApplicationServiceClient,
   resetMockApplicationServiceState,
 } from "@/lib/mock-application-service";
+import type { ApplicationServiceClient } from "@/types/application-service";
 
 const PROVIDER_METHODS = [
   "providerConnections/list",
@@ -24,24 +25,29 @@ const PROVIDER_METHODS = [
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
-function renderProviderSettings() {
+function renderProviderSettings(
+  options: {
+    readonly service?: ApplicationServiceClient;
+    readonly supportedMethods?: readonly string[];
+  } = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
-  const service = createApplicationServiceClient("rust");
+  const service = options.service ?? createApplicationServiceClient("rust");
   const rendered = render(
     <QueryClientProvider client={queryClient}>
       <ProviderSettings
         backend="rust"
         service={service}
-        supportedMethods={PROVIDER_METHODS}
+        supportedMethods={options.supportedMethods ?? PROVIDER_METHODS}
       />
     </QueryClientProvider>,
   );
-  return { ...rendered, queryClient };
+  return { ...rendered, queryClient, service };
 }
 
 describe("ProviderSettings secret import boundary", () => {
@@ -97,6 +103,9 @@ describe("ProviderSettings secret import boundary", () => {
     expect(importInput).toHaveValue("");
     expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "password");
     expect(screen.getByLabelText("API Key")).toHaveValue(importedSecret);
+    fireEvent.change(screen.getByLabelText("模型 ID"), {
+      target: { value: "manual-preview-model" },
+    });
     expect(
       JSON.stringify(
         queryClient
@@ -141,6 +150,65 @@ describe("ProviderSettings secret import boundary", () => {
   });
 
   /**
+   * 验证桌面 capability 可把空模型连接、瞬时凭据与显式发现串成一次保存流程。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("discovers models after saving a credential-backed connection", async () => {
+    const service = createApplicationServiceClient("rust");
+    const discoverModels = vi
+      .spyOn(service, "discoverProviderModels")
+      .mockImplementation((connectionId, expectedRevision) =>
+        Promise.resolve({
+          connection: {
+            connectionId,
+            revision: expectedRevision + 1,
+            displayName: "星思研 New API",
+            providerId: "newapi-gzxsy",
+            baseUrl: "https://api.example.invalid/v1",
+            apiFamily: "openai-completions",
+            modelIds: ["model-a", "model-b"],
+            logoAssetId: "newapi-gzxsy",
+            enabled: true,
+            credentialConfigured: true,
+            createdAt: "2026-07-22T00:00:00Z",
+            updatedAt: "2026-07-22T00:00:01Z",
+          },
+          discoveredCount: 2,
+          restartRequired: true,
+        }),
+      );
+    renderProviderSettings({
+      service,
+      supportedMethods: [
+        ...PROVIDER_METHODS,
+        "providerConnections/discoverModels",
+      ],
+    });
+    const importInput = await screen.findByLabelText("导入 New API 连接 JSON");
+
+    fireEvent.change(importInput, {
+      target: {
+        value:
+          '{"_type":"newapi_channel_conn","key":"discovery-secret","url":"https://api.example.invalid"}',
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    expect(screen.getByLabelText("模型 ID")).toHaveValue("");
+    fireEvent.click(
+      screen.getByRole("button", { name: "保存并获取模型" }),
+    );
+
+    expect(
+      await screen.findByText("已获取并保存 2 个模型，模型选择器已刷新"),
+    ).toBeInTheDocument();
+    expect(discoverModels).toHaveBeenCalledWith(expect.any(String), 1);
+    expect(screen.getByLabelText("模型 ID")).toHaveValue("model-a\nmodel-b");
+    expect(screen.getByLabelText("API Key")).toHaveValue("");
+  });
+
+  /**
    * 验证 Provider 保存先等待新 initialize 代际，再失效 models 查询。
    *
    * 作者：高宏顺
@@ -179,6 +247,9 @@ describe("ProviderSettings secret import boundary", () => {
       },
     });
     fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    fireEvent.change(screen.getByLabelText("模型 ID"), {
+      target: { value: "manual-preview-model" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(invalidationSpy).toHaveBeenCalledTimes(2));
@@ -253,6 +324,9 @@ describe("ProviderSettings secret import boundary", () => {
       },
     });
     fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    fireEvent.change(screen.getByLabelText("模型 ID"), {
+      target: { value: "manual-preview-model" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     expect(

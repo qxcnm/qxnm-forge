@@ -147,6 +147,19 @@ public sealed record ProviderConnectionResult(
     bool RestartRequired);
 
 /// <summary>
+/// 功能：表示远端模型发现成功并以 CAS 发布后的 durable 回执。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Connection">只替换模型并递增 revision 后的脱敏连接。</param>
+/// <param name="DiscoveredCount">去重后发布的模型数量。</param>
+/// <param name="RestartRequired">启动期路由快照需重启后更新。</param>
+public sealed record ProviderModelDiscoveryResult(
+    ProviderConnection Connection,
+    int DiscoveredCount,
+    bool RestartRequired);
+
+/// <summary>
 /// 功能：表示 Provider 连接删除完成的回执。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com

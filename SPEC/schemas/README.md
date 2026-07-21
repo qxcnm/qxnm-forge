@@ -50,8 +50,8 @@ Author: 高宏顺 `<18272669457@163.com>`.
 - `sponsored-provider-installation.schema.json`：用户明确确认后固定且不含 secret 的本地 route。
 - `provider-credential-store.schema.json`：只允许工作区外敏感文件使用的 API-key store；
   不得把其实例放入 fixture、协议或 Session。
-- `custom-provider-connection.schema.json`：ADR 0029 的非敏感自定义连接、CAS 参数与
-  credential 状态；连接实体和列表永远不含 credential。
+- `custom-provider-connection.schema.json`：ADR 0029 的非敏感自定义连接、CAS 与显式模型发现
+  参数、credential 状态；连接实体、发现结果和列表永远不含 credential。
 - `storage-config.schema.json`：不携带远程连接串值的 SQLite/PostgreSQL/MySQL provider 配置。
 - `language-profiles.schema.json`：共享项目检测与工具链操作元数据。
 - `capability-matrix.schema.json`：稀疏支持矩阵；Provider target 必须同时包含

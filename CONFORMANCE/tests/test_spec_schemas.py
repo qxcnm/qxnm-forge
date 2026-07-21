@@ -364,7 +364,7 @@ class SpecSchemaTests(unittest.TestCase):
         """功能：验证自定义连接 DTO 与 CredentialStore 保持严格分离。
 
         输入：一个合法 HTTPS OpenAI-compatible connection 及安全负例。
-        输出：合法实体通过，secret、危险 URL、重复模型和未知字段全部拒绝。
+        输出：合法及待发现空目录实体通过，secret、危险 URL、重复模型和未知字段全部拒绝。
         不变量：可读取的 connection 投影永远只有 credentialConfigured 状态。
         失败：ADR 0029 的字段或封闭对象约束漂移时测试失败。
         作者：高宏顺
@@ -389,6 +389,9 @@ class SpecSchemaTests(unittest.TestCase):
             "updatedAt": "2026-07-21T00:00:00Z",
         }
         validator.validate(connection)
+        pending_discovery = deepcopy(connection)
+        pending_discovery["modelIds"] = []
+        validator.validate(pending_discovery)
         configuration = {
             key: value
             for key, value in connection.items()
@@ -431,6 +434,11 @@ class SpecSchemaTests(unittest.TestCase):
                 "providerConnectionsDeleteRequest",
             ),
             (
+                "providerConnections/discoverModels",
+                {"connectionId": connection["connectionId"], "expectedRevision": 1},
+                "providerConnectionsDiscoverModelsRequest",
+            ),
+            (
                 "providerCredentials/set",
                 {"providerId": "custom-example", "credential": "test-only-secret"},
                 "providerCredentialsSetRequest",
@@ -452,6 +460,15 @@ class SpecSchemaTests(unittest.TestCase):
                 self.validator(
                     "protocol/jsonrpc.schema.json", f"#/$defs/{definition}"
                 ).validate(request)
+        self.validator(
+            "custom-provider-connection.schema.json", "#/$defs/discoverModelsResult"
+        ).validate(
+            {
+                "connection": connection,
+                "discoveredCount": 1,
+                "restartRequired": True,
+            }
+        )
         for field, value in (
             ("credential", "forbidden"),
             ("apiKey", "forbidden"),

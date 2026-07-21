@@ -12,6 +12,7 @@ import type {
   ProviderConnectionInput,
   ProviderConnectionMutationResult,
   ProviderCredentialStatus,
+  ProviderModelDiscoveryResult,
   RunStartInput,
   RunStartResult,
   SessionSnapshot,
@@ -141,7 +142,7 @@ const providerConnectionInputSchema = z
     providerId: z.string().max(128).regex(PROVIDER_ID_PATTERN),
     baseUrl: z.string().min(1).max(2_048).refine(isSafeProviderBaseUrl),
     apiFamily: z.literal("openai-completions"),
-    modelIds: z.array(z.string().min(1).max(256)).min(1).max(64).refine(hasUniqueValues),
+    modelIds: z.array(z.string().min(1).max(256)).max(512).refine(hasUniqueValues),
     logoAssetId: z.string().min(1).max(128).regex(PROVIDER_ID_PATTERN).nullable(),
     enabled: z.boolean(),
   })
@@ -163,6 +164,17 @@ const providerConnectionResultSchema = z
 const providerConnectionListResultSchema = z
   .object({ connections: z.array(providerConnectionSchema) })
   .strict();
+const providerModelDiscoveryResultSchema = z
+  .object({
+    connection: providerConnectionSchema,
+    discoveredCount: z.number().int().min(1).max(512),
+    restartRequired: z.literal(true),
+  })
+  .strict()
+  .refine(
+    (result) => result.discoveredCount === result.connection.modelIds.length,
+    { message: "Provider model discovery count does not match the connection snapshot" },
+  );
 const providerCredentialStatusSchema = z
   .object({
     providerId: z.string().max(128).regex(PROVIDER_ID_PATTERN),
@@ -892,6 +904,27 @@ export class TauriApplicationServiceClient implements ApplicationServiceClient {
         connectionId,
         expectedRevision,
         connection,
+      }),
+    );
+  }
+
+  /**
+   * 通过受限 application-service RPC 显式发现并持久化远端模型目录。
+   *
+   * 输入：服务签发的连接 ID 与最近 revision；输出：严格脱敏的更新连接。
+   * 不变量：请求不携带 credential、endpoint 或模型猜测，计数必须与返回 allowlist 一致。
+   * 失败：输入、远端发现、CAS、传输或响应 Schema 无效时拒绝。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public async discoverProviderModels(
+    connectionId: string,
+    expectedRevision: number,
+  ): Promise<ProviderModelDiscoveryResult> {
+    return providerModelDiscoveryResultSchema.parse(
+      await this.#request("providerConnections/discoverModels", {
+        connectionId,
+        expectedRevision,
       }),
     );
   }

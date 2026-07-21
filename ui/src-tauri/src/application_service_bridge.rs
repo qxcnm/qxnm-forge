@@ -556,6 +556,7 @@ fn allowed_method(method: &str) -> bool {
             | "providerConnections/create"
             | "providerConnections/update"
             | "providerConnections/delete"
+            | "providerConnections/discoverModels"
             | "session/list"
             | "session/archive"
             | "session/restore"
@@ -570,7 +571,10 @@ fn allowed_method(method: &str) -> bool {
 fn restarts_daemon_after_success(method: &str) -> bool {
     matches!(
         method,
-        "providerConnections/create" | "providerConnections/update" | "providerConnections/delete"
+        "providerConnections/create"
+            | "providerConnections/update"
+            | "providerConnections/delete"
+            | "providerConnections/discoverModels"
     )
 }
 
@@ -773,6 +777,7 @@ mod tests {
     fn method_allowlist_is_narrow() {
         assert!(allowed_method("agentProfiles/create"));
         assert!(allowed_method("providerConnections/list"));
+        assert!(allowed_method("providerConnections/discoverModels"));
         assert!(allowed_method("session/archive"));
         assert!(allowed_method("run/start"));
         assert!(!allowed_method("providerCredentials/set"));
@@ -789,6 +794,9 @@ mod tests {
     fn provider_mutations_restart_capability_snapshot() {
         assert!(restarts_daemon_after_success("providerConnections/create"));
         assert!(restarts_daemon_after_success("providerConnections/update"));
+        assert!(restarts_daemon_after_success(
+            "providerConnections/discoverModels"
+        ));
         assert!(!restarts_daemon_after_success("providerConnections/list"));
         assert!(!restarts_daemon_after_success("session/archive"));
     }

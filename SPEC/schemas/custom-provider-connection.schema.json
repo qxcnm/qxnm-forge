@@ -24,8 +24,8 @@
         "modelIds": {
           "type": "array",
           "items": { "type": "string", "minLength": 1, "maxLength": 256 },
-          "minItems": 1,
-          "maxItems": 64,
+          "minItems": 0,
+          "maxItems": 512,
           "uniqueItems": true
         },
         "logoAssetId": {
@@ -63,8 +63,8 @@
         "modelIds": {
           "type": "array",
           "items": { "type": "string", "minLength": 1, "maxLength": 256 },
-          "minItems": 1,
-          "maxItems": 64,
+          "minItems": 0,
+          "maxItems": 512,
           "uniqueItems": true
         },
         "logoAssetId": {
@@ -104,8 +104,8 @@
         "modelIds": {
           "type": "array",
           "items": { "type": "string", "minLength": 1, "maxLength": 256 },
-          "minItems": 1,
-          "maxItems": 64,
+          "minItems": 0,
+          "maxItems": 512,
           "uniqueItems": true
         },
         "logoAssetId": {
@@ -158,6 +158,25 @@
       "properties": {
         "connectionId": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/opaqueId" },
         "expectedRevision": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "discoverModelsParams": {
+      "type": "object",
+      "required": ["connectionId", "expectedRevision"],
+      "properties": {
+        "connectionId": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/opaqueId" },
+        "expectedRevision": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "discoverModelsResult": {
+      "type": "object",
+      "required": ["connection", "discoveredCount", "restartRequired"],
+      "properties": {
+        "connection": { "$ref": "#/$defs/connection" },
+        "discoveredCount": { "type": "integer", "minimum": 1, "maximum": 512 },
+        "restartRequired": { "const": true }
       },
       "additionalProperties": false
     },

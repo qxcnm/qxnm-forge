@@ -57,6 +57,66 @@ interface ImportedConnection {
   readonly credential: string;
 }
 
+interface ProviderPreset {
+  readonly id: string;
+  readonly displayName: string;
+  readonly providerId: string;
+  readonly baseUrl: string;
+  readonly logoAssetId: string;
+}
+
+const PROVIDER_PRESETS: readonly ProviderPreset[] = [
+  {
+    id: "new-api",
+    displayName: "New API",
+    providerId: "custom-newapi",
+    baseUrl: "",
+    logoAssetId: "newapi-gzxsy",
+  },
+  {
+    id: "openai",
+    displayName: "OpenAI",
+    providerId: "custom-openai",
+    baseUrl: "https://api.openai.com/v1",
+    logoAssetId: "",
+  },
+  {
+    id: "openrouter",
+    displayName: "OpenRouter",
+    providerId: "custom-openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    logoAssetId: "",
+  },
+  {
+    id: "groq",
+    displayName: "Groq",
+    providerId: "custom-groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    logoAssetId: "",
+  },
+  {
+    id: "deepseek",
+    displayName: "DeepSeek",
+    providerId: "custom-deepseek",
+    baseUrl: "https://api.deepseek.com",
+    logoAssetId: "",
+  },
+  {
+    id: "mistral",
+    displayName: "Mistral",
+    providerId: "custom-mistral",
+    baseUrl: "https://api.mistral.ai/v1",
+    logoAssetId: "",
+  },
+  {
+    id: "xai",
+    displayName: "xAI",
+    providerId: "custom-xai",
+    baseUrl: "https://api.x.ai/v1",
+    logoAssetId: "",
+  },
+];
+
 const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
   displayName: "",
   providerId: "",
@@ -148,7 +208,7 @@ function parseConnectionImport(source: string): ImportedConnection {
       providerId: "newapi-gzxsy",
       baseUrl: endpoint.toString().replace(/\/$/, ""),
       apiFamily: "openai-completions",
-      modelIdsText: "gpt-5",
+      modelIdsText: "",
       logoAssetId: "newapi-gzxsy",
       enabled: true,
     },
@@ -186,6 +246,7 @@ export function ProviderSettings({
   const canCreate = supportedMethods.includes("providerConnections/create");
   const canUpdate = supportedMethods.includes("providerConnections/update");
   const canDelete = supportedMethods.includes("providerConnections/delete");
+  const canDiscover = supportedMethods.includes("providerConnections/discoverModels");
   const canSetCredential = supportedMethods.includes("providerCredentials/set");
   const canRemoveCredential = supportedMethods.includes("providerCredentials/remove");
   const connectionsQuery = useQuery({
@@ -289,6 +350,41 @@ export function ProviderSettings({
   };
 
   /**
+   * 从受控本地目录填充 OpenAI-compatible 连接草稿，或打开已经保存的同 ID 连接。
+   *
+   * 输入：构建期固定 preset；输出：不含 credential 和猜测模型的表单草稿。
+   * 不变量：preset 只选择现有通用 adapter，不把自定义 endpoint 冒充 canonical Provider。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  const selectPreset = (preset: ProviderPreset) => {
+    const existingConnection = connections.find(
+      (connection) => connection.providerId === preset.providerId,
+    );
+    if (existingConnection) {
+      selectConnection(existingConnection);
+      return;
+    }
+    if (saving) {
+      return;
+    }
+    setSelectedConnectionId(null);
+    setEditingRevision(null);
+    setDraft({
+      displayName: preset.displayName,
+      providerId: preset.providerId,
+      baseUrl: preset.baseUrl,
+      apiFamily: "openai-completions",
+      modelIdsText: "",
+      logoAssetId: preset.logoAssetId,
+      enabled: true,
+    });
+    setCredential("");
+    setNotice(null);
+    setErrorMessage(null);
+  };
+
+  /**
    * 从未受控密码输入同步读取 New API JSON，并填充草稿与瞬时密码输入。
    *
    * 不变量：完整导入原文不进入 React state，且成功或失败后都会立即从 DOM 清空。
@@ -371,9 +467,6 @@ export function ProviderSettings({
         return;
       }
 
-      setSelectedConnectionId(result.connection.connectionId);
-      setEditingRevision(result.connection.revision);
-      setDraft(connectionToDraft(result.connection));
       if (pendingCredential.trim()) {
         try {
           await service.setProviderCredential(result.connection.providerId, pendingCredential);
@@ -383,6 +476,27 @@ export function ProviderSettings({
           return;
         }
       }
+      let savedConnection = result.connection;
+      let discoveredCount: number | null = null;
+      let discoveryFailed = false;
+      if (
+        canDiscover &&
+        (pendingCredential.trim().length > 0 || result.connection.credentialConfigured)
+      ) {
+        try {
+          const discovery = await service.discoverProviderModels(
+            result.connection.connectionId,
+            result.connection.revision,
+          );
+          savedConnection = discovery.connection;
+          discoveredCount = discovery.discoveredCount;
+        } catch {
+          discoveryFailed = true;
+        }
+      }
+      setSelectedConnectionId(savedConnection.connectionId);
+      setEditingRevision(savedConnection.revision);
+      setDraft(connectionToDraft(savedConnection));
       try {
         await refreshProviderQueries();
       } catch {
@@ -390,10 +504,15 @@ export function ProviderSettings({
         return;
       }
       setNotice(
-        result.restartRequired && service.mode === "application-service"
+        discoveredCount !== null
+          ? t("provider.modelsDiscovered", { count: discoveredCount })
+          : result.restartRequired && service.mode === "application-service"
           ? t("provider.savedAndReconnected")
           : t("provider.savedPreview"),
       );
+      if (discoveryFailed) {
+        setErrorMessage(t("provider.discoveryFailed"));
+      }
     } finally {
       setSaving(false);
     }
@@ -511,6 +630,45 @@ export function ProviderSettings({
           <p className="px-3 py-4 text-[11px] text-muted-foreground">{t("provider.loading")}</p>
         ) : (
           <div className="space-y-0.5 px-2">
+            <p className="px-2 pb-1 pt-2 text-[9px] font-medium uppercase text-muted-foreground">
+              {t("provider.compatibleCatalog")}
+            </p>
+            <div className="mb-3 grid grid-cols-2 gap-1">
+              {PROVIDER_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => selectPreset(preset)}
+                  disabled={saving || !canCreate}
+                  className="flex h-9 min-w-0 items-center gap-2 rounded-md px-2 text-left text-[10px] text-foreground/75 hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+                  aria-label={t("provider.usePreset", { name: preset.displayName })}
+                >
+                  {preset.logoAssetId &&
+                  !failedLogoAssetIds.has(preset.logoAssetId) ? (
+                    <img
+                      src={getProviderLogoUrl(preset.logoAssetId) ?? undefined}
+                      alt=""
+                      className="size-5 shrink-0 rounded border bg-white object-contain"
+                      onError={() => {
+                        setFailedLogoAssetIds((currentIds) =>
+                          new Set(currentIds).add(preset.logoAssetId),
+                        );
+                      }}
+                    />
+                  ) : (
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded border bg-background text-[8px] font-semibold text-muted-foreground">
+                      {preset.displayName.slice(0, 2).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="truncate">{preset.displayName}</span>
+                </button>
+              ))}
+            </div>
+            {connections.length > 0 ? (
+              <p className="px-2 pb-1 text-[9px] font-medium uppercase text-muted-foreground">
+                {t("provider.savedConnections")}
+              </p>
+            ) : null}
             {connections.map((connection) => {
               const logoAssetId = connection.logoAssetId;
               const logoUrl = getProviderLogoUrl(logoAssetId);
@@ -710,8 +868,13 @@ export function ProviderSettings({
               onChange={(event) => setDraft({ ...draft, modelIdsText: event.target.value })}
               className="min-h-16 resize-y font-mono text-[10px]"
               placeholder={t("provider.fields.modelIdsPlaceholder")}
-              required
+              required={!canDiscover}
             />
+            <p className="text-[9px] leading-4 text-muted-foreground">
+              {canDiscover
+                ? t("provider.fields.modelIdsDiscoveryHint")
+                : t("provider.fields.modelIdsManualHint")}
+            </p>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <div className="flex items-center justify-between gap-2">
@@ -767,7 +930,12 @@ export function ProviderSettings({
             className="h-8 px-3 text-[10px]"
             disabled={saving || (selectedConnectionId ? !canUpdate : !canCreate)}
           >
-            {saving ? t("common.saving") : t("common.save")}
+            {saving
+              ? t("provider.savingAndDiscovering")
+              : canDiscover &&
+                  (credential.trim().length > 0 || selectedConnection?.credentialConfigured)
+                ? t("provider.saveAndDiscover")
+                : t("common.save")}
           </Button>
         </div>
         </fieldset>

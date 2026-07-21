@@ -1,8 +1,27 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Conversation } from "@/components/conversation";
 import i18n from "@/i18n";
+import type { PendingApproval } from "@/types/application-service";
+
+const PENDING_APPROVAL: PendingApproval = {
+  sessionId: "session-approval",
+  runId: "run-approval",
+  requestedAt: "2026-07-22T01:00:00.000Z",
+  request: {
+    approvalId: "approval-visible",
+    toolCallId: "tool-call-visible",
+    operation: "file.write",
+    arguments: { path: "notes.txt" },
+    operationHash: "a".repeat(64),
+    risk: "medium",
+    reason: "写入工作区文件",
+    resources: [{ kind: "path", value: "notes.txt" }],
+    choices: ["allow_once", "deny"],
+    expiresAt: "2099-07-22T02:00:00.000Z",
+  },
+};
 
 describe("Conversation", () => {
   beforeEach(async () => {
@@ -91,5 +110,45 @@ describe("Conversation", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试读取" }));
 
     expect(onRetryHistory).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 验证长会话只在 transcript 内滚动，审批操作 dock 始终位于滚动容器外并保留有限决定按钮。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("keeps approval actions outside the scrolling transcript", () => {
+    render(
+      <Conversation
+        backendLabel="Rust"
+        messages={Array.from({ length: 80 }, (_, index) => ({
+          id: `message-${index}`,
+          role: "assistant" as const,
+          content: `历史消息 ${index}`,
+        }))}
+        busy={false}
+        showFixture={false}
+        historyLoading={false}
+        historyError={false}
+        onRetryHistory={vi.fn()}
+        pendingApprovals={[PENDING_APPROVAL]}
+        approvalResponseAvailable
+        approvalInteractionLocked={false}
+        approvalSubmission={null}
+        approvalError={null}
+        approvalConfirmations={[]}
+        onRespondToApproval={vi.fn()}
+        onRetryApprovalRefresh={vi.fn()}
+      />,
+    );
+
+    const transcript = screen.getByTestId("conversation-transcript");
+    const approvalDock = screen.getByTestId("pending-approval-dock");
+
+    expect(transcript).not.toContainElement(approvalDock);
+    expect(transcript.nextElementSibling).toBe(approvalDock);
+    expect(within(approvalDock).getByRole("button", { name: /允许一次/ })).toBeVisible();
+    expect(within(approvalDock).getByRole("button", { name: /拒绝/ })).toBeVisible();
   });
 });

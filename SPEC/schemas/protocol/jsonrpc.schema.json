@@ -70,6 +70,7 @@
               "providerConnections/create",
               "providerConnections/update",
               "providerConnections/delete",
+              "providerConnections/discoverModels",
               "providerCredentials/set",
               "providerCredentials/remove",
               "run/start",
@@ -656,6 +657,13 @@
         "params": { "$ref": "../custom-provider-connection.schema.json#/$defs/deleteParams" }
       }
     },
+    "providerConnectionsDiscoverModelsRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "providerConnections/discoverModels" },
+        "params": { "$ref": "../custom-provider-connection.schema.json#/$defs/discoverModelsParams" }
+      }
+    },
     "providerCredentialsSetRequest": {
       "$ref": "#/$defs/baseRequest",
       "properties": {
@@ -784,6 +792,7 @@
         { "$ref": "#/$defs/providerConnectionsCreateRequest" },
         { "$ref": "#/$defs/providerConnectionsUpdateRequest" },
         { "$ref": "#/$defs/providerConnectionsDeleteRequest" },
+        { "$ref": "#/$defs/providerConnectionsDiscoverModelsRequest" },
         { "$ref": "#/$defs/providerCredentialsSetRequest" },
         { "$ref": "#/$defs/providerCredentialsRemoveRequest" },
         { "$ref": "#/$defs/runStartRequest" },

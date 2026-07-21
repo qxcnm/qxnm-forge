@@ -9,6 +9,7 @@ import type {
   ProviderConnectionInput,
   ProviderConnectionMutationResult,
   ProviderCredentialStatus,
+  ProviderModelDiscoveryResult,
   RunStartInput,
   RunStartResult,
   SessionSnapshot,
@@ -364,8 +365,7 @@ function normalizeProviderInput(input: ProviderConnectionInput): ProviderConnect
     RESERVED_PROVIDER_IDS.has(providerId) ||
     providerId.startsWith("relay-") ||
     apiFamily !== "openai-completions" ||
-    modelIds.length === 0 ||
-    modelIds.length > 64 ||
+    modelIds.length > 512 ||
     baseUrl.protocol !== "https:" ||
     baseUrl.username !== "" ||
     baseUrl.password !== "" ||
@@ -707,6 +707,24 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
     this.#state.providerConnections.set(connectionId, connection);
     await wait(60);
     return { connection: cloneProviderConnection(connection), restartRequired: true };
+  }
+
+  /**
+   * 拒绝在普通浏览器 faux 预览中访问用户配置的远端模型目录。
+   *
+   * 输入：连接标识与 revision；输出：本模式无成功结果。
+   * 不变量：浏览器预览不读取 credential，也不向 Provider 发起网络请求。
+   * 失败：始终拒绝；调用方应仅在 capability 广告本方法后调用。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public discoverProviderModels(
+    connectionId: string,
+    expectedRevision: number,
+  ): Promise<ProviderModelDiscoveryResult> {
+    void connectionId;
+    void expectedRevision;
+    return Promise.reject(new Error("Provider model discovery is unavailable in browser preview"));
   }
 
   /**
