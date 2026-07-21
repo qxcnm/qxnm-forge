@@ -6,6 +6,7 @@ using QxnmForge.Domain;
 using QxnmForge.Provider;
 using QxnmForge.Serialization;
 using QxnmForge.Session;
+using QxnmForge.Storage;
 using QxnmForge.Tools;
 
 namespace QxnmForge.Cli;
@@ -250,12 +251,26 @@ internal static class Program
                 options.Workspace,
                 options.Conformance,
                 environmentConformance);
+            var applicationDatabase = await ApplicationDatabaseFactory.OpenFactoryAsync(
+                DatabaseConfiguration.ForStateRoot(sessionsRoot),
+                cancellationToken).ConfigureAwait(false);
+            var profileModels = providerRegistry.ListModels()
+                .Select(static model => new AgentProfileModel(
+                    model.ProviderId,
+                    model.ModelId,
+                    model.ApiFamily))
+                .ToArray();
+            var profileService = new AgentProfileService(
+                applicationDatabase,
+                profileModels,
+                toolRegistry.Names);
             var agent = new AgentService(
                 repository,
                 providerRegistry,
                 toolRegistry,
-                ResolveApprovalTimeout(options.Conformance, environmentConformance));
-            var daemon = new StdioDaemon(repository, agent, conformance);
+                ResolveApprovalTimeout(options.Conformance, environmentConformance),
+                profileService);
+            var daemon = new StdioDaemon(repository, agent, conformance, profileService);
             await using var protocolOutput = OpenProtocolOutput();
             await daemon.RunAsync(
                 Console.OpenStandardInput(),

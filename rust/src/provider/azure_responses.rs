@@ -207,6 +207,7 @@ mod tests {
     fn serializes_tool_result_continuation() {
         let body = request_body(&ProviderRequest {
             model: "mock-azure-responses-v1".to_owned(),
+            system_instructions: None,
             messages: vec![
                 Message {
                     id: "assistant".to_owned(),

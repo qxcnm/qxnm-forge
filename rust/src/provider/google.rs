@@ -135,17 +135,24 @@ pub(super) struct GoogleStreamState {
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 pub(super) fn request_body(request: &ProviderRequest) -> Value {
-    let system = request
-        .messages
+    let mut system_parts = request
+        .system_instructions
         .iter()
-        .filter(|message| message.role == Role::System)
-        .flat_map(|message| &message.content)
-        .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    system_parts.extend(
+        request
+            .messages
+            .iter()
+            .filter(|message| message.role == Role::System)
+            .flat_map(|message| &message.content)
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+    );
+    let system = system_parts.join("\n");
     let mut contents = Vec::<Value>::new();
     for message in request
         .messages
@@ -492,6 +499,7 @@ mod tests {
     fn serializes_tool_result_continuation() {
         let body = request_body(&ProviderRequest {
             model: "mock-google-v1".to_owned(),
+            system_instructions: Some("profile guidance".to_owned()),
             messages: vec![
                 Message {
                     id: "assistant".to_owned(),
@@ -534,6 +542,10 @@ mod tests {
         assert_eq!(
             body["tools"][0]["functionDeclarations"][0]["name"],
             "file.read"
+        );
+        assert_eq!(
+            body["systemInstruction"]["parts"][0]["text"],
+            "profile guidance"
         );
         assert!(body["contents"].as_array().is_some_and(|contents| {
             contents.iter().any(|content| {

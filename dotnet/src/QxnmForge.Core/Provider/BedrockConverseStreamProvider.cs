@@ -110,7 +110,7 @@ public sealed class BedrockConverseStreamProvider : HttpSseProviderBase
         {
             ["messages"] = MapMessages(request.Messages),
         };
-        var system = MapSystem(request.Messages);
+        var system = MapSystem(request.Messages, request.SystemInstructions);
         if (system.Count > 0)
         {
             body["system"] = system;
@@ -521,10 +521,22 @@ public sealed class BedrockConverseStreamProvider : HttpSseProviderBase
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="messages">portable 上下文。</param>
+    /// <param name="requestInstructions">可选 request-local Profile 指令。</param>
     /// <returns>非空 system text 项。</returns>
-    private static List<object> MapSystem(IReadOnlyList<JsonElement> messages)
+    private static List<object> MapSystem(
+        IReadOnlyList<JsonElement> messages,
+        string? requestInstructions)
     {
-        return messages
+        var result = new List<object>();
+        if (requestInstructions is not null)
+        {
+            result.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["text"] = requestInstructions,
+            });
+        }
+
+        result.AddRange(messages
             .Where(static message =>
                 message.TryGetProperty("role", out var role) && role.GetString() == "system")
             .Select(static message => ProviderJson.ExtractText(message))
@@ -532,8 +544,8 @@ public sealed class BedrockConverseStreamProvider : HttpSseProviderBase
             .Select(static text => (object)new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["text"] = text,
-            })
-            .ToList();
+            }));
+        return result;
     }
 
     /// <summary>

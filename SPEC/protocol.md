@@ -99,6 +99,20 @@ In particular, an agent that can execute tools or compact context advertises the
 approval, retry, and compaction event types even when one text-only golden trace
 does not exercise them.
 
+`agentProfiles/list|create|update|delete` 是一个原子 capability 组。只有 application
+database v0.2、CAS CRUD、`run/start.agentProfile`、durable run snapshot 与恢复路径全部可用
+时，服务才同时广告四项；不得广告部分集合。生产模式 MUST NOT 广告
+`faux/configure`，该方法只允许在显式 conformance mode 出现。
+
+Profile mutation 先对原始 wire 字符串按 Unicode scalar value 执行 schema 长度边界，再只
+trim `displayName/description/instructions` 两端的 Unicode `White_Space`；规范化后的必填文本
+仍须非空。`model/provider/apiFamily`、Profile ID 与工具 ID 不 trim、不折叠大小写，作为精确
+身份比较；`modelId` 的边缘 Unicode `White_Space` 必须拒绝。
+
+update 的 `expectedRevision` 合法命中 `9007199254740991` 时，服务必须在写入前返回
+`-32009/agent_profile_revision_exhausted` 且 `retryable:false`；不得误报 stale，也不得生成超出
+JSON 安全整数范围的下一 revision。
+
 `maxFrameBytes` applies to inbound and outbound JSON before LF.
 `maxEventBytes` is the maximum serialized `event` notification and cannot
 exceed `maxFrameBytes`. Larger data is stored as an artifact reference.
@@ -111,12 +125,24 @@ exceed `maxFrameBytes`. Larger data is stored as an artifact reference.
 {"sessionId":"s-opaque","input":{"role":"user","content":[{"type":"text","text":"hello"}]},"provider":{"id":"faux","modelId":"faux-v1"}}
 ```
 
+选择已持久化 Agent Profile 时增加精确 revision 引用；不能使用 `extensions` 夹带：
+
+```json
+{"sessionId":"s-opaque","input":{"role":"user","content":[{"type":"text","text":"review"}]},"provider":{"id":"faux","modelId":"faux-v1","apiFamily":"faux"},"agentProfile":{"profileId":"profile-opaque","revision":2}}
+```
+
 `provider.apiFamily` is an optional brand-neutral route discriminator. It MUST
 be present when one configured `provider.id` / `modelId` pair has more than one
 usable family. In particular an image run selects
 `{"id":"openrouter","modelId":"...","apiFamily":"openrouter-images"}`.
 Omitting it when selection is ambiguous is `-32602/invalid_params`; the daemon
 never guesses from prompt content or output modality.
+
+存在 `agentProfile` 时，`provider.id/modelId/apiFamily` 必须与 Profile 的完整
+`model.providerId/modelId/apiFamily` 精确相等，且 apiFamily 不再可省略。服务在任何 Session
+或 run 副作用前验证 Profile 存在、revision、enabled、route 可用性和工具上限。有效工具先取
+`requestedToolIds ∩ initialize.capabilities.tools`，再受 runtime policy、project trust、
+审批与 sandbox 继续收窄。`dangerousActionMode:ask` 不等于批准，`deny` 直接拒绝危险操作。
 
 If `sessionId` does not exist, `run/start` atomically creates it in the current
 workspace. If it exists, the daemon MUST hold the session lock. Before success,
@@ -133,6 +159,11 @@ delayed response. Every accepted run produces exactly one terminal event even
 if it is cancelled, the provider disconnects, or recovery finds it after a
 crash. A synchronous validation/permission/locking failure returns an error and
 creates no run.
+
+绑定 Profile 的 accepted record 必须同时包含符合
+`agent-profile.schema.json#/$defs/runSnapshot` 的 `agentProfileSnapshot`。后续更新、禁用或
+删除 Profile 不影响已接受 run；恢复只使用该快照。Profile instructions 与 behavior 只形成
+本 run 的 system guidance，不能修改权限、工具 registry、credential、路径或 entitlement。
 
 Only one run per session may execute in v0.1. Implementations may run different
 sessions concurrently up to `maxConcurrentRuns`. A busy session produces error
@@ -208,6 +239,21 @@ transition.
 
 All accepted state-changing control requests are appended before their success
 response.
+
+Agent Profile application methods 使用封闭 DTO：
+
+- `agentProfiles/list {}` 返回 `{profiles:[...]}`，按 `updatedAt` 降序、再按 ASCII
+  `profileId` 升序；
+- `agentProfiles/create {profile}` 由服务生成 opaque ID、`revision:1` 与 UTC 时间戳，返回
+  `{profile}`；
+- `agentProfiles/update {profileId,expectedRevision,profile}` 是完整替换，CAS 成功时 revision
+  精确加一并返回 `{profile}`；
+- `agentProfiles/delete {profileId,expectedRevision}` 使用同一 CAS，成功返回
+  `{deleted:true}`。
+
+Profile 字段、边界、模型三元组与运行快照以 `agent-profile.schema.json` 和 ADR 0028 为准。
+未知参数、未知 Profile 字段、credential/endpoint 字段都属于
+`-32602/agent_profile_invalid`。失败的 mutation 不修改 application database。
 
 - `run/cancel {sessionId, runId}` is idempotent. It returns the current
   `cancellationState`: `requested`, `alreadyRequested`, or `terminal`. A return
@@ -310,8 +356,8 @@ durably appended before response and is consumed by the next accepted run for
 that session. If the session does not yet exist, this method atomically creates
 its header in the current workspace before appending the scenario; this makes
 the conformance handshake `initialize -> faux/configure -> run/start`
-self-contained. Production daemons SHOULD behave as if this method does not
-exist.
+self-contained. Production daemons MUST behave as if this method does not exist，且 MUST NOT 在
+`initialize.capabilities.methods` 中广告它。
 
 The top-level `steps`, `expectedContext`, and `usage` describe the first
 Provider turn. The optional `continuations` array is a FIFO script for later
@@ -354,6 +400,22 @@ stack traces, or unredacted user content. Standard and reserved codes are:
 | -32009 | output or resource limit | false |
 | -32010 | conflict / stale state | true |
 | -32011 | terminal input backpressure | true |
+
+Agent Profile 的固定失败分类是：
+
+| Condition | Code | Retryable | `details.kind` |
+| --- | ---: | :---: | --- |
+| invalid input or unknown Profile field | -32602 | false | `agent_profile_invalid` |
+| missing Profile | -32602 | false | `agent_profile_not_found` |
+| stale update/delete `expectedRevision` | -32010 | true | `stale_agent_profile_revision` |
+| update at maximum safe revision | -32009 | false | `agent_profile_revision_exhausted` |
+| stale `run/start.agentProfile.revision` | -32010 | false | `stale_agent_profile_revision` |
+| disabled Profile used by a run | -32003 | false | `agent_profile_disabled` |
+| run/Profile model mismatch | -32602 | false | `agent_profile_model_mismatch` |
+| Profile model route unavailable | -32005 | true | `agent_profile_model_unavailable` |
+
+revision conflict 可以在 details 中携带 `resourceId/expectedRevision/currentRevision`；模型错误
+可以携带 `providerId/modelId/apiFamily`。错误与日志不得回显 instructions 或其他用户内容。
 
 Provider status and retry hints belong in redacted `details`, for example
 `{"kind":"provider_rate_limit","httpStatus":429,"retryAfterMs":1000}`.

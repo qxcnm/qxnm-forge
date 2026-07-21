@@ -30,6 +30,7 @@ public sealed class AcceptedRun
     /// <param name="providerAdapter">已注册的原生 Provider 实现。</param>
     /// <param name="scenario">faux run 消费的场景；live Provider 为 null。</param>
     /// <param name="contextMessages">包含当前输入的 durable portable 消息历史。</param>
+    /// <param name="agentProfile">可选的不可变 Agent Profile run 绑定。</param>
     /// <param name="interactiveApprovals">客户端是否声明并维持交互审批通道。</param>
     internal AcceptedRun(
         SessionRuntime runtime,
@@ -39,6 +40,7 @@ public sealed class AcceptedRun
         IProvider providerAdapter,
         FauxScenario? scenario,
         IReadOnlyList<JsonElement> contextMessages,
+        AgentProfileRunBinding? agentProfile,
         bool interactiveApprovals)
     {
         Runtime = runtime;
@@ -48,6 +50,7 @@ public sealed class AcceptedRun
         ProviderAdapter = providerAdapter;
         Scenario = scenario;
         ContextMessages = contextMessages;
+        AgentProfile = agentProfile;
         InteractiveApprovals = interactiveApprovals;
     }
 
@@ -100,6 +103,13 @@ public sealed class AcceptedRun
     /// </summary>
     /// <remarks>每个 JsonElement 生命周期独立；顺序与 portable message.appended 记录一致。</remarks>
     public IReadOnlyList<JsonElement> ContextMessages { get; }
+
+    /// <summary>
+    /// 功能：取得接受阶段冻结的可选 Agent Profile run 绑定。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public AgentProfileRunBinding? AgentProfile { get; }
 
     /// <summary>
     /// 功能：取得传播到 Provider await 边界的本地取消源。
@@ -166,6 +176,7 @@ public sealed class AgentService
     private readonly ProviderRegistry providers;
     private readonly ToolRegistry tools;
     private readonly TimeSpan approvalTimeout;
+    private readonly AgentProfileService? profiles;
 
     /// <summary>
     /// 功能：绑定 session repository 与原生 faux Provider。
@@ -213,13 +224,15 @@ public sealed class AgentService
     /// <param name="providers">包含 faux 和可选 live family 的原生注册表。</param>
     /// <param name="tools">已绑定同一 workspace 的可执行工具注册表。</param>
     /// <param name="approvalTimeout">严格位于 1 毫秒至 1 小时的审批等待上限。</param>
+    /// <param name="profiles">可选 production Agent Profile application service。</param>
     /// <remarks>不变量：协议客户端、模型和工具参数不能修改该宿主上限；构造不执行工具或访问网络。</remarks>
     /// <exception cref="ArgumentOutOfRangeException">timeout 为零、负数或超过一小时时抛出。</exception>
     public AgentService(
         SessionRepository sessions,
         ProviderRegistry providers,
         ToolRegistry tools,
-        TimeSpan approvalTimeout)
+        TimeSpan approvalTimeout,
+        AgentProfileService? profiles = null)
     {
         if (approvalTimeout < TimeSpan.FromMilliseconds(1) || approvalTimeout > TimeSpan.FromHours(1))
         {
@@ -230,6 +243,7 @@ public sealed class AgentService
         this.providers = providers;
         this.tools = tools;
         this.approvalTimeout = approvalTimeout;
+        this.profiles = profiles;
     }
 
     /// <summary>
@@ -300,16 +314,71 @@ public sealed class AgentService
     /// <exception cref="ArgumentException">输入或 Provider 选择无效。</exception>
     /// <exception cref="InvalidOperationException">会话 busy，或 faux 没有 pending 场景。</exception>
     /// <exception cref="IOException">任一 append/flush 失败，调用者不得确认 run。</exception>
-    public async Task<AcceptedRun> AcceptAsync(
+    public Task<AcceptedRun> AcceptAsync(
         string sessionId,
         InputMessage input,
         ProviderSelection provider,
         bool interactiveApprovals,
         CancellationToken cancellationToken = default)
     {
+        return AcceptAsync(
+            sessionId,
+            input,
+            provider,
+            agentProfile: null,
+            interactiveApprovals,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// 功能：验证可选 Agent Profile 并在任何 Session append 前冻结其执行快照。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionId">目标会话 ID。</param>
+    /// <param name="input">至少包含一个文本块的 user 输入。</param>
+    /// <param name="provider">必须与 profile 及当前 registry 精确匹配的模型选择。</param>
+    /// <param name="agentProfile">可选 profile ID/revision 引用。</param>
+    /// <param name="interactiveApprovals">客户端是否协商交互审批。</param>
+    /// <param name="cancellationToken">仅接受阶段的取消信号。</param>
+    /// <returns>已 durable 接受且携带不可变 profile snapshot 的 run。</returns>
+    /// <remarks>不变量：Profile 错误、route 不可用或输入错误时不创建 Session 记录。</remarks>
+    /// <exception cref="AgentProfileException">Profile 服务缺失、引用、状态、模型或 route 无效。</exception>
+    public async Task<AcceptedRun> AcceptAsync(
+        string sessionId,
+        InputMessage input,
+        ProviderSelection provider,
+        AgentProfileReference? agentProfile,
+        bool interactiveApprovals,
+        CancellationToken cancellationToken = default)
+    {
         ValidateInput(input);
-        var providerAdapter = providers.GetRequired(provider);
-        if (provider.ApiFamily is null && providerAdapter.ApiFamily is not null)
+        AgentProfileRunBinding? profileBinding = null;
+        if (agentProfile is not null)
+        {
+            if (profiles is null)
+            {
+                throw AgentProfileException.Invalid();
+            }
+
+            profileBinding = await profiles.ResolveRunBindingAsync(
+                agentProfile,
+                provider,
+                tools.Names,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        IProvider providerAdapter;
+        try
+        {
+            providerAdapter = providers.GetRequired(provider);
+        }
+        catch (ProviderUnavailableException) when (profileBinding is not null)
+        {
+            throw AgentProfileException.ModelUnavailable(profileBinding.Snapshot.Model);
+        }
+
+        if (profileBinding is null && provider.ApiFamily is null && providerAdapter.ApiFamily is not null)
         {
             provider = provider with { ApiFamily = providerAdapter.ApiFamily };
         }
@@ -353,6 +422,10 @@ public sealed class AgentService
             {
                 acceptedData["fauxScenarioRecordId"] = runtime.PendingScenarioRecordId;
             }
+            if (profileBinding is not null)
+            {
+                acceptedData["agentProfileSnapshot"] = profileBinding.Snapshot;
+            }
 
             await runtime.Journal.AppendAsync(
                 "run.accepted",
@@ -368,7 +441,9 @@ public sealed class AgentService
                 providerAdapter,
                 runtime.PendingScenario,
                 contextMessages,
-                interactiveApprovals);
+                profileBinding,
+                interactiveApprovals &&
+                profileBinding?.Snapshot.DangerousActionMode != "deny");
             if (provider.Id == "faux")
             {
                 runtime.PendingScenario = null;
@@ -870,10 +945,11 @@ public sealed class AgentService
             var providerRequest = new ProviderRequest(
                 run.Provider,
                 contextMessages.Select(static message => message.Clone()).ToArray(),
-                tools.ProviderDefinitions(),
+                tools.ProviderDefinitions(run.AgentProfile?.Snapshot.EffectiveToolIds),
                 fauxScenario)
             {
                 ResolvedImages = resolvedImages,
+                SystemInstructions = run.AgentProfile?.SystemInstructions,
             };
             await foreach (var signal in run.ProviderAdapter.StreamAsync(
                                providerRequest,
@@ -1117,12 +1193,23 @@ public sealed class AgentService
     {
         PreparedToolCall? prepared = null;
         ToolOperationException? preparationFailure = null;
-        _ = tools.TryGetDefinition(toolCall.Name, out var registeredDefinition);
+        var effectiveToolIds = run.AgentProfile?.Snapshot.EffectiveToolIds;
+        var toolAllowed = effectiveToolIds is null ||
+            effectiveToolIds.Contains(toolCall.Name, StringComparer.Ordinal);
+        ToolDefinition? registeredDefinition = null;
+        if (toolAllowed)
+        {
+            _ = tools.TryGetDefinition(toolCall.Name, out registeredDefinition);
+        }
         if (!forceCancelled)
         {
             try
             {
-                prepared = tools.Prepare(toolCall.Name, toolCall.Arguments, toolCall.ToolCallId);
+                prepared = tools.Prepare(
+                    toolCall.Name,
+                    toolCall.Arguments,
+                    toolCall.ToolCallId,
+                    effectiveToolIds);
             }
             catch (ToolOperationException exception)
             {

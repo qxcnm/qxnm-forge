@@ -40,11 +40,13 @@ Every implementation exposes equivalent boundaries, with idiomatic names:
 9. **cli** — pure-text user interface and command-line configuration.
 10. **storage** — SeaORM/EF Core application data, migrations, and provider adapters.
 11. **application service** — the single state/control boundary shared by CLI,
-    daemon and future React clients.
+    daemon and React clients；它拥有 Agent Profile CRUD、CAS、模型/工具校验与 run binding，
+    并把验证后的 immutable snapshot 交给 agent。
 
 Dependencies point inward toward `domain`. Provider and tool adapters MUST NOT
-own agent state. CLI and daemon MUST call public application services rather
-than reading journal files directly.
+own agent state. CLI、daemon 与 React MUST call public application services rather
+than reading journal files or application database directly。`storage` 不向 UI/transport 暴露 ORM
+entity；`agent` 不在运行中重新读取 Profile，而只消费 application service 绑定的 run snapshot。
 
 ## Native public APIs
 

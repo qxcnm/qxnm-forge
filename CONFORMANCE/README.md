@@ -73,8 +73,10 @@ may follow that run's terminal event.
 
 The faux scenario format is versioned independently. Version `0.1` supports
 tagged `text`, `tool_call`, `error`, `delay`, and `disconnect` steps. Production
-builds may reject `faux/configure` unless explicitly started in conformance
-mode.
+builds MUST NOT advertise or accept `faux/configure`; only an explicitly enabled
+conformance mode may expose it. The Agent Profile fixture records the current Rust
+production-advertisement regression as a mandatory negative expectation, not as an
+allowed implementation difference.
 
 The live runner remains Python-stdlib-only unless `--schema-root` is explicitly
 selected; framing and critical cross-message invariants never need third-party
@@ -107,10 +109,23 @@ Run the self-tests with:
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s CONFORMANCE/tests -v
 ```
 
+Agent Profile v0.2 的静态门禁可单独运行：
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
+  CONFORMANCE.tests.test_spec_schemas.SpecSchemaTests.test_agent_profile_v02_contract_and_security_negatives -v
+```
+
+它验证 `fixtures/agent-profile/profile-cases.json` 的 CRUD/run wire、最小 durable snapshot、
+固定错误表、生产 `faux/configure` 禁止项，以及长度、枚举、重复工具、secret/endpoint 和未知
+字段负例。该静态门禁不冒充 native CRUD/migration/run-binding 黑盒通过；能力在共同动态
+runner 完成前最多登记为 `implemented`。
+
 ## Fixture layout
 
 - `fixtures/faux/`: deterministic provider scenarios, with no network access.
 - `fixtures/golden/`: requests and normalized observable daemon traces.
+- `fixtures/agent-profile/`：Agent Profile v0.2 的封闭 DTO、CRUD/run wire、错误与生产广告预期。
 - `fixtures/provider/`: three independent machine suites for nine native
   Provider API families.
 - `fixtures/provider-identity/`：35 Provider / 45 route 的 manifest-driven

@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Text.Json;
+using QxnmForge.Agent;
 using QxnmForge.Domain;
 using QxnmForge.Session;
 
@@ -191,11 +192,22 @@ public static class ProtocolCodec
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="parameters">run/start params。</param>
-    /// <returns>session、输入和 Provider 选择。</returns>
+    /// <returns>session、输入、Provider 选择与可选 Agent Profile 引用。</returns>
     /// <exception cref="ProtocolRequestException">参数违反核心 schema、引用字段或 family 语法。</exception>
-    public static (string SessionId, InputMessage Input, ProviderSelection Provider) ParseRunStart(JsonElement parameters)
+    public static (
+        string SessionId,
+        InputMessage Input,
+        ProviderSelection Provider,
+        AgentProfileReference? AgentProfile) ParseRunStart(JsonElement parameters)
     {
-        EnsureOnlyProperties(parameters, "sessionId", "input", "provider", "options", "extensions");
+        EnsureOnlyProperties(
+            parameters,
+            "sessionId",
+            "input",
+            "provider",
+            "agentProfile",
+            "options",
+            "extensions");
         var sessionId = RequireOpaqueId(parameters, "sessionId");
         var input = ParseInput(RequireProperty(parameters, "input"));
         var providerElement = RequireProperty(parameters, "provider");
@@ -206,7 +218,20 @@ public static class ProtocolCodec
             RequireString(providerElement, "id"),
             RequireString(providerElement, "modelId"),
             apiFamily);
-        return (sessionId, input, provider);
+        AgentProfileReference? agentProfile = null;
+        if (parameters.TryGetProperty("agentProfile", out var profileElement))
+        {
+            try
+            {
+                agentProfile = ParseAgentProfileReference(profileElement);
+            }
+            catch (ProtocolRequestException)
+            {
+                throw AgentProfileException.Invalid();
+            }
+        }
+
+        return (sessionId, input, provider, agentProfile);
     }
 
     /// <summary>
@@ -336,6 +361,90 @@ public static class ProtocolCodec
         }
 
         return value;
+    }
+
+    /// <summary>
+    /// 功能：严格验证 agentProfiles/list 只接受空 params。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">方法 params。</param>
+    /// <exception cref="ProtocolRequestException">包含任何未知字段。</exception>
+    public static void ParseAgentProfilesList(JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters);
+    }
+
+    /// <summary>
+    /// 功能：严格解析 agentProfiles/create 的完整 profile 输入。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">方法 params。</param>
+    /// <returns>尚需服务层规范化和语义校验的输入。</returns>
+    /// <exception cref="AgentProfileException">结构、字段或类型不符合共同 schema。</exception>
+    public static AgentProfileInput ParseAgentProfilesCreate(JsonElement parameters)
+    {
+        try
+        {
+            EnsureOnlyProperties(parameters, "profile");
+            return ParseAgentProfileInput(RequireProperty(parameters, "profile"));
+        }
+        catch (ProtocolRequestException)
+        {
+            throw AgentProfileException.Invalid();
+        }
+    }
+
+    /// <summary>
+    /// 功能：严格解析 agentProfiles/update 的 CAS 引用与完整替换输入。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">方法 params。</param>
+    /// <returns>profile ID、expected revision 与完整输入。</returns>
+    /// <exception cref="AgentProfileException">结构、字段或类型不符合共同 schema。</exception>
+    public static (
+        string ProfileId,
+        long ExpectedRevision,
+        AgentProfileInput Profile) ParseAgentProfilesUpdate(JsonElement parameters)
+    {
+        try
+        {
+            EnsureOnlyProperties(parameters, "profileId", "expectedRevision", "profile");
+            return (
+                RequireOpaqueId(parameters, "profileId"),
+                RequirePositiveSafeInteger(parameters, "expectedRevision"),
+                ParseAgentProfileInput(RequireProperty(parameters, "profile")));
+        }
+        catch (ProtocolRequestException)
+        {
+            throw AgentProfileException.Invalid();
+        }
+    }
+
+    /// <summary>
+    /// 功能：严格解析 agentProfiles/delete 的 CAS 引用。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">方法 params。</param>
+    /// <returns>profile ID 与 expected revision。</returns>
+    /// <exception cref="AgentProfileException">结构、字段或类型不符合共同 schema。</exception>
+    public static (string ProfileId, long ExpectedRevision) ParseAgentProfilesDelete(
+        JsonElement parameters)
+    {
+        try
+        {
+            EnsureOnlyProperties(parameters, "profileId", "expectedRevision");
+            return (
+                RequireOpaqueId(parameters, "profileId"),
+                RequirePositiveSafeInteger(parameters, "expectedRevision"));
+        }
+        catch (ProtocolRequestException)
+        {
+            throw AgentProfileException.Invalid();
+        }
     }
 
     /// <summary>
@@ -486,6 +595,84 @@ public static class ProtocolCodec
         }
 
         return element.Clone();
+    }
+
+    /// <summary>
+    /// 功能：解析 closed Agent Profile 输入对象及全部嵌套 closed 对象。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="element">profile JSON 对象。</param>
+    /// <returns>保持原始文本、供服务层规范化的 DTO。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知、类型错误或数组越界。</exception>
+    private static AgentProfileInput ParseAgentProfileInput(JsonElement element)
+    {
+        RequireObject(element, "profile");
+        EnsureOnlyProperties(
+            element,
+            "displayName",
+            "description",
+            "enabled",
+            "instructions",
+            "model",
+            "requestedToolIds",
+            "dangerousActionMode",
+            "behavior");
+        var model = RequireProperty(element, "model");
+        RequireObject(model, "profile.model");
+        EnsureOnlyProperties(model, "providerId", "modelId", "apiFamily");
+        var requestedTools = RequireProperty(element, "requestedToolIds");
+        if (requestedTools.ValueKind != JsonValueKind.Array || requestedTools.GetArrayLength() > 256)
+        {
+            throw InvalidParams("requestedToolIds is invalid", "profile.requestedToolIds");
+        }
+
+        var toolIds = new List<string>(requestedTools.GetArrayLength());
+        foreach (var toolId in requestedTools.EnumerateArray())
+        {
+            if (toolId.ValueKind != JsonValueKind.String)
+            {
+                throw InvalidParams("requestedToolIds is invalid", "profile.requestedToolIds");
+            }
+
+            toolIds.Add(toolId.GetString()!);
+        }
+
+        var behavior = RequireProperty(element, "behavior");
+        RequireObject(behavior, "profile.behavior");
+        EnsureOnlyProperties(behavior, "responseStyle", "planFirst", "reviewChanges");
+        return new AgentProfileInput(
+            RequireString(element, "displayName"),
+            RequireString(element, "description", allowEmpty: true),
+            RequireBoolean(element, "enabled"),
+            RequireString(element, "instructions"),
+            new AgentProfileModel(
+                RequireString(model, "providerId"),
+                RequireString(model, "modelId"),
+                RequireString(model, "apiFamily")),
+            toolIds,
+            RequireString(element, "dangerousActionMode"),
+            new AgentProfileBehavior(
+                RequireString(behavior, "responseStyle"),
+                RequireBoolean(behavior, "planFirst"),
+                RequireBoolean(behavior, "reviewChanges")));
+    }
+
+    /// <summary>
+    /// 功能：解析 closed Agent Profile revision 引用。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="element">agentProfile JSON 对象。</param>
+    /// <returns>已验证 opaque ID 与正安全整数 revision。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、未知或类型无效。</exception>
+    private static AgentProfileReference ParseAgentProfileReference(JsonElement element)
+    {
+        RequireObject(element, "agentProfile");
+        EnsureOnlyProperties(element, "profileId", "revision");
+        return new AgentProfileReference(
+            RequireOpaqueId(element, "profileId"),
+            RequirePositiveSafeInteger(element, "revision"));
     }
 
     /// <summary>
@@ -896,6 +1083,46 @@ public static class ProtocolCodec
         if (!allowEmpty && value.Length == 0)
         {
             throw InvalidParams(name + " must not be empty", name);
+        }
+
+        return value;
+    }
+
+    /// <summary>
+    /// 功能：读取必需布尔字段。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="element">父对象。</param>
+    /// <param name="name">属性名。</param>
+    /// <returns>布尔值。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失或不是布尔值。</exception>
+    private static bool RequireBoolean(JsonElement element, string name)
+    {
+        var property = RequireProperty(element, name);
+        if (property.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            throw InvalidParams(name + " must be a boolean", name);
+        }
+
+        return property.GetBoolean();
+    }
+
+    /// <summary>
+    /// 功能：读取正安全整数字段。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="element">父对象。</param>
+    /// <param name="name">属性名。</param>
+    /// <returns>1 到 JavaScript 安全整数上限的值。</returns>
+    /// <exception cref="ProtocolRequestException">字段缺失、非整数或越界。</exception>
+    private static long RequirePositiveSafeInteger(JsonElement element, string name)
+    {
+        var property = RequireProperty(element, name);
+        if (!property.TryGetInt64(out var value) || value is < 1 or > MaxSafeInteger)
+        {
+            throw InvalidParams(name + " must be a positive safe integer", name);
         }
 
         return value;

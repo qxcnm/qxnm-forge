@@ -1,6 +1,14 @@
 # QXNM Forge Open instructions
 
-本目录是 QXNM Forge 的非商业 Community 源码发行。作者：高宏顺（`18272669457@163.com`）。采用 PolyForm Noncommercial 1.0.0；任何商业使用必须另行联系作者取得书面商业授权。根目录 `AGENTS.md` 的通用安全、文档、方法注释和质量门禁规则全部适用。
+本目录是 QXNM Forge 的非商业 Community 源码发行。作者：高宏顺（`18272669457@163.com`）。采用 PolyForm Noncommercial 1.0.0；任何商业使用必须另行联系作者取得书面商业授权。本文件是独立仓库的完整工程约束，不依赖仓库外的父级说明。
+
+## 通用工程规则
+
+- 每个新增函数或方法都必须使用对应语言的标准方法级文档注释，包含简洁中文功能说明、`作者：高宏顺` 与 `邮箱：18272669457@163.com`。公共 API 和安全敏感逻辑还必须说明输入、输出、不变量及有意义的失败条件；明确标识的生成或 vendor 代码除外。
+- 面向用户和开发者的 Wiki、运维及工程文档使用中文；协议标识符、代码符号、命令和规范性英文协议文本可以保留原文。
+- 默认测试只使用 faux provider、loopback mock 或脱敏 recording，不得隐式调用付费模型。secret 只能在最终使用边界从环境变量或平台 CredentialStore 读取，不得写入源码、日志、Session、fixture 或命令输出。
+- 保留无关和并发工作，不得使用 destructive Git 命令覆盖现有修改。手写源码修改使用 `apply_patch`，生成输出不得进入源码仓库。
+- Rust 必须通过 `cargo fmt --check`、workspace Clippy warnings-as-errors 和 workspace tests；.NET 必须通过 `dotnet format --verify-no-changes`、warnings-as-errors build 和 tests；React/Tauri 必须通过 typecheck、lint、tests 和 build；`CONFORMANCE/tests` 独立执行。
 
 ## Community 边界
 

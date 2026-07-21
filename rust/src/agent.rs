@@ -12,6 +12,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::agent_profile::AgentProfileRunSnapshot;
 use crate::domain::{
     ContentBlock, EventEnvelope, FinishReason, Message, ProviderEvent, Role, ToolEffect,
     ToolOutput, Usage,
@@ -53,6 +54,7 @@ struct RunControl {
     queues: Mutex<RunQueues>,
     lifecycle: Mutex<RunLifecycle>,
     approvals: Mutex<BTreeMap<String, PendingApproval>>,
+    agent_profile: Option<AgentProfileRunSnapshot>,
 }
 
 #[derive(Default)]
@@ -243,6 +245,24 @@ impl Agent {
             .collect()
     }
 
+    /// 功能：返回当前注册表中只读 Profile 可继续请求的工具名称。
+    ///
+    /// 输入：Agent 持有的真实工具定义。
+    /// 输出：仅 `ToolEffect::Read` 工具的稳定定义顺序列表。
+    /// 不变量：Profile deny 模式不能把写入、进程、shell 或 terminal 工具带入有效集合。
+    /// 失败：本方法不访问外部状态且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[must_use]
+    pub fn read_only_tool_capabilities(&self) -> Vec<String> {
+        self.tools
+            .definitions()
+            .into_iter()
+            .filter(|definition| definition.effect == ToolEffect::Read)
+            .map(|definition| definition.name)
+            .collect()
+    }
+
     /// 功能：取得 startup self-test 证明的 hard-sandbox capability，并传播工具启动配置失败。
     ///
     /// 输入：Agent 持有的不可变工具注册表。
@@ -291,6 +311,24 @@ impl Agent {
         &self,
         request: &RunRequest,
         content: Vec<ContentBlock>,
+    ) -> Result<(), AgentError> {
+        self.accept_run_content_with_profile(request, content, None)
+            .await
+    }
+
+    /// 功能：验证 portable 输入并以可选的安全 Agent Profile 快照 durable 接受运行。
+    ///
+    /// 输入：已验证 Provider run、源顺序 content blocks 与接受前冻结的可选 Profile 快照。
+    /// 输出：用户消息、`run.accepted` 和等待启动的 RunControl 已建立。
+    /// 不变量：快照只写入 run.accepted，不写成 Session system message；后续 Provider/tool 使用同一不可变快照。
+    /// 失败：Provider、内容、artifact、Session、并发或持久化失败时不启动 Provider/tool。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub async fn accept_run_content_with_profile(
+        &self,
+        request: &RunRequest,
+        content: Vec<ContentBlock>,
+        agent_profile: Option<AgentProfileRunSnapshot>,
     ) -> Result<(), AgentError> {
         if content.is_empty()
             || content.iter().any(|block| {
@@ -362,16 +400,21 @@ impl Agent {
                 }),
             )
             .await?;
+        let mut accepted = json!({
+            "runId": request.run_id,
+            "inputMessageId":input_message_id,
+            "provider":run_provider_selection(request, provider.id())
+        });
+        if let Some(snapshot) = &agent_profile {
+            accepted["agentProfileSnapshot"] = serde_json::to_value(snapshot).map_err(|_| {
+                AgentError::new(
+                    ErrorCode::InternalError,
+                    "agent profile snapshot serialization failed",
+                )
+            })?;
+        }
         self.sessions
-            .append_record(
-                &request.session_id,
-                "run.accepted",
-                json!({
-                    "runId": request.run_id,
-                    "inputMessageId":input_message_id,
-                    "provider":run_provider_selection(request, provider.id())
-                }),
-            )
+            .append_record(&request.session_id, "run.accepted", accepted)
             .await?;
 
         let cancellation = CancellationToken::new();
@@ -390,9 +433,47 @@ impl Agent {
                 }),
                 lifecycle: Mutex::new(RunLifecycle::default()),
                 approvals: Mutex::new(BTreeMap::new()),
+                agent_profile,
             }),
         );
         Ok(())
+    }
+
+    /// 功能：在 run durable barrier 前确认 Profile 模型仍有真实可执行 adapter。
+    ///
+    /// 输入：已与 run 三元身份匹配的 Profile 快照和待接受 RunRequest。
+    /// 输出：Provider family/model/credential 当前可用时成功。
+    /// 不变量：不发起网络、不读取 credential 值、不创建 Session；错误仅回显公开模型身份。
+    /// 失败：route/model/credential 不可执行时返回 fixture 冻结的可重试 `agent_profile_model_unavailable`。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub fn ensure_profile_model_available(
+        &self,
+        request: &RunRequest,
+        snapshot: &AgentProfileRunSnapshot,
+    ) -> Result<(), AgentError> {
+        match self.provider_for(request) {
+            Ok(_) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.code,
+                    ErrorCode::InvalidParams | ErrorCode::ProviderUnavailable
+                ) =>
+            {
+                Err(AgentError::new(
+                    ErrorCode::ProviderUnavailable,
+                    "agent profile model is unavailable",
+                )
+                .retryable(true)
+                .with_details(json!({
+                    "kind":"agent_profile_model_unavailable",
+                    "providerId":snapshot.model.provider_id,
+                    "modelId":snapshot.model.model_id,
+                    "apiFamily":snapshot.model.api_family
+                })))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// 功能：按 Provider ID、显式 API family 与冻结 modelId 选择唯一运行时 adapter。
@@ -405,9 +486,14 @@ impl Agent {
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     fn provider_for(&self, request: &RunRequest) -> Result<&Arc<dyn Provider>, AgentError> {
+        let adapter_api_family =
+            if request.provider_id == "faux" && request.api_family.as_deref() == Some("faux") {
+                None
+            } else {
+                request.api_family.as_deref()
+            };
         let mut matches = self.providers.values().filter(|provider| {
-            provider.id() == request.provider_id
-                && provider.api_family() == request.api_family.as_deref()
+            provider.id() == request.provider_id && provider.api_family() == adapter_api_family
         });
         let provider = matches.next().ok_or_else(|| {
             AgentError::new(
@@ -1072,6 +1158,10 @@ impl Agent {
             .iter()
             .map(provider_message_from_portable)
             .collect::<Result<Vec<_>, _>>()?;
+        let system_instructions = control
+            .agent_profile
+            .as_ref()
+            .map(AgentProfileRunSnapshot::system_message_text);
         let mut seen_tool_call_ids = BTreeSet::<String>::new();
 
         for _turn_index in 0..MAX_TOOL_TURNS {
@@ -1093,8 +1183,19 @@ impl Agent {
                 session_id: Some(request.session_id.clone()),
                 run_id: Some(request.run_id.clone()),
                 model: request.model.clone(),
+                system_instructions: system_instructions.clone(),
                 messages: messages.clone(),
-                tools: self.tools.definitions(),
+                tools: self
+                    .tools
+                    .definitions()
+                    .into_iter()
+                    .filter(|definition| {
+                        control
+                            .agent_profile
+                            .as_ref()
+                            .is_none_or(|profile| profile.permits_tool(&definition.name))
+                    })
+                    .collect(),
                 max_output_tokens: None,
             };
             let mut attempt = 1_u32;
@@ -1288,7 +1389,19 @@ impl Agent {
         turn_id: &str,
         call: CompleteToolCall,
     ) -> Result<ToolCallOutcome, AgentError> {
-        let preflight = self.tools.preflight(&call.name, &call.arguments);
+        let preflight = if control
+            .agent_profile
+            .as_ref()
+            .is_some_and(|profile| !profile.permits_tool(&call.name))
+        {
+            Err(AgentError::new(
+                ErrorCode::ToolNotFound,
+                "tool is not enabled for this agent profile",
+            )
+            .with_details(json!({"kind":"tool_not_found","toolName":call.name})))
+        } else {
+            self.tools.preflight(&call.name, &call.arguments)
+        };
         let cancelled_before_intent = {
             let lifecycle = control.lifecycle.lock().await;
             lifecycle.cancellation_requested || lifecycle.terminal
@@ -3097,6 +3210,10 @@ mod tests {
         Agent, CompleteToolCall, DEFAULT_APPROVAL_TIMEOUT, QueueKind, RunRequest,
         approval_timeout_from_text, operation_hash, validate_complete_tool_batch,
     };
+    use crate::agent_profile::{
+        AgentProfileBehavior, AgentProfileModel, AgentProfileRunSnapshot, DangerousActionMode,
+        ResponseStyle,
+    };
     use crate::domain::{EventEnvelope, FinishReason, ProviderEvent};
     use crate::error::{AgentError, ErrorCode};
     use crate::policy::{ToolPolicy, WorkspaceGuard};
@@ -3237,6 +3354,79 @@ mod tests {
         assert!(agent.provider_for(&request).is_ok());
         request.model = "dynamic/image-model".to_owned();
         assert!(agent.provider_for(&request).is_err());
+        Ok(())
+    }
+
+    /// 功能：验证显式 faux Profile 的完整模型三元组原样写入 durable run.accepted。
+    ///
+    /// 输入：逻辑 `apiFamily=faux`、兼容旧注册方式的 Faux adapter 与冻结 Profile 快照。
+    /// 输出：provider selection 和 snapshot model 均逐字段保留相同三元组。
+    /// 不变量：adapter 内部兼容不得把 wire/journal 的 apiFamily 归一为空。
+    /// 失败：路由无法选择或任一 durable 字段漂移时测试失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn faux_profile_preserves_exact_provider_triple_in_run_accepted() -> Result<(), AgentError>
+    {
+        let directory = tempdir()?;
+        let state = directory.path().join("state");
+        let (agent, _, sessions) = build_test_agent(directory.path(), &state).await?;
+        let request = RunRequest {
+            session_id: "session-faux-profile-triple".to_owned(),
+            run_id: "run-faux-profile-triple".to_owned(),
+            prompt: "review".to_owned(),
+            provider_id: "faux".to_owned(),
+            api_family: Some("faux".to_owned()),
+            model: "faux-v1".to_owned(),
+            interactive_approvals: false,
+        };
+        let snapshot = AgentProfileRunSnapshot {
+            profile_id: "agent-faux-profile-triple".to_owned(),
+            revision: 3,
+            display_name: "Reviewer".to_owned(),
+            instructions: "Review the pending change.".to_owned(),
+            model: AgentProfileModel {
+                provider_id: "faux".to_owned(),
+                model_id: "faux-v1".to_owned(),
+                api_family: "faux".to_owned(),
+            },
+            requested_tool_ids: vec!["file.read".to_owned()],
+            effective_tool_ids: vec!["file.read".to_owned()],
+            dangerous_action_mode: DangerousActionMode::Deny,
+            behavior: AgentProfileBehavior {
+                response_style: ResponseStyle::Balanced,
+                plan_first: true,
+                review_changes: true,
+            },
+        };
+        agent
+            .accept_run_content_with_profile(
+                &request,
+                vec![crate::domain::ContentBlock::Text {
+                    text: "review".to_owned(),
+                }],
+                Some(snapshot),
+            )
+            .await?;
+        let records = sessions.load(&request.session_id).await?;
+        let accepted = records
+            .iter()
+            .find(|record| record.kind == "run.accepted")
+            .ok_or_else(|| AgentError::new(ErrorCode::InternalError, "missing run.accepted"))?;
+        let expected_triple = json!({
+            "id":"faux",
+            "modelId":"faux-v1",
+            "apiFamily":"faux"
+        });
+        assert_eq!(accepted.data["provider"], expected_triple);
+        assert_eq!(
+            accepted.data["agentProfileSnapshot"]["model"],
+            json!({
+                "providerId":"faux",
+                "modelId":"faux-v1",
+                "apiFamily":"faux"
+            })
+        );
         Ok(())
     }
 

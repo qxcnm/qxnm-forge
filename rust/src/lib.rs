@@ -3,6 +3,7 @@
 //! 作者：高宏顺 <18272669457@163.com>
 
 pub mod agent;
+pub mod agent_profile;
 pub mod commercial_state;
 pub mod daemon;
 pub mod domain;

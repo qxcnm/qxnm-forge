@@ -97,6 +97,7 @@
         "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
         "inputMessageId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
         "provider": { "$ref": "../domain/model.schema.json#/$defs/providerSelection" },
+        "agentProfileSnapshot": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/agent-profile.schema.json#/$defs/runSnapshot" },
         "fauxScenarioRecordId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
         "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
       },

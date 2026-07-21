@@ -6,7 +6,7 @@
     "name": "高宏顺",
     "email": "18272669457@163.com"
   },
-  "updatedAt": "2026-07-18T12:00:00Z",
+  "updatedAt": "2026-07-21T12:00:00Z",
   "defaultStatus": "unsupported",
   "implementations": [
     "dotnet",
@@ -42,6 +42,8 @@
     "provider.sponsored_catalog",
     "provider.credential_store",
     "provider.sponsored_route",
+    "agent.profile_crud",
+    "agent.profile_run_binding",
     "storage.application_database",
     "ui.headless_contract"
   ],
@@ -3387,17 +3389,100 @@
       "implementation": "rust",
       "target": {
         "kind": "foundation",
+        "id": "agent.profile_crud"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/agent_profile.rs",
+        "rust/src/storage.rs",
+        "rust/src/daemon.rs",
+        "SPEC/adr/0028-brand-neutral-agent-profiles.md",
+        "SPEC/schemas/agent-profile.schema.json",
+        "CONFORMANCE/fixtures/agent-profile/profile-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": "SeaORM application service 已通过本语言的封闭输入规范化、模型/工具能力校验、SQLite 重开持久化、CAS CRUD、revision 耗尽、损坏行拒绝和 v0.1→v0.2 migration 测试，并通过共同静态 Schema/fixture 门禁。当前尚无对 Rust/.NET 真实 daemon 执行同一 CRUD/migration 案例的共同动态黑盒 runner，因此保持 implemented，不得标为 conformant。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "agent.profile_crud"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Agent/AgentProfileService.cs",
+        "dotnet/src/QxnmForge.Core/Storage/ApplicationDatabase.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/AgentProfileServiceTests.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/ApplicationDatabaseTests.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/StdioDaemonTests.cs",
+        "SPEC/adr/0028-brand-neutral-agent-profiles.md",
+        "SPEC/schemas/agent-profile.schema.json",
+        "CONFORMANCE/fixtures/agent-profile/profile-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": "EF Core application service 已通过本语言的封闭输入规范化、模型/工具能力校验、SQLite 重开持久化、CAS CRUD、revision 耗尽、损坏行拒绝和 v0.1→v0.2 migration 测试，并通过共同静态 Schema/fixture 门禁。当前尚无对 Rust/.NET 真实 daemon 执行同一 CRUD/migration 案例的共同动态黑盒 runner，因此保持 implemented，不得标为 conformant。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "agent.profile_run_binding"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/agent_profile.rs",
+        "rust/src/agent.rs",
+        "rust/src/daemon.rs",
+        "rust/src/protocol.rs",
+        "SPEC/adr/0028-brand-neutral-agent-profiles.md",
+        "SPEC/schemas/agent-profile.schema.json",
+        "CONFORMANCE/fixtures/agent-profile/profile-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": "Rust 已实现 run/start 精确 Profile revision 与模型三元组绑定、接受前 route 校验、durable agentProfileSnapshot、system guidance 以及 requested/effective tools 和 dangerous deny 的多层收窄，并有本语言聚焦测试。当前共同证据仍是静态 Schema/fixture，尚无双实现真实 daemon 的共同动态 run-binding/recovery runner，因此保持 implemented，不得标为 conformant。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "agent.profile_run_binding"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Agent/AgentProfileService.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "dotnet/src/QxnmForge.Core/Protocol/ProtocolCodec.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/AgentProfileServiceTests.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/StdioDaemonTests.cs",
+        "SPEC/adr/0028-brand-neutral-agent-profiles.md",
+        "SPEC/schemas/agent-profile.schema.json",
+        "CONFORMANCE/fixtures/agent-profile/profile-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": ".NET 已实现 run/start 精确 Profile revision 与模型三元组绑定、接受前 route 校验、durable agentProfileSnapshot、system guidance 以及 requested/effective tools 和 dangerous deny 的多层收窄，并有本语言聚焦测试。当前共同证据仍是静态 Schema/fixture，尚无双实现真实 daemon 的共同动态 run-binding/recovery runner，因此保持 implemented，不得标为 conformant。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
         "id": "storage.application_database"
       },
       "status": "implemented",
       "evidence": [
         "rust/src/storage.rs",
+        "rust/src/agent_profile.rs",
         "rust/Cargo.toml",
         "SPEC/storage.md",
         "SPEC/schemas/storage-config.schema.json",
-        "SPEC/adr/0026-open-pro-product-split-and-storage.md"
+        "SPEC/adr/0026-open-pro-product-split-and-storage.md",
+        "SPEC/adr/0028-brand-neutral-agent-profiles.md",
+        "CONFORMANCE/fixtures/agent-profile/profile-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
       ],
-      "notes": "SeaORM 已实现默认 SQLite application.db、forge_metadata 逻辑版本与远程 provider fail-closed；MySQL/PostgreSQL driver 和共同 migration/CRUD runner 尚未完成，因此只登记 implemented。"
+      "notes": "SeaORM 已实现默认 SQLite application.db、品牌中立 application_metadata v0.2、forge_metadata v0.1→v0.2 单事务迁移、Agent Profile 规范化表及当前 schema 精确校验。双实现共同动态 migration/CRUD runner 与 MySQL/PostgreSQL adapter 尚未完成，因此保持 implemented，不构成 conformant 或远程数据库支持声明。"
     },
     {
       "implementation": "dotnet",
@@ -3412,9 +3497,12 @@
         "dotnet/src/QxnmForge.Core/QxnmForge.Core.csproj",
         "SPEC/storage.md",
         "SPEC/schemas/storage-config.schema.json",
-        "SPEC/adr/0026-open-pro-product-split-and-storage.md"
+        "SPEC/adr/0026-open-pro-product-split-and-storage.md",
+        "SPEC/adr/0028-brand-neutral-agent-profiles.md",
+        "CONFORMANCE/fixtures/agent-profile/profile-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
       ],
-      "notes": "EF Core 已实现默认 SQLite application.db、forge_metadata 逻辑版本与远程 provider fail-closed；MySQL/PostgreSQL adapter 和共同 migration/CRUD runner 尚未完成，因此只登记 implemented。"
+      "notes": "EF Core 已实现默认 SQLite application.db、品牌中立 application_metadata v0.2、forge_metadata v0.1→v0.2 单事务迁移、Agent Profile 规范化表及当前 schema 精确校验。双实现共同动态 migration/CRUD runner 与 MySQL/PostgreSQL adapter 尚未完成，因此保持 implemented，不构成 conformant 或远程数据库支持声明。"
     },
     {
       "implementation": "rust",
@@ -3426,10 +3514,14 @@
       "evidence": [
         "rust/src/daemon.rs",
         "rust/src/protocol.rs",
+        "ui/src/types/application-service.ts",
+        "ui/src/lib/tauri-application-service.ts",
+        "ui/src/lib/tauri-application-service.test.ts",
+        "ui/src-tauri/src/application_service_bridge.rs",
         "SPEC/ui.md",
         "ui/README.md"
       ],
-      "notes": "现有 JSON-RPC/NDJSON 后端可作为未来 React UI 的 application service 基线；浏览器 HTTP/WebSocket 认证、event replay 与可运行前端尚未实现。"
+      "notes": "React/Vite/shadcn 工作台与 Tauri desktop-local bridge 已实现；WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon，普通浏览器使用零网络 faux 预览。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
     },
     {
       "implementation": "dotnet",
@@ -3441,10 +3533,14 @@
       "evidence": [
         "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
         "dotnet/src/QxnmForge.Core/Protocol/ProtocolModels.cs",
+        "ui/src/types/application-service.ts",
+        "ui/src/lib/tauri-application-service.ts",
+        "ui/src/lib/tauri-application-service.test.ts",
+        "ui/src-tauri/src/application_service_bridge.rs",
         "SPEC/ui.md",
         "ui/README.md"
       ],
-      "notes": "现有 JSON-RPC/NDJSON 后端可作为未来 React UI 的 application service 基线；浏览器 HTTP/WebSocket 认证、event replay 与可运行前端尚未实现。"
+      "notes": "React/Vite/shadcn 工作台与 Tauri desktop-local bridge 已实现；WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon，普通浏览器使用零网络 faux 预览。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
     }
   ]
 }

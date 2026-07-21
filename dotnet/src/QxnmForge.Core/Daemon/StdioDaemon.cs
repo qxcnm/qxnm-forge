@@ -21,6 +21,7 @@ public sealed class StdioDaemon
 
     private readonly SessionRepository sessions;
     private readonly AgentService agent;
+    private readonly AgentProfileService? profiles;
     private readonly bool conformanceMode;
     private readonly ConcurrentBag<Task> activeTasks = [];
 
@@ -32,11 +33,17 @@ public sealed class StdioDaemon
     /// <param name="sessions">portable session repository。</param>
     /// <param name="agent">原生 .NET Agent 服务。</param>
     /// <param name="conformanceMode">是否允许 faux/configure 测试方法。</param>
-    public StdioDaemon(SessionRepository sessions, AgentService agent, bool conformanceMode)
+    /// <param name="profiles">成功完成数据库 bootstrap 时注入的 production Profile 服务。</param>
+    public StdioDaemon(
+        SessionRepository sessions,
+        AgentService agent,
+        bool conformanceMode,
+        AgentProfileService? profiles = null)
     {
         this.sessions = sessions;
         this.agent = agent;
         this.conformanceMode = conformanceMode;
+        this.profiles = profiles;
     }
 
     /// <summary>
@@ -198,6 +205,18 @@ public sealed class StdioDaemon
                 case "faux/configure" when conformanceMode:
                     await ConfigureFauxAsync(request, writer, cancellationToken).ConfigureAwait(false);
                     break;
+                case "agentProfiles/list" when profiles is not null:
+                    await ListAgentProfilesAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "agentProfiles/create" when profiles is not null:
+                    await CreateAgentProfileAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "agentProfiles/update" when profiles is not null:
+                    await UpdateAgentProfileAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "agentProfiles/delete" when profiles is not null:
+                    await DeleteAgentProfileAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "run/start":
                     acceptedRuns.Add(await StartRunAsync(
                         request,
@@ -236,6 +255,10 @@ public sealed class StdioDaemon
             await writer.WriteErrorAsync(request.Id, exception.Error, cancellationToken).ConfigureAwait(false);
         }
         catch (ApprovalResponseException exception)
+        {
+            await writer.WriteErrorAsync(request.Id, exception.Error, cancellationToken).ConfigureAwait(false);
+        }
+        catch (AgentProfileException exception)
         {
             await writer.WriteErrorAsync(request.Id, exception.Error, cancellationToken).ConfigureAwait(false);
         }
@@ -297,11 +320,12 @@ public sealed class StdioDaemon
         bool interactiveApprovals,
         CancellationToken cancellationToken)
     {
-        var (sessionId, input, provider) = ProtocolCodec.ParseRunStart(request.Params);
+        var (sessionId, input, provider, agentProfile) = ProtocolCodec.ParseRunStart(request.Params);
         var acceptedRun = await agent.AcceptAsync(
             sessionId,
             input,
             provider,
+            agentProfile,
             interactiveApprovals,
             cancellationToken).ConfigureAwait(false);
         await writer.WriteSuccessAsync(
@@ -496,6 +520,100 @@ public sealed class StdioDaemon
     }
 
     /// <summary>
+    /// 功能：返回 application database 中全部 Agent Profile。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">agentProfiles/list 请求。</param>
+    /// <param name="writer">协议 writer。</param>
+    /// <param name="cancellationToken">查询与响应写入取消信号。</param>
+    /// <returns>成功响应 flush 后的任务。</returns>
+    private async Task ListAgentProfilesAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        ProtocolCodec.ParseAgentProfilesList(request.Params);
+        var result = await profiles!.ListAsync(cancellationToken).ConfigureAwait(false);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new AgentProfilesListResult(result),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：严格解析并创建 revision 1 的 Agent Profile。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">agentProfiles/create 请求。</param>
+    /// <param name="writer">协议 writer。</param>
+    /// <param name="cancellationToken">写库与响应写入取消信号。</param>
+    /// <returns>成功响应 flush 后的任务。</returns>
+    private async Task CreateAgentProfileAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var input = ProtocolCodec.ParseAgentProfilesCreate(request.Params);
+        var result = await profiles!.CreateAsync(input, cancellationToken).ConfigureAwait(false);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new AgentProfileResult(result),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：严格解析并按 expected revision 完整更新 Agent Profile。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">agentProfiles/update 请求。</param>
+    /// <param name="writer">协议 writer。</param>
+    /// <param name="cancellationToken">写库与响应写入取消信号。</param>
+    /// <returns>成功响应 flush 后的任务。</returns>
+    private async Task UpdateAgentProfileAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var (profileId, expectedRevision, input) =
+            ProtocolCodec.ParseAgentProfilesUpdate(request.Params);
+        var result = await profiles!
+            .UpdateAsync(profileId, expectedRevision, input, cancellationToken)
+            .ConfigureAwait(false);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new AgentProfileResult(result),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：严格解析并按 expected revision 删除 Agent Profile。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">agentProfiles/delete 请求。</param>
+    /// <param name="writer">协议 writer。</param>
+    /// <param name="cancellationToken">写库与响应写入取消信号。</param>
+    /// <returns>成功响应 flush 后的任务。</returns>
+    private async Task DeleteAgentProfileAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var (profileId, expectedRevision) =
+            ProtocolCodec.ParseAgentProfilesDelete(request.Params);
+        await profiles!
+            .DeleteAsync(profileId, expectedRevision, cancellationToken)
+            .ConfigureAwait(false);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new AgentProfilesDeleteResult(true),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// 功能：消费 Agent 的已 durable 事件流并逐帧写到协议 stdout。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -524,17 +642,28 @@ public sealed class StdioDaemon
     /// <returns>能力和限制 DTO。</returns>
     private InitializeResult CreateInitializeResult(string protocolVersion)
     {
-        IReadOnlyList<string> methods = conformanceMode
-            ?
+        var methods = new List<string> { "initialize" };
+        if (conformanceMode)
+        {
+            methods.Add("faux/configure");
+        }
+
+        if (profiles is not null)
+        {
+            methods.AddRange(
+                [
+                    "agentProfiles/list",
+                    "agentProfiles/create",
+                    "agentProfiles/update",
+                    "agentProfiles/delete",
+                ]);
+        }
+
+        methods.AddRange(
             [
-                "initialize", "faux/configure", "run/start", "run/cancel", "approval/respond",
-                "session/get", "session/branch/select", "session/compact", "models/list",
-            ]
-            :
-            [
-                "initialize", "run/start", "run/cancel", "approval/respond", "session/get",
+                "run/start", "run/cancel", "approval/respond", "session/get",
                 "session/branch/select", "session/compact", "models/list",
-            ];
+            ]);
         return new InitializeResult(
             protocolVersion,
             new ImplementationInfo("qxnm-forge-dotnet", "0.1.0", "dotnet"),

@@ -1400,6 +1400,7 @@ mod tests {
     fn request_for_session(session_id: &str) -> ProviderRequest {
         ProviderRequest {
             model: "faux-1".to_owned(),
+            system_instructions: Some("profile guidance".to_owned()),
             messages: Vec::new(),
             tools: Vec::new(),
             max_output_tokens: None,

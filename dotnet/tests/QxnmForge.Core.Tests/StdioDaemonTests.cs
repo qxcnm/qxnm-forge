@@ -5,6 +5,8 @@ using QxnmForge.Daemon;
 using QxnmForge.Domain;
 using QxnmForge.Provider;
 using QxnmForge.Session;
+using QxnmForge.Storage;
+using QxnmForge.Tools;
 
 namespace QxnmForge.Tests;
 
@@ -194,6 +196,141 @@ public sealed class StdioDaemonTests
             {
                 frame.Dispose();
             }
+        }
+    }
+
+    /// <summary>
+    /// 功能：验证 Profile CRUD 能力校验、固定错误、UTC wire 与显式 faux family run 端到端闭合。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>异步测试任务。</returns>
+    [Fact]
+    public async Task AgentProfilesValidateCapabilitiesAndBindFauxRun()
+    {
+        using var temporary = new TemporaryDirectory();
+        var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+        var sessionsRoot = Path.Combine(temporary.Path, "sessions");
+        await using var repository = new SessionRepository(sessionsRoot, workspace);
+        await using var registry = new ProviderRegistry([new FauxProvider()]);
+        using var tools = new ToolRegistry(workspace);
+        var database = await ApplicationDatabaseFactory.OpenFactoryAsync(
+            DatabaseConfiguration.ForStateRoot(sessionsRoot));
+        var profileService = new AgentProfileService(
+            database,
+            registry.ListModels()
+                .Select(static model => new AgentProfileModel(
+                    model.ProviderId,
+                    model.ModelId,
+                    model.ApiFamily))
+                .ToArray(),
+            tools.Names);
+        var daemon = new StdioDaemon(
+            repository,
+            new AgentService(
+                repository,
+                registry,
+                tools,
+                TimeSpan.FromSeconds(1),
+                profileService),
+            conformanceMode: true,
+            profileService);
+        const string initialize =
+            "{\"jsonrpc\":\"2.0\",\"id\":\"initialize-profile\",\"method\":\"initialize\",\"params\":{\"protocolVersions\":[\"0.1\"],\"client\":{\"name\":\"test\",\"version\":\"0.1\"},\"capabilities\":{}}}";
+        const string validProfile =
+            "{\"displayName\":\"Reviewer\",\"description\":\"Reviews changes.\",\"enabled\":true,\"instructions\":\"Review the change.\",\"model\":{\"providerId\":\"faux\",\"modelId\":\"faux-v1\",\"apiFamily\":\"faux\"},\"requestedToolIds\":[\"file.read\"],\"dangerousActionMode\":\"ask\",\"behavior\":{\"responseStyle\":\"concise\",\"planFirst\":true,\"reviewChanges\":true}}";
+        var unknownModel = validProfile.Replace(
+            "\"providerId\":\"faux\"",
+            "\"providerId\":\"unknown\"",
+            StringComparison.Ordinal);
+        var unknownTool = validProfile.Replace(
+            "\"file.read\"",
+            "\"unknown.tool\"",
+            StringComparison.Ordinal);
+        var firstRequests = string.Join('\n',
+            initialize,
+            "{\"jsonrpc\":\"2.0\",\"id\":\"create-model\",\"method\":\"agentProfiles/create\",\"params\":{\"profile\":" + unknownModel + "}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":\"create-tool\",\"method\":\"agentProfiles/create\",\"params\":{\"profile\":" + unknownTool + "}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":\"create-valid\",\"method\":\"agentProfiles/create\",\"params\":{\"profile\":" + validProfile + "}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":\"list-profiles\",\"method\":\"agentProfiles/list\",\"params\":{}}") + "\n";
+        await using var firstInput = new MemoryStream(Encoding.UTF8.GetBytes(firstRequests));
+        await using var firstOutput = new MemoryStream();
+
+        await daemon.RunAsync(firstInput, firstOutput, CancellationToken.None);
+        var firstFrames = ParseFrames(firstOutput);
+        string profileId;
+        try
+        {
+            Assert.Equal(5, firstFrames.Count);
+            var methods = firstFrames[0].RootElement
+                .GetProperty("result")
+                .GetProperty("capabilities")
+                .GetProperty("methods");
+            Assert.Contains(methods.EnumerateArray(), static method =>
+                method.GetString() == "agentProfiles/create");
+            const string invalidError =
+                "{\"code\":-32602,\"message\":\"agent profile is invalid\",\"retryable\":false,\"details\":{\"kind\":\"agent_profile_invalid\",\"field\":\"profile\"}}";
+            Assert.Equal(invalidError, firstFrames[1].RootElement.GetProperty("error").GetRawText());
+            Assert.Equal(invalidError, firstFrames[2].RootElement.GetProperty("error").GetRawText());
+            var created = firstFrames[3].RootElement.GetProperty("result").GetProperty("profile");
+            profileId = created.GetProperty("profileId").GetString()!;
+            Assert.EndsWith("Z", created.GetProperty("createdAt").GetString(), StringComparison.Ordinal);
+            Assert.EndsWith("Z", created.GetProperty("updatedAt").GetString(), StringComparison.Ordinal);
+            var profiles = firstFrames[4].RootElement
+                .GetProperty("result")
+                .GetProperty("profiles");
+            Assert.Equal(1, profiles.GetArrayLength());
+            Assert.Equal(profileId, profiles[0].GetProperty("profileId").GetString());
+        }
+        finally
+        {
+            foreach (var frame in firstFrames)
+            {
+                frame.Dispose();
+            }
+        }
+
+        var secondRequests = string.Join('\n',
+            initialize.Replace("initialize-profile", "initialize-run", StringComparison.Ordinal),
+            "{\"jsonrpc\":\"2.0\",\"id\":\"configure-profile\",\"method\":\"faux/configure\",\"params\":{\"sessionId\":\"profile-session\",\"scenario\":{\"schemaVersion\":\"0.1\",\"name\":\"profile\",\"seed\":1,\"steps\":[{\"type\":\"text\",\"text\":\"done\"}]}}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":\"run-profile\",\"method\":\"run/start\",\"params\":{\"sessionId\":\"profile-session\",\"input\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"review\"}]},\"provider\":{\"id\":\"faux\",\"modelId\":\"faux-v1\",\"apiFamily\":\"faux\"},\"agentProfile\":{\"profileId\":\"" + profileId + "\",\"revision\":1}}}") + "\n";
+        await using var secondInput = new MemoryStream(Encoding.UTF8.GetBytes(secondRequests));
+        await using var secondOutput = new MemoryStream();
+
+        await daemon.RunAsync(secondInput, secondOutput, CancellationToken.None);
+        var secondFrames = ParseFrames(secondOutput);
+        try
+        {
+            Assert.DoesNotContain(secondFrames, static frame =>
+                frame.RootElement.TryGetProperty("error", out _));
+            Assert.Contains(secondFrames, static frame =>
+                frame.RootElement.TryGetProperty("id", out var id) && id.GetString() == "run-profile");
+        }
+        finally
+        {
+            foreach (var frame in secondFrames)
+            {
+                frame.Dispose();
+            }
+        }
+
+        var runtime = await repository.GetAsync("profile-session", CancellationToken.None);
+        var acceptedLine = (await File.ReadAllLinesAsync(
+                runtime.Journal.JournalPath,
+                CancellationToken.None))
+            .Select(static line => JsonDocument.Parse(line))
+            .Single(static document =>
+                document.RootElement.GetProperty("kind").GetString() == "run.accepted");
+        using (acceptedLine)
+        {
+            var snapshot = acceptedLine.RootElement
+                .GetProperty("data")
+                .GetProperty("agentProfileSnapshot");
+            Assert.Equal(profileId, snapshot.GetProperty("profileId").GetString());
+            Assert.Equal("faux", snapshot.GetProperty("model").GetProperty("apiFamily").GetString());
+            Assert.Equal(["file.read"], snapshot.GetProperty("effectiveToolIds")
+                .EnumerateArray()
+                .Select(static tool => tool.GetString()));
         }
     }
 

@@ -95,10 +95,20 @@ public class OpenAiChatProvider : HttpSseProviderBase
     /// <returns>包含 model、messages、stream 和 stream_options 的 JSON object。</returns>
     protected override JsonElement CreateRequestBody(ProviderRequest request)
     {
+        var messages = MapMessages(request.Messages);
+        if (request.SystemInstructions is not null)
+        {
+            messages.Insert(0, new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["role"] = "system",
+                ["content"] = request.SystemInstructions,
+            });
+        }
+
         var body = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["model"] = request.Selection.ModelId,
-            ["messages"] = MapMessages(request.Messages),
+            ["messages"] = messages,
             ["stream"] = true,
             ["stream_options"] = new Dictionary<string, object?> { ["include_usage"] = true },
         };

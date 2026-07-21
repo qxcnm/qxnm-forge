@@ -5,6 +5,7 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::agent_profile::{AgentProfileInput, AgentProfileReference};
 use crate::domain::{ArtifactRef, ContentBlock, EventEnvelope};
 use crate::error::AgentError;
 
@@ -344,9 +345,40 @@ pub struct RunStartParams {
     pub input: InputMessage,
     pub provider: ProviderSelection,
     #[serde(default)]
+    pub agent_profile: Option<AgentProfileReference>,
+    #[serde(default)]
     pub options: Option<RunOptions>,
     #[serde(default)]
     pub extensions: BTreeMap<String, Value>,
+}
+
+/// `agentProfiles/list` 的严格空参数对象。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentProfilesListParams {}
+
+/// `agentProfiles/create` 的严格完整 Profile 参数。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProfilesCreateParams {
+    pub profile: AgentProfileInput,
+}
+
+/// `agentProfiles/update` 的严格 CAS 完整替换参数。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProfilesUpdateParams {
+    pub profile_id: String,
+    pub expected_revision: u64,
+    pub profile: AgentProfileInput,
+}
+
+/// `agentProfiles/delete` 的严格 CAS 删除参数。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProfilesDeleteParams {
+    pub profile_id: String,
+    pub expected_revision: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

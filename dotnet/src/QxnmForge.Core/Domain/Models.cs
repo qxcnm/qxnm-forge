@@ -261,6 +261,10 @@ public sealed record AssistantMessage(
 /// <param name="Limit">可选资源上限。</param>
 /// <param name="Observed">可选实际资源计数。</param>
 /// <param name="ExitCode">可选进程退出码。</param>
+/// <param name="ApiFamily">可选 API family。</param>
+/// <param name="ExpectedRevision">可选调用方 CAS revision。</param>
+/// <param name="CurrentRevision">可选服务端当前 revision。</param>
+/// <param name="ResourceId">可选品牌中立资源 ID。</param>
 public sealed record ErrorDetails(
     string Kind,
     string? Field = null,
@@ -272,7 +276,11 @@ public sealed record ErrorDetails(
     string? ToolName = null,
     long? Limit = null,
     long? Observed = null,
-    int? ExitCode = null);
+    int? ExitCode = null,
+    string? ApiFamily = null,
+    long? ExpectedRevision = null,
+    long? CurrentRevision = null,
+    string? ResourceId = null);
 
 /// <summary>
 /// 功能：表示不依赖异常文本解析的协议和 Agent 结构化错误。

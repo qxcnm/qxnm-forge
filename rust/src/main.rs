@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use qxnm_forge::agent::{Agent, RunRequest};
+use qxnm_forge::agent_profile::AgentProfileService;
 use qxnm_forge::commercial_state::{InstalledSponsoredRouteStore, ProviderCredentialStore};
 use qxnm_forge::daemon::Daemon;
 use qxnm_forge::domain::EventEnvelope;
@@ -23,6 +24,7 @@ use qxnm_forge::session::pi_v3_import::{PiV3ImportOptions, import_pi_v3};
 use qxnm_forge::sponsored_catalog::{
     SponsoredCatalogService, generate_catalog_keypair, sign_catalog_file, verify_catalog_file,
 };
+use qxnm_forge::storage::{DatabaseConfiguration, connect_application_database};
 use qxnm_forge::tools::ToolRegistry;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -259,7 +261,7 @@ async fn run(
             state_dir,
             conformance,
         } => {
-            let state_dir = resolve_state_dir(state_dir);
+            let state_dir = std::path::absolute(resolve_state_dir(state_dir))?;
             let (agent, faux) = build_agent(
                 &workspace,
                 &state_dir,
@@ -268,9 +270,26 @@ async fn run(
                 conformance,
             )
             .await?;
-            Daemon::new(agent, faux, provider_identity, provider_route, &workspace)?
-                .run_stdio()
-                .await
+            let database =
+                connect_application_database(&DatabaseConfiguration::sqlite_default(&state_dir))
+                    .await
+                    .map_err(|_| {
+                        AgentError::new(
+                            ErrorCode::InternalError,
+                            "application database initialization failed",
+                        )
+                    })?;
+            let agent_profiles = AgentProfileService::new(database);
+            Daemon::new(
+                agent,
+                faux,
+                agent_profiles,
+                provider_identity,
+                provider_route,
+                &workspace,
+            )?
+            .run_stdio()
+            .await
         }
         Command::Run {
             prompt,

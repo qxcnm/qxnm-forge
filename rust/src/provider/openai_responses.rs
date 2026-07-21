@@ -206,6 +206,9 @@ pub(super) fn request_body(request: &ProviderRequest) -> Value {
         })
         .collect::<Vec<_>>();
     let mut body = json!({"model":request.model,"input":input,"stream":true});
+    if let Some(instructions) = &request.system_instructions {
+        body["instructions"] = Value::String(instructions.clone());
+    }
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools);
     }
@@ -494,6 +497,7 @@ mod tests {
     fn serializes_function_call_and_function_call_output() {
         let request = ProviderRequest {
             model: "mock-model".to_owned(),
+            system_instructions: Some("profile guidance".to_owned()),
             messages: vec![
                 Message {
                     id: "assistant-1".to_owned(),
@@ -530,6 +534,7 @@ mod tests {
         };
 
         let body = request_body(&request);
+        assert_eq!(body["instructions"], "profile guidance");
         assert_eq!(body["input"][0]["type"], "function_call");
         assert_eq!(body["input"][0]["call_id"], "call-1");
         assert_eq!(body["input"][0]["name"], "read");
@@ -668,6 +673,7 @@ mod tests {
         );
         let request = ProviderRequest {
             model: "mock-model".to_owned(),
+            system_instructions: None,
             messages: vec![Message::text("user-1", Role::User, "hello")],
             tools: Vec::new(),
             max_output_tokens: Some(32),

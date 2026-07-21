@@ -160,6 +160,7 @@ mod tests {
     fn serializes_native_nonempty_tool_definition() -> Result<(), crate::error::AgentError> {
         let body = request_body(&ProviderRequest {
             model: "mock-mistral-v1".to_owned(),
+            system_instructions: Some("profile guidance".to_owned()),
             messages: vec![
                 Message {
                     id: "m1".to_owned(),
@@ -209,6 +210,8 @@ mod tests {
         })?;
         assert_eq!(body["tools"][0]["function"]["name"], "file.read");
         assert_eq!(body["tools"][0]["function"]["strict"], false);
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][0]["content"], "profile guidance");
         assert!(body.get("stream_options").is_none());
         assert!(body["messages"].as_array().is_some_and(|messages| {
             messages.iter().any(|message| {

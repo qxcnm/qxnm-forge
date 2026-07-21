@@ -109,6 +109,8 @@ pub type ProviderStream =
 #[serde(rename_all = "camelCase")]
 pub struct ProviderRequest {
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_instructions: Option<String>,
     pub messages: Vec<Message>,
     #[serde(default)]
     pub tools: Vec<ToolDefinition>,

@@ -150,63 +150,69 @@ impl Provider for OpenAiChatProvider {
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 pub(super) fn request_body(request: &ProviderRequest) -> Result<Value, AgentError> {
-    let messages = request
-        .messages
-        .iter()
-        .map(|message| {
-            let role = match message.role {
-                Role::System => "system",
-                Role::User => "user",
-                Role::Assistant => "assistant",
-                Role::Tool => "tool",
-            };
-            let text = message
-                .content
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let mut value = json!({"role": role, "content": text});
-            let tool_calls = message
-                .content
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::ToolCall {
-                        call_id,
-                        name,
-                        arguments,
-                    } => Some(json!({
-                        "id": call_id,
-                        "type": "function",
-                        "function": {"name": name, "arguments": arguments.to_string()}
-                    })),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            if !tool_calls.is_empty() {
-                value["tool_calls"] = Value::Array(tool_calls);
-            }
-            if let Some(ContentBlock::ToolResult {
-                call_id, output, ..
-            }) = message
-                .content
-                .iter()
-                .find(|block| matches!(block, ContentBlock::ToolResult { .. }))
-            {
-                value["tool_call_id"] = Value::String(call_id.clone());
-                value["content"] = Value::String(
-                    output
-                        .text
-                        .clone()
-                        .unwrap_or_else(|| "tool result stored as artifact".to_owned()),
-                );
-            }
-            value
-        })
-        .collect::<Vec<_>>();
+    let mut messages = Vec::new();
+    if let Some(instructions) = &request.system_instructions {
+        messages.push(json!({"role":"system","content":instructions}));
+    }
+    messages.extend(
+        request
+            .messages
+            .iter()
+            .map(|message| {
+                let role = match message.role {
+                    Role::System => "system",
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                    Role::Tool => "tool",
+                };
+                let text = message
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let mut value = json!({"role": role, "content": text});
+                let tool_calls = message
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::ToolCall {
+                            call_id,
+                            name,
+                            arguments,
+                        } => Some(json!({
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": arguments.to_string()}
+                        })),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if !tool_calls.is_empty() {
+                    value["tool_calls"] = Value::Array(tool_calls);
+                }
+                if let Some(ContentBlock::ToolResult {
+                    call_id, output, ..
+                }) = message
+                    .content
+                    .iter()
+                    .find(|block| matches!(block, ContentBlock::ToolResult { .. }))
+                {
+                    value["tool_call_id"] = Value::String(call_id.clone());
+                    value["content"] = Value::String(
+                        output
+                            .text
+                            .clone()
+                            .unwrap_or_else(|| "tool result stored as artifact".to_owned()),
+                    );
+                }
+                value
+            })
+            .collect::<Vec<_>>(),
+    );
     let tools = request
         .tools
         .iter()

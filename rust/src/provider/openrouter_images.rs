@@ -116,11 +116,11 @@ impl OpenRouterImagesProvider {
         }
     }
 
-    /// 功能：把最新 user 的 portable text/image_ref 顺序转换为原生非流式 JSON body。
+    /// 功能：把 request-local system 指令与最新 user 的 portable text/image_ref 转换为原生非流式 JSON body。
     ///
     /// 输入：含当前 Session ID、冻结 modelId 与 selected-context 消息的 Provider 请求。
     /// 输出：紧凑 UTF-8 JSON；image bytes 仅以请求局部 canonical data URL 存在。
-    /// 不变量：最多八图、总输入图像 16 MiB、文字 256 KiB；每个引用均重新执行 no-follow/hash/length/media/魔数复核。
+    /// 不变量：system 指令使用独立 system message；最多八图、总输入图像 16 MiB、全部文字合计 256 KiB；每个引用均重新复核。
     /// 失败：模型、内容、Session 引用、大小或 JSON 编码违规返回不含路径和图像数据的结构化错误。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -145,9 +145,20 @@ impl OpenRouterImagesProvider {
         }
 
         let mut content = Vec::with_capacity(message.content.len());
+        let mut messages =
+            Vec::with_capacity(1 + usize::from(request.system_instructions.is_some()));
         let mut image_count = 0_usize;
         let mut image_bytes = 0_usize;
         let mut text_bytes = 0_usize;
+        if let Some(instructions) = &request.system_instructions {
+            text_bytes = instructions.len();
+            if text_bytes > MAX_TEXT_BYTES {
+                return Err(request_limit_error(
+                    "OpenRouter image input text is too large",
+                ));
+            }
+            messages.push(json!({"role":"system","content":instructions}));
+        }
         for block in &message.content {
             match block {
                 ContentBlock::Text { text } => {
@@ -193,9 +204,10 @@ impl OpenRouterImagesProvider {
                 }
             }
         }
+        messages.push(json!({"role":"user","content":content}));
         let body = json!({
             "model":request.model,
-            "messages":[{"role":"user","content":content}],
+            "messages":messages,
             "stream":false,
             "modalities":modalities(&request.model)
         });
@@ -597,7 +609,53 @@ mod tests {
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use serde_json::json;
 
-    use super::{IMAGE_MODELS, decode_data_url, modalities, parse_usage};
+    use tempfile::tempdir;
+
+    use super::{
+        IMAGE_MODELS, MAX_TEXT_BYTES, OpenRouterImagesProvider, decode_data_url, modalities,
+        parse_usage,
+    };
+    use crate::domain::{Message, Role};
+    use crate::provider::ProviderRequest;
+    use crate::session::SessionStore;
+
+    /// 功能：验证 Profile 指令映射为独立 system message 且仍计入统一文字上限。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn request_body_emits_independent_system_message()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let sessions = SessionStore::new(directory.path().join("state"), 1024).await?;
+        let provider = OpenRouterImagesProvider::new("https://openrouter.ai/api/v1", sessions);
+        let mut request = ProviderRequest {
+            model: "google/gemini-2.5-flash-image".to_owned(),
+            system_instructions: Some("profile guidance".to_owned()),
+            messages: vec![Message::text("message-1", Role::User, "draw a diagram")],
+            tools: Vec::new(),
+            max_output_tokens: None,
+            session_id: Some("session-system-message".to_owned()),
+            run_id: Some("run-system-message".to_owned()),
+        };
+        let body: serde_json::Value =
+            serde_json::from_slice(&provider.request_body(&request).await?)?;
+        assert_eq!(
+            body,
+            json!({
+                "model":"google/gemini-2.5-flash-image",
+                "messages":[
+                    {"role":"system","content":"profile guidance"},
+                    {"role":"user","content":[{"type":"text","text":"draw a diagram"}]}
+                ],
+                "stream":false,
+                "modalities":["image","text"]
+            })
+        );
+
+        request.system_instructions = Some("x".repeat(MAX_TEXT_BYTES));
+        assert!(provider.request_body(&request).await.is_err());
+        Ok(())
+    }
 
     /// 功能：验证 canonical PNG data URL 被解码且 remote、宽松 base64 与 MIME 欺骗被拒绝。
     /// 作者：高宏顺

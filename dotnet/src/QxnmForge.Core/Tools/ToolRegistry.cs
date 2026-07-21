@@ -130,11 +130,16 @@ public sealed class ToolRegistry : IDisposable
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
+    /// <param name="allowedToolIds">可选 run-local allowlist；null 表示完整 registry。</param>
     /// <returns>file.read 优先、其余名称有序的名称、说明与受限 schema 独立列表。</returns>
-    public IReadOnlyList<ProviderToolDefinition> ProviderDefinitions()
+    /// <remarks>不变量：allowlist 只能收窄 registry，未知名称不会被声明。</remarks>
+    public IReadOnlyList<ProviderToolDefinition> ProviderDefinitions(
+        IReadOnlyCollection<string>? allowedToolIds = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         return Definitions
+            .Where(item => allowedToolIds is null ||
+                allowedToolIds.Contains(item.Name, StringComparer.Ordinal))
             .OrderBy(static item => item.Name == "file.read" ? 0 : 1)
             .ThenBy(static item => item.Name, StringComparer.Ordinal)
             .Select(static item => new ProviderToolDefinition(
@@ -166,13 +171,20 @@ public sealed class ToolRegistry : IDisposable
     /// <param name="name">Provider 返回的规范工具名。</param>
     /// <param name="arguments">已完整组装的 JSON object 参数。</param>
     /// <param name="toolCallId">可选 Provider 工具调用 ID；仅供执行期测试 barrier 精确匹配。</param>
+    /// <param name="allowedToolIds">可选 run-local allowlist；null 表示完整 registry。</param>
     /// <returns>审批与执行共同绑定的不可变计划。</returns>
     /// <remarks>不变量：本方法无工具副作用；未配置/未自检 sandbox 在 approval 前失败，不会创建文件或启动进程。</remarks>
     /// <exception cref="ToolOperationException">未知工具、参数无效、sandbox 不可用、路径越界或 executable 不可解析。</exception>
-    public PreparedToolCall Prepare(string name, JsonElement arguments, string? toolCallId = null)
+    public PreparedToolCall Prepare(
+        string name,
+        JsonElement arguments,
+        string? toolCallId = null,
+        IReadOnlyCollection<string>? allowedToolIds = null)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        if (!definitions.TryGetValue(name, out var definition))
+        if (allowedToolIds is not null &&
+            !allowedToolIds.Contains(name, StringComparer.Ordinal) ||
+            !definitions.TryGetValue(name, out var definition))
         {
             throw CreateFailure("tool_not_found", "validation_error", -32601, name);
         }

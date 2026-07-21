@@ -89,6 +89,11 @@ public class AnthropicMessagesProvider : HttpSseProviderBase
             ["stream"] = true,
             ["max_tokens"] = 4096,
         };
+        if (request.SystemInstructions is not null)
+        {
+            body["system"] = request.SystemInstructions;
+        }
+
         if (request.Tools.Count > 0)
         {
             body["tools"] = request.Tools.Select(static tool =>

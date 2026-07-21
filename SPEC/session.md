@@ -94,6 +94,12 @@ explicit reference MUST name a preceding, still-unconsumed configuration.
 This inference affects only the deterministic faux test queue and never chooses
 a production Provider credential or model.
 
+当 `run/start` 绑定 Agent Profile 时，`run.accepted.data.agentProfileSnapshot` 必须存在并符合
+`agent-profile.schema.json#/$defs/runSnapshot`。该封闭快照保存精确 revision、模型、
+instructions/behavior、requested tools 与 acceptance 时计算的 effective tools；不得保存
+resolved credential、endpoint、entitlement 或宿主路径。它是已接受 run 与恢复的唯一 Profile
+来源，后续 application database 中 Profile 的更新或删除不会回溯改变 Session。
+
 Unknown core kinds are incompatible. Extension records use kind `extension`
 and a reverse-DNS namespace. They do not participate in model context unless a
 future core record explicitly imports their portable content.
@@ -182,6 +188,8 @@ fault-injection gate.
 After structural validation, any accepted run lacking `run.terminal` receives a
 durable interrupted terminal record. An open provider attempt is interrupted.
 Ambiguous tool intents follow the no-replay rule in the agent specification.
+存在 Agent Profile snapshot 时，恢复必须保留并使用原快照，绝不能查询当前 Profile revision
+替换它，也不能因 Profile 已禁用/删除而改写历史 accepted record。
 
 Recovery is a deterministic append-only transition. Process unresolved tool
 intents by original journal `seq`, then unresolved runs by their `run.accepted`

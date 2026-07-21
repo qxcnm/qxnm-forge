@@ -1,0 +1,373 @@
+{
+  "schemaVersion": "0.2",
+  "profileInput": {
+    "displayName": "Repository reviewer",
+    "description": "Reviews a workspace without granting new capabilities.",
+    "enabled": true,
+    "instructions": "Inspect the requested change and report evidence-backed findings.",
+    "model": {
+      "providerId": "faux",
+      "modelId": "faux-v1",
+      "apiFamily": "faux"
+    },
+    "requestedToolIds": ["file.read", "file.write"],
+    "dangerousActionMode": "ask",
+    "behavior": {
+      "responseStyle": "concise",
+      "planFirst": true,
+      "reviewChanges": true
+    }
+  },
+  "createdProfile": {
+    "profileId": "profile-reviewer-1",
+    "revision": 1,
+    "displayName": "Repository reviewer",
+    "description": "Reviews a workspace without granting new capabilities.",
+    "enabled": true,
+    "instructions": "Inspect the requested change and report evidence-backed findings.",
+    "model": {
+      "providerId": "faux",
+      "modelId": "faux-v1",
+      "apiFamily": "faux"
+    },
+    "requestedToolIds": ["file.read", "file.write"],
+    "dangerousActionMode": "ask",
+    "behavior": {
+      "responseStyle": "concise",
+      "planFirst": true,
+      "reviewChanges": true
+    },
+    "createdAt": "2026-07-21T08:00:00Z",
+    "updatedAt": "2026-07-21T08:00:00Z"
+  },
+  "updatedProfile": {
+    "profileId": "profile-reviewer-1",
+    "revision": 2,
+    "displayName": "Repository reviewer",
+    "description": "Reviews a workspace without granting new capabilities.",
+    "enabled": true,
+    "instructions": "Inspect the requested change and report evidence-backed findings.",
+    "model": {
+      "providerId": "faux",
+      "modelId": "faux-v1",
+      "apiFamily": "faux"
+    },
+    "requestedToolIds": ["file.read", "file.write"],
+    "dangerousActionMode": "ask",
+    "behavior": {
+      "responseStyle": "concise",
+      "planFirst": true,
+      "reviewChanges": true
+    },
+    "createdAt": "2026-07-21T08:00:00Z",
+    "updatedAt": "2026-07-21T08:01:00Z"
+  },
+  "runSnapshot": {
+    "profileId": "profile-reviewer-1",
+    "revision": 2,
+    "displayName": "Repository reviewer",
+    "instructions": "Inspect the requested change and report evidence-backed findings.",
+    "model": {
+      "providerId": "faux",
+      "modelId": "faux-v1",
+      "apiFamily": "faux"
+    },
+    "requestedToolIds": ["file.read", "file.write"],
+    "effectiveToolIds": ["file.read"],
+    "dangerousActionMode": "ask",
+    "behavior": {
+      "responseStyle": "concise",
+      "planFirst": true,
+      "reviewChanges": true
+    }
+  },
+  "wire": {
+    "listRequest": {
+      "jsonrpc": "2.0",
+      "id": "profiles-list-1",
+      "method": "agentProfiles/list",
+      "params": {}
+    },
+    "listResult": {
+      "profiles": [
+        {
+          "profileId": "profile-reviewer-1",
+          "revision": 2,
+          "displayName": "Repository reviewer",
+          "description": "Reviews a workspace without granting new capabilities.",
+          "enabled": true,
+          "instructions": "Inspect the requested change and report evidence-backed findings.",
+          "model": {
+            "providerId": "faux",
+            "modelId": "faux-v1",
+            "apiFamily": "faux"
+          },
+          "requestedToolIds": ["file.read", "file.write"],
+          "dangerousActionMode": "ask",
+          "behavior": {
+            "responseStyle": "concise",
+            "planFirst": true,
+            "reviewChanges": true
+          },
+          "createdAt": "2026-07-21T08:00:00Z",
+          "updatedAt": "2026-07-21T08:01:00Z"
+        }
+      ]
+    },
+    "createRequest": {
+      "jsonrpc": "2.0",
+      "id": "profiles-create-1",
+      "method": "agentProfiles/create",
+      "params": {
+        "profile": {
+          "displayName": "Repository reviewer",
+          "description": "Reviews a workspace without granting new capabilities.",
+          "enabled": true,
+          "instructions": "Inspect the requested change and report evidence-backed findings.",
+          "model": {
+            "providerId": "faux",
+            "modelId": "faux-v1",
+            "apiFamily": "faux"
+          },
+          "requestedToolIds": ["file.read", "file.write"],
+          "dangerousActionMode": "ask",
+          "behavior": {
+            "responseStyle": "concise",
+            "planFirst": true,
+            "reviewChanges": true
+          }
+        }
+      }
+    },
+    "createResult": {
+      "profile": {
+        "profileId": "profile-reviewer-1",
+        "revision": 1,
+        "displayName": "Repository reviewer",
+        "description": "Reviews a workspace without granting new capabilities.",
+        "enabled": true,
+        "instructions": "Inspect the requested change and report evidence-backed findings.",
+        "model": {
+          "providerId": "faux",
+          "modelId": "faux-v1",
+          "apiFamily": "faux"
+        },
+        "requestedToolIds": ["file.read", "file.write"],
+        "dangerousActionMode": "ask",
+        "behavior": {
+          "responseStyle": "concise",
+          "planFirst": true,
+          "reviewChanges": true
+        },
+        "createdAt": "2026-07-21T08:00:00Z",
+        "updatedAt": "2026-07-21T08:00:00Z"
+      }
+    },
+    "updateRequest": {
+      "jsonrpc": "2.0",
+      "id": "profiles-update-1",
+      "method": "agentProfiles/update",
+      "params": {
+        "profileId": "profile-reviewer-1",
+        "expectedRevision": 1,
+        "profile": {
+          "displayName": "Repository reviewer",
+          "description": "Reviews a workspace without granting new capabilities.",
+          "enabled": true,
+          "instructions": "Inspect the requested change and report evidence-backed findings.",
+          "model": {
+            "providerId": "faux",
+            "modelId": "faux-v1",
+            "apiFamily": "faux"
+          },
+          "requestedToolIds": ["file.read", "file.write"],
+          "dangerousActionMode": "ask",
+          "behavior": {
+            "responseStyle": "concise",
+            "planFirst": true,
+            "reviewChanges": true
+          }
+        }
+      }
+    },
+    "updateResult": {
+      "profile": {
+        "profileId": "profile-reviewer-1",
+        "revision": 2,
+        "displayName": "Repository reviewer",
+        "description": "Reviews a workspace without granting new capabilities.",
+        "enabled": true,
+        "instructions": "Inspect the requested change and report evidence-backed findings.",
+        "model": {
+          "providerId": "faux",
+          "modelId": "faux-v1",
+          "apiFamily": "faux"
+        },
+        "requestedToolIds": ["file.read", "file.write"],
+        "dangerousActionMode": "ask",
+        "behavior": {
+          "responseStyle": "concise",
+          "planFirst": true,
+          "reviewChanges": true
+        },
+        "createdAt": "2026-07-21T08:00:00Z",
+        "updatedAt": "2026-07-21T08:01:00Z"
+      }
+    },
+    "deleteRequest": {
+      "jsonrpc": "2.0",
+      "id": "profiles-delete-1",
+      "method": "agentProfiles/delete",
+      "params": {
+        "profileId": "profile-reviewer-1",
+        "expectedRevision": 2
+      }
+    },
+    "deleteResult": {
+      "deleted": true
+    },
+    "runStartRequest": {
+      "jsonrpc": "2.0",
+      "id": "run-profile-1",
+      "method": "run/start",
+      "params": {
+        "sessionId": "session-profile-1",
+        "input": {
+          "role": "user",
+          "content": [{ "type": "text", "text": "Review the pending change." }]
+        },
+        "provider": {
+          "id": "faux",
+          "modelId": "faux-v1",
+          "apiFamily": "faux"
+        },
+        "agentProfile": {
+          "profileId": "profile-reviewer-1",
+          "revision": 2
+        }
+      }
+    }
+  },
+  "expectedErrors": {
+    "profileInvalid": {
+      "code": -32602,
+      "message": "agent profile is invalid",
+      "retryable": false,
+      "details": { "kind": "agent_profile_invalid", "field": "profile" }
+    },
+    "profileNotFound": {
+      "code": -32602,
+      "message": "agent profile was not found",
+      "retryable": false,
+      "details": { "kind": "agent_profile_not_found", "resourceId": "profile-reviewer-1" }
+    },
+    "crudRevisionConflict": {
+      "code": -32010,
+      "message": "agent profile revision is stale",
+      "retryable": true,
+      "details": {
+        "kind": "stale_agent_profile_revision",
+        "resourceId": "profile-reviewer-1",
+        "expectedRevision": 1,
+        "currentRevision": 2
+      }
+    },
+    "revisionExhausted": {
+      "code": -32009,
+      "message": "agent profile revision is exhausted",
+      "retryable": false,
+      "details": {
+        "kind": "agent_profile_revision_exhausted",
+        "resourceId": "profile-reviewer-1"
+      }
+    },
+    "runRevisionConflict": {
+      "code": -32010,
+      "message": "agent profile revision is stale",
+      "retryable": false,
+      "details": {
+        "kind": "stale_agent_profile_revision",
+        "resourceId": "profile-reviewer-1",
+        "expectedRevision": 1,
+        "currentRevision": 2
+      }
+    },
+    "profileDisabled": {
+      "code": -32003,
+      "message": "agent profile is disabled",
+      "retryable": false,
+      "details": { "kind": "agent_profile_disabled", "resourceId": "profile-reviewer-1" }
+    },
+    "profileModelMismatch": {
+      "code": -32602,
+      "message": "run model does not match agent profile",
+      "retryable": false,
+      "details": {
+        "kind": "agent_profile_model_mismatch",
+        "providerId": "faux",
+        "modelId": "faux-v1",
+        "apiFamily": "faux"
+      }
+    },
+    "profileModelUnavailable": {
+      "code": -32005,
+      "message": "agent profile model is unavailable",
+      "retryable": true,
+      "details": {
+        "kind": "agent_profile_model_unavailable",
+        "providerId": "faux",
+        "modelId": "faux-v1",
+        "apiFamily": "faux"
+      }
+    }
+  },
+  "normalizationExpectations": {
+    "lengthUnit": "unicode_scalar_value",
+    "rawLengthBeforeTrim": true,
+    "trimmedTextFields": [
+      "displayName",
+      "description",
+      "instructions"
+    ],
+    "identityFields": [
+      "model.providerId",
+      "model.modelId",
+      "model.apiFamily",
+      "requestedToolIds[]"
+    ],
+    "identityEdgeWhitespace": "reject",
+    "whitespaceOnlyRequiredText": "reject"
+  },
+  "migrationExpectations": {
+    "logicalVersion": "0.2",
+    "metadataTable": "application_metadata",
+    "legacyMetadataTable": "forge_metadata",
+    "profileTables": ["agent_profiles", "agent_profile_tools"],
+    "cases": {
+      "fresh": "create_v02",
+      "legacyV01": "migrate_transactionally",
+      "currentV02": "validate_and_noop",
+      "unversionedNonEmpty": "reject_without_modification",
+      "missingVersion": "reject_without_modification",
+      "bothMetadata": "reject_without_modification",
+      "newer": "reject_without_modification",
+      "incompleteV02": "reject_without_modification"
+    }
+  },
+  "advertisementExpectations": {
+    "profileMethods": [
+      "agentProfiles/list",
+      "agentProfiles/create",
+      "agentProfiles/update",
+      "agentProfiles/delete"
+    ],
+    "productionForbiddenMethods": ["faux/configure"],
+    "knownRegressionTargets": [
+      {
+        "implementation": "rust",
+        "mode": "production",
+        "method": "faux/configure"
+      }
+    ]
+  }
+}

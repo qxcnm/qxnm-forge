@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.2/schemas/agent-profile-cases.schema.json",
+  "title": "Agent Profile v0.2 common conformance cases",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "profileInput",
+    "createdProfile",
+    "updatedProfile",
+    "runSnapshot",
+    "wire",
+    "expectedErrors",
+    "normalizationExpectations",
+    "migrationExpectations",
+    "advertisementExpectations"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "0.2" },
+    "profileInput": { "$ref": "agent-profile.schema.json#/$defs/profileInput" },
+    "createdProfile": { "$ref": "agent-profile.schema.json#/$defs/profile" },
+    "updatedProfile": { "$ref": "agent-profile.schema.json#/$defs/profile" },
+    "runSnapshot": { "$ref": "agent-profile.schema.json#/$defs/runSnapshot" },
+    "wire": {
+      "type": "object",
+      "required": [
+        "listRequest",
+        "listResult",
+        "createRequest",
+        "createResult",
+        "updateRequest",
+        "updateResult",
+        "deleteRequest",
+        "deleteResult",
+        "runStartRequest"
+      ],
+      "properties": {
+        "listRequest": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json#/$defs/agentProfilesListRequest" },
+        "listResult": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json#/$defs/agentProfilesListResult" },
+        "createRequest": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json#/$defs/agentProfilesCreateRequest" },
+        "createResult": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json#/$defs/agentProfileResult" },
+        "updateRequest": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json#/$defs/agentProfilesUpdateRequest" },
+        "updateResult": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json#/$defs/agentProfileResult" },
+        "deleteRequest": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json#/$defs/agentProfilesDeleteRequest" },
+        "deleteResult": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json#/$defs/agentProfilesDeleteResult" },
+        "runStartRequest": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/protocol/jsonrpc.schema.json#/$defs/runStartRequest" }
+      },
+      "additionalProperties": false
+    },
+    "expectedErrors": {
+      "type": "object",
+      "required": [
+        "profileInvalid",
+        "profileNotFound",
+        "crudRevisionConflict",
+        "revisionExhausted",
+        "runRevisionConflict",
+        "profileDisabled",
+        "profileModelMismatch",
+        "profileModelUnavailable"
+      ],
+      "properties": {
+        "profileInvalid": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/error.schema.json#/$defs/error" },
+        "profileNotFound": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/error.schema.json#/$defs/error" },
+        "crudRevisionConflict": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/error.schema.json#/$defs/error" },
+        "revisionExhausted": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/error.schema.json#/$defs/error" },
+        "runRevisionConflict": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/error.schema.json#/$defs/error" },
+        "profileDisabled": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/error.schema.json#/$defs/error" },
+        "profileModelMismatch": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/error.schema.json#/$defs/error" },
+        "profileModelUnavailable": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/error.schema.json#/$defs/error" }
+      },
+      "additionalProperties": false
+    },
+    "normalizationExpectations": {
+      "type": "object",
+      "required": [
+        "lengthUnit",
+        "rawLengthBeforeTrim",
+        "trimmedTextFields",
+        "identityFields",
+        "identityEdgeWhitespace",
+        "whitespaceOnlyRequiredText"
+      ],
+      "properties": {
+        "lengthUnit": {
+          "const": "unicode_scalar_value"
+        },
+        "rawLengthBeforeTrim": {
+          "const": true
+        },
+        "trimmedTextFields": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "displayName" },
+            { "const": "description" },
+            { "const": "instructions" }
+          ],
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "identityFields": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "model.providerId" },
+            { "const": "model.modelId" },
+            { "const": "model.apiFamily" },
+            { "const": "requestedToolIds[]" }
+          ],
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "identityEdgeWhitespace": {
+          "const": "reject"
+        },
+        "whitespaceOnlyRequiredText": {
+          "const": "reject"
+        }
+      },
+      "additionalProperties": false
+    },
+    "migrationExpectations": {
+      "type": "object",
+      "required": [
+        "logicalVersion",
+        "metadataTable",
+        "legacyMetadataTable",
+        "profileTables",
+        "cases"
+      ],
+      "properties": {
+        "logicalVersion": { "const": "0.2" },
+        "metadataTable": { "const": "application_metadata" },
+        "legacyMetadataTable": { "const": "forge_metadata" },
+        "profileTables": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "agent_profiles" },
+            { "const": "agent_profile_tools" }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "cases": {
+          "type": "object",
+          "required": [
+            "fresh",
+            "legacyV01",
+            "currentV02",
+            "unversionedNonEmpty",
+            "missingVersion",
+            "bothMetadata",
+            "newer",
+            "incompleteV02"
+          ],
+          "properties": {
+            "fresh": { "const": "create_v02" },
+            "legacyV01": { "const": "migrate_transactionally" },
+            "currentV02": { "const": "validate_and_noop" },
+            "unversionedNonEmpty": { "const": "reject_without_modification" },
+            "missingVersion": { "const": "reject_without_modification" },
+            "bothMetadata": { "const": "reject_without_modification" },
+            "newer": { "const": "reject_without_modification" },
+            "incompleteV02": { "const": "reject_without_modification" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "advertisementExpectations": {
+      "type": "object",
+      "required": ["profileMethods", "productionForbiddenMethods", "knownRegressionTargets"],
+      "properties": {
+        "profileMethods": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "agentProfiles/list",
+              "agentProfiles/create",
+              "agentProfiles/update",
+              "agentProfiles/delete"
+            ]
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true
+        },
+        "productionForbiddenMethods": {
+          "type": "array",
+          "prefixItems": [{ "const": "faux/configure" }],
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "knownRegressionTargets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["implementation", "mode", "method"],
+            "properties": {
+              "implementation": { "enum": ["rust", "dotnet"] },
+              "mode": { "const": "production" },
+              "method": { "const": "faux/configure" }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

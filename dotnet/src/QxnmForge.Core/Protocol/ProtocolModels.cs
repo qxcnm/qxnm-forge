@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using QxnmForge.Agent;
 using QxnmForge.Domain;
 using QxnmForge.Executor;
 
@@ -123,6 +124,30 @@ public sealed record InitializeResult(
 /// </summary>
 /// <param name="Models">按 Provider、model、API family 排序的公共描述。</param>
 public sealed record ModelsListResult(IReadOnlyList<ModelDescriptor> Models);
+
+/// <summary>
+/// 功能：表示 agentProfiles/list 返回的完整 profile 集合。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Profiles">按服务稳定顺序排列的 profile。</param>
+public sealed record AgentProfilesListResult(IReadOnlyList<AgentProfile> Profiles);
+
+/// <summary>
+/// 功能：表示 agentProfiles/create 与 update 返回的单个 profile。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Profile">已 durable 的完整 profile。</param>
+public sealed record AgentProfileResult(AgentProfile Profile);
+
+/// <summary>
+/// 功能：表示 agentProfiles/delete 已 durable 完成。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Deleted">成功时固定为 true。</param>
+public sealed record AgentProfilesDeleteResult(bool Deleted);
 
 /// <summary>
 /// 功能：表示 run/start 的异步接受回执。

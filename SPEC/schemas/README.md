@@ -12,6 +12,10 @@ Author: 高宏顺 `<18272669457@163.com>`.
   definitions.
 - `protocol/event.schema.json`: common event envelope and type-specific data.
 - `protocol/faux-scenario.schema.json`: deterministic conformance provider.
+- `agent-profile.schema.json`：v0.2 封闭 Profile input/entity、CAS reference 与最小 run
+  snapshot；不提供 secret、endpoint 或 extension 字段。
+- `agent-profile-cases.schema.json`：共同 CRUD/run wire、portable error 与 capability 广告
+  预期 fixture。
 - `provider-mock-cases.schema.json`: two fixed local transport suites covering
   OpenAI-compatible Chat, OpenAI Responses, Anthropic Messages, Mistral
   Conversations, Azure OpenAI Responses, and Google Generative AI.

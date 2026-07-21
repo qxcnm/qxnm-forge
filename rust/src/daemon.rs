@@ -8,12 +8,17 @@ use tokio::sync::{Mutex, mpsc};
 use uuid::Uuid;
 
 use crate::agent::{Agent, ApprovalResume, QueueKind, RunRequest};
+use crate::agent_profile::{
+    AgentProfileInput, AgentProfileReference, AgentProfileRunSnapshot, AgentProfileService,
+    DangerousActionMode,
+};
 use crate::error::{AgentError, ErrorCode};
 use crate::protocol::{
-    ApprovalRespondParams, InitializeParams, InitializeResult, JsonRpcNotification, JsonRpcRequest,
-    JsonRpcResponse, PROTOCOL_VERSION, PeerInfo, QueueParams, RunCancelParams, RunStartParams,
-    SessionBranchSelectParams, SessionCompactParams, SessionGetParams, is_valid_request_id,
-    parse_strict_request,
+    AgentProfilesCreateParams, AgentProfilesDeleteParams, AgentProfilesListParams,
+    AgentProfilesUpdateParams, ApprovalRespondParams, InitializeParams, InitializeResult,
+    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, PROTOCOL_VERSION, PeerInfo, QueueParams,
+    RunCancelParams, RunStartParams, SessionBranchSelectParams, SessionCompactParams,
+    SessionGetParams, is_valid_request_id, parse_strict_request,
 };
 use crate::provider::{FauxProvider, FauxScenario};
 use crate::provider_identity::{ProviderIdentityAdvertisement, default_models, is_provider_id};
@@ -63,6 +68,7 @@ struct ModelsListParams {
 pub struct Daemon {
     agent: Arc<Agent>,
     faux: FauxProvider,
+    agent_profiles: AgentProfileService,
     initialized: bool,
     interactive_approvals: bool,
     terminal_events: bool,
@@ -88,6 +94,7 @@ impl Daemon {
     pub fn new(
         agent: Arc<Agent>,
         faux: FauxProvider,
+        agent_profiles: AgentProfileService,
         provider_identity: Option<ProviderIdentityAdvertisement>,
         provider_route: Option<ProviderRouteSnapshot>,
         workspace: impl AsRef<std::path::Path>,
@@ -99,6 +106,7 @@ impl Daemon {
         Ok(Self {
             agent,
             faux,
+            agent_profiles,
             initialized: false,
             interactive_approvals: false,
             terminal_events: false,
@@ -364,6 +372,34 @@ impl Daemon {
                 self.faux.configure(&params.session_id, scripts).await;
                 Ok((json!({"scenarioId":scenario_id}), None))
             }
+            "agentProfiles/list" => {
+                let _: AgentProfilesListParams = parse_params(request.params)?;
+                Ok((json!({"profiles":self.agent_profiles.list().await?}), None))
+            }
+            "agentProfiles/create" => {
+                let params: AgentProfilesCreateParams = parse_agent_profile_params(request.params)?;
+                self.validate_agent_profile_capabilities(&params.profile)?;
+                Ok((
+                    json!({"profile":self.agent_profiles.create(params.profile).await?}),
+                    None,
+                ))
+            }
+            "agentProfiles/update" => {
+                let params: AgentProfilesUpdateParams = parse_agent_profile_params(request.params)?;
+                self.validate_agent_profile_capabilities(&params.profile)?;
+                let profile = self
+                    .agent_profiles
+                    .update(&params.profile_id, params.expected_revision, params.profile)
+                    .await?;
+                Ok((json!({"profile":profile}), None))
+            }
+            "agentProfiles/delete" => {
+                let params: AgentProfilesDeleteParams = parse_agent_profile_params(request.params)?;
+                self.agent_profiles
+                    .delete(&params.profile_id, params.expected_revision)
+                    .await?;
+                Ok((json!({"deleted":true}), None))
+            }
             "models/list" => {
                 let params: ModelsListParams = parse_params(request.params)?;
                 let provider_id = match params.provider_id {
@@ -388,7 +424,7 @@ impl Daemon {
                 Ok((json!({"models":models}), None))
             }
             "run/start" => {
-                let mut params: RunStartParams = parse_params(request.params)?;
+                let mut params = parse_run_start_params(request.params)?;
                 if let Some(tool_execution) = params
                     .options
                     .as_ref()
@@ -404,6 +440,19 @@ impl Daemon {
                         "field":"options.toolExecution"
                     })));
                 }
+                let agent_profile = match params.agent_profile.as_ref() {
+                    Some(reference) => Some(
+                        self.agent_profiles
+                            .resolve_for_run(
+                                reference,
+                                &params.provider,
+                                &self.agent.tool_capabilities(),
+                                &self.agent.read_only_tool_capabilities(),
+                            )
+                            .await?,
+                    ),
+                    None => None,
+                };
                 if params.provider.id != "faux"
                     && let Some(advertisement) = &self.provider_identity
                 {
@@ -423,6 +472,9 @@ impl Daemon {
                         })));
                     }
                     if matching_routes == 1 {
+                        if let Some(profile) = &agent_profile {
+                            return Err(agent_profile_model_unavailable(profile));
+                        }
                         return Err(AgentError::new(
                             ErrorCode::ProviderUnavailable,
                             "identity-only Provider route is not executable",
@@ -431,13 +483,26 @@ impl Daemon {
                 }
                 if params.provider.id != "faux"
                     && let Some(snapshot) = &self.provider_route
-                    && let Some(family) = snapshot.resolve(
+                {
+                    match snapshot.resolve(
                         &params.provider.id,
                         &params.provider.model_id,
                         params.provider.api_family.as_deref(),
-                    )?
-                {
-                    params.provider.api_family = Some(family);
+                    ) {
+                        Ok(Some(family)) => params.provider.api_family = Some(family),
+                        Ok(None) => {}
+                        Err(_) if agent_profile.is_some() => {
+                            return Err(agent_profile_model_unavailable(
+                                agent_profile.as_ref().ok_or_else(|| {
+                                    AgentError::new(
+                                        ErrorCode::InternalError,
+                                        "agent profile resolution state is invalid",
+                                    )
+                                })?,
+                            ));
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 if params.provider.id != "faux"
                     && !matches!(
@@ -457,6 +522,9 @@ impl Daemon {
                             | "openrouter"
                     )
                 {
+                    if let Some(profile) = &agent_profile {
+                        return Err(agent_profile_model_unavailable(profile));
+                    }
                     return Err(AgentError::new(
                         ErrorCode::InvalidParams,
                         "unknown provider id",
@@ -479,9 +547,17 @@ impl Daemon {
                     provider_id: params.provider.id,
                     api_family: params.provider.api_family,
                     model: params.provider.model_id,
-                    interactive_approvals: self.interactive_approvals,
+                    interactive_approvals: self.interactive_approvals
+                        && agent_profile.as_ref().is_none_or(|profile| {
+                            profile.dangerous_action_mode != DangerousActionMode::Deny
+                        }),
                 };
-                self.agent.accept_run_content(&run, content).await?;
+                if let Some(profile) = &agent_profile {
+                    self.agent.ensure_profile_model_available(&run, profile)?;
+                }
+                self.agent
+                    .accept_run_content_with_profile(&run, content, agent_profile)
+                    .await?;
                 Ok((json!({"runId":run_id}), Some(AfterResponse::StartRun(run))))
             }
             "run/cancel" => {
@@ -642,9 +718,15 @@ impl Daemon {
             self.agent.provider_capabilities()
         };
         let tools = self.agent.tool_capabilities();
-        let mut methods = vec![
-            "initialize",
-            "faux/configure",
+        let mut methods = vec!["initialize"];
+        if self.conformance_mode {
+            methods.push("faux/configure");
+        }
+        methods.extend([
+            "agentProfiles/list",
+            "agentProfiles/create",
+            "agentProfiles/update",
+            "agentProfiles/delete",
             "models/list",
             "run/start",
             "run/cancel",
@@ -654,7 +736,7 @@ impl Daemon {
             "session/get",
             "session/branch/select",
             "session/compact",
-        ];
+        ]);
         let (_, terminal_event_types) = if self.terminal_events {
             let (terminal_methods, terminal_event_types) = self.terminal.capabilities();
             methods.extend(terminal_methods);
@@ -706,6 +788,51 @@ impl Daemon {
             }),
         })
         .map_err(|error| AgentError::new(ErrorCode::InternalError, error.to_string()))
+    }
+
+    /// 功能：验证待持久化 Profile 只引用当前 models/list 与 initialize 工具子集。
+    ///
+    /// 输入：已经 strict DTO 解码、尚未写数据库的 Profile input。
+    /// 输出：模型三元 identity 和每个工具均由当前 daemon 广告时成功。
+    /// 不变量：验证只读取启动期快照和真实 ToolRegistry，不读取 credential 值或扩大能力。
+    /// 失败：模型或工具未广告时返回 fixture 冻结的 `agent_profile_invalid`。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn validate_agent_profile_capabilities(
+        &self,
+        profile: &AgentProfileInput,
+    ) -> Result<(), AgentError> {
+        let models = if let Some(advertisement) = &self.provider_identity {
+            advertisement.models(None)
+        } else if let Some(snapshot) = &self.provider_route {
+            snapshot.models(None)
+        } else {
+            default_models(None)
+        };
+        let model_matches = serde_json::to_value(models)
+            .ok()
+            .and_then(|value| value.as_array().cloned())
+            .is_some_and(|models| {
+                models.iter().any(|model| {
+                    model["providerId"].as_str() == Some(&profile.model.provider_id)
+                        && model["modelId"].as_str() == Some(&profile.model.model_id)
+                        && model["apiFamily"].as_str() == Some(&profile.model.api_family)
+                })
+            });
+        let available_tools = self
+            .agent
+            .tool_capabilities()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        if !model_matches
+            || profile
+                .requested_tool_ids
+                .iter()
+                .any(|tool_id| !available_tools.contains(tool_id))
+        {
+            return Err(agent_profile_invalid());
+        }
+        Ok(())
     }
 }
 
@@ -763,8 +890,65 @@ where
     }
 }
 
-/// 功能：将 JSON 参数严格反序列化为方法 DTO，并统一映射参数错误。
+/// 功能：解析 Agent Profile mutation 参数并映射为 fixture 冻结的闭合输入错误。
 ///
+/// 输入：尚未进行方法级 DTO 解码的 JSON params。
+/// 输出：没有未知/缺失/错误类型字段的目标参数。
+/// 不变量：不把 serde 诊断或输入值回显给客户端。
+/// 失败：任一解码失败返回 `agent_profile_invalid`。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn parse_agent_profile_params<T: serde::de::DeserializeOwned>(
+    value: Value,
+) -> Result<T, AgentError> {
+    serde_json::from_value(value).map_err(|_| agent_profile_invalid())
+}
+
+/// 功能：严格解析 run/start，并把 Agent Profile 引用自身的结构错误映射为冻结错误。
+///
+/// 输入：尚未进行方法级 DTO 解码的 JSON params。
+/// 输出：Profile 引用和其余 run 字段均通过各自闭合 DTO 校验的参数。
+/// 不变量：只重映射 `agentProfile` 子对象的错误；其他 run 字段仍使用通用 `invalid_params`。
+/// 失败：Profile 引用缺字段、类型错误、null 或未知字段时返回 `agent_profile_invalid`；其余解码错误返回通用参数错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn parse_run_start_params(value: Value) -> Result<RunStartParams, AgentError> {
+    if let Some(agent_profile) = value
+        .as_object()
+        .and_then(|object| object.get("agentProfile"))
+    {
+        serde_json::from_value::<AgentProfileReference>(agent_profile.clone())
+            .map_err(|_| agent_profile_invalid())?;
+    }
+    parse_params(value)
+}
+
+/// 功能：构造 CRUD 输入统一使用的冻结 Agent Profile 校验错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn agent_profile_invalid() -> AgentError {
+    AgentError::new(ErrorCode::InvalidParams, "agent profile is invalid")
+        .with_details(json!({"kind":"agent_profile_invalid","field":"profile"}))
+}
+
+/// 功能：为已匹配但当前不可执行的 Profile model 构造稳定错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn agent_profile_model_unavailable(profile: &AgentProfileRunSnapshot) -> AgentError {
+    AgentError::new(
+        ErrorCode::ProviderUnavailable,
+        "agent profile model is unavailable",
+    )
+    .retryable(true)
+    .with_details(json!({
+        "kind":"agent_profile_model_unavailable",
+        "providerId":profile.model.provider_id,
+        "modelId":profile.model.model_id,
+        "apiFamily":profile.model.api_family
+    }))
+}
+
+/// 功能：将 JSON 参数严格反序列化为方法 DTO，并统一映射参数错误。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 fn parse_params<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, AgentError> {
@@ -805,9 +989,38 @@ async fn write_frame(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     use tokio::io::BufReader;
 
-    use super::{InboundFrame, read_bounded_frame};
+    use super::{InboundFrame, parse_run_start_params, read_bounded_frame};
+
+    /// 功能：验证 run/start 的非法 Profile 引用使用冻结错误且不扩大到其他字段。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn run_start_profile_reference_rejects_unknown_latest_field() {
+        let error = parse_run_start_params(json!({
+            "sessionId":"session-profile-invalid",
+            "input":{"role":"user","content":[{"type":"text","text":"review"}]},
+            "provider":{"id":"faux","modelId":"faux-v1","apiFamily":"faux"},
+            "agentProfile":{"profileId":"agent-profile-invalid","revision":1,"latest":true}
+        }))
+        .expect_err("unknown Profile reference fields must be rejected");
+        assert_eq!(error.code, crate::error::ErrorCode::InvalidParams);
+        assert!(!error.retryable);
+        assert_eq!(
+            error.details,
+            json!({"kind":"agent_profile_invalid","field":"profile"})
+        );
+
+        let other_error = parse_run_start_params(json!({
+            "sessionId":7,
+            "input":{"role":"user","content":[{"type":"text","text":"review"}]},
+            "provider":{"id":"faux","modelId":"faux-v1","apiFamily":"faux"}
+        }))
+        .expect_err("non-Profile run field errors must remain generic");
+        assert_ne!(other_error.details["kind"], "agent_profile_invalid");
+    }
 
     /// 功能：验证有界读取器接受 CRLF 与无 LF 的最终完整帧。
     /// 作者：高宏顺

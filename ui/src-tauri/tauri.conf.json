@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "QXNM Forge",
+  "version": "0.1.0",
+  "identifier": "com.gaohongshun.agentclient.community",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "QXNM Forge",
+        "width": 1385,
+        "height": 900,
+        "minWidth": 860,
+        "minHeight": 620,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https: wss:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "QXNM Forge AI 编程工作台",
+    "longDescription": "使用 Rust 或 .NET application service 的跨平台 AI 编程工作台。",
+    "windows": {
+      "wix": {
+        "upgradeCode": "fc77c801-e8c6-5796-a71f-be2de60fa8dc"
+      }
+    },
+    "android": {
+      "minSdkVersion": 24
+    }
+  }
+}

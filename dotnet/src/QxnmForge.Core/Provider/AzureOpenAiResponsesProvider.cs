@@ -81,6 +81,11 @@ public sealed class AzureOpenAiResponsesProvider : OpenAiResponsesProvider
             ["stream"] = true,
             ["store"] = false,
         };
+        if (request.SystemInstructions is not null)
+        {
+            body["instructions"] = request.SystemInstructions;
+        }
+
         if (request.Tools.Count > 0)
         {
             body["tools"] = request.Tools.Select(static tool =>

@@ -149,17 +149,24 @@ impl Provider for AnthropicMessagesProvider {
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 fn request_body(request: &ProviderRequest) -> Value {
-    let system = request
-        .messages
+    let mut system_parts = request
+        .system_instructions
         .iter()
-        .filter(|message| message.role == Role::System)
-        .flat_map(|message| &message.content)
-        .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    system_parts.extend(
+        request
+            .messages
+            .iter()
+            .filter(|message| message.role == Role::System)
+            .flat_map(|message| &message.content)
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+    );
+    let system = system_parts.join("\n");
     let messages = request
         .messages
         .iter()

@@ -62,6 +62,10 @@
             "enum": [
               "initialize",
               "faux/configure",
+              "agentProfiles/list",
+              "agentProfiles/create",
+              "agentProfiles/update",
+              "agentProfiles/delete",
               "run/start",
               "run/cancel",
               "run/steer",
@@ -189,6 +193,7 @@
         "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
         "input": { "$ref": "../domain/message.schema.json#/$defs/inputMessage" },
         "provider": { "$ref": "../domain/model.schema.json#/$defs/providerSelection" },
+        "agentProfile": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/agent-profile.schema.json#/$defs/profileReference" },
         "options": {
           "type": "object",
           "properties": {
@@ -381,6 +386,64 @@
       },
       "additionalProperties": false
     },
+    "agentProfilesListParams": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "agentProfilesListResult": {
+      "type": "object",
+      "required": ["profiles"],
+      "properties": {
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/agent-profile.schema.json#/$defs/profile" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "agentProfilesCreateParams": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/agent-profile.schema.json#/$defs/profileInput" }
+      },
+      "additionalProperties": false
+    },
+    "agentProfilesUpdateParams": {
+      "type": "object",
+      "required": ["profileId", "expectedRevision", "profile"],
+      "properties": {
+        "profileId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "expectedRevision": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+        "profile": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/agent-profile.schema.json#/$defs/profileInput" }
+      },
+      "additionalProperties": false
+    },
+    "agentProfilesDeleteParams": {
+      "type": "object",
+      "required": ["profileId", "expectedRevision"],
+      "properties": {
+        "profileId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "expectedRevision": { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "agentProfileResult": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/agent-profile.schema.json#/$defs/profile" }
+      },
+      "additionalProperties": false
+    },
+    "agentProfilesDeleteResult": {
+      "type": "object",
+      "required": ["deleted"],
+      "properties": {
+        "deleted": { "const": true }
+      },
+      "additionalProperties": false
+    },
     "shutdownParams": {
       "type": "object",
       "required": ["graceful"],
@@ -465,6 +528,34 @@
         "params": { "$ref": "#/$defs/runStartParams" }
       }
     },
+    "agentProfilesListRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "agentProfiles/list" },
+        "params": { "$ref": "#/$defs/agentProfilesListParams" }
+      }
+    },
+    "agentProfilesCreateRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "agentProfiles/create" },
+        "params": { "$ref": "#/$defs/agentProfilesCreateParams" }
+      }
+    },
+    "agentProfilesUpdateRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "agentProfiles/update" },
+        "params": { "$ref": "#/$defs/agentProfilesUpdateParams" }
+      }
+    },
+    "agentProfilesDeleteRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "agentProfiles/delete" },
+        "params": { "$ref": "#/$defs/agentProfilesDeleteParams" }
+      }
+    },
     "runCancelRequest": {
       "$ref": "#/$defs/baseRequest",
       "properties": {
@@ -543,6 +634,10 @@
       "oneOf": [
         { "$ref": "#/$defs/initializeRequest" },
         { "$ref": "#/$defs/fauxConfigureRequest" },
+        { "$ref": "#/$defs/agentProfilesListRequest" },
+        { "$ref": "#/$defs/agentProfilesCreateRequest" },
+        { "$ref": "#/$defs/agentProfilesUpdateRequest" },
+        { "$ref": "#/$defs/agentProfilesDeleteRequest" },
         { "$ref": "#/$defs/runStartRequest" },
         { "$ref": "#/$defs/runCancelRequest" },
         { "$ref": "#/$defs/runSteerRequest" },
@@ -565,6 +660,9 @@
       "oneOf": [
         { "$ref": "#/$defs/initializeResult" },
         { "$ref": "#/$defs/fauxConfigureResult" },
+        { "$ref": "#/$defs/agentProfilesListResult" },
+        { "$ref": "#/$defs/agentProfileResult" },
+        { "$ref": "#/$defs/agentProfilesDeleteResult" },
         { "$ref": "#/$defs/runStartResult" },
         { "$ref": "#/$defs/acceptedResult" },
         { "$ref": "#/$defs/cancelResult" },

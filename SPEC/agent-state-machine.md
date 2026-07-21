@@ -28,8 +28,11 @@ cleanup and terminal persistence finish.
 
 ## Normal run ordering
 
-1. Validate request, model, context, and session lock without side effects.
-2. Append the input message and `run.accepted`; flush; respond with `runId`.
+1. Validate request, model, optional Agent Profile reference/snapshot, context, tools/policy, and
+   session lock without side effects. Profile instructions are guidance, never an authorization
+   input.
+2. Append the input message and `run.accepted`（including the immutable Profile snapshot when
+   selected）；flush；respond with `runId`.
 3. Append/emit `run.started`.
 4. For each provider turn, append/emit `turn.started`, then start the assistant
    message.

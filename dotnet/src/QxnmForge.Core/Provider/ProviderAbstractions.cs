@@ -127,6 +127,14 @@ public sealed record ProviderRequest(
     /// </summary>
     /// <remarks>不变量：该列表不序列化、不持久化且不含 host path。</remarks>
     internal IReadOnlyList<ProviderResolvedImage> ResolvedImages { get; init; } = [];
+
+    /// <summary>
+    /// 功能：取得可选 request-local system instructions。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <remarks>不变量：该文本不作为普通 Session message 持久化或回显到日志。</remarks>
+    public string? SystemInstructions { get; init; }
 }
 
 /// <summary>
@@ -493,8 +501,11 @@ public sealed class ProviderRegistry : IAsyncDisposable
         IProvider[] candidates;
         if (selection.ApiFamily is not null)
         {
+            var adapterFamily = selection.Id == "faux" && selection.ApiFamily == "faux"
+                ? string.Empty
+                : selection.ApiFamily;
             candidates = providers.TryGetValue(
-                    new RouteKey(selection.Id, selection.ApiFamily),
+                    new RouteKey(selection.Id, adapterFamily),
                     out var exact) &&
                 SupportsExecutableModel(exact, selection.ModelId)
                     ? [exact]

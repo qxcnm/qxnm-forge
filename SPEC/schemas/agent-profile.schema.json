@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.2/schemas/agent-profile.schema.json",
+  "title": "Brand-neutral Agent Profile application-service DTO v0.2",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>. Core objects are closed and never contain credentials or private endpoints.",
+  "$ref": "#/$defs/profile",
+  "$defs": {
+    "modelIdentity": {
+      "type": "object",
+      "required": ["providerId", "modelId", "apiFamily"],
+      "properties": {
+        "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
+        "modelId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "apiFamily": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "toolIds": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$", "maxLength": 128 },
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "behavior": {
+      "type": "object",
+      "required": ["responseStyle", "planFirst", "reviewChanges"],
+      "properties": {
+        "responseStyle": { "enum": ["concise", "balanced", "detailed"] },
+        "planFirst": { "type": "boolean" },
+        "reviewChanges": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "profileInput": {
+      "type": "object",
+      "required": [
+        "displayName",
+        "description",
+        "enabled",
+        "instructions",
+        "model",
+        "requestedToolIds",
+        "dangerousActionMode",
+        "behavior"
+      ],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "description": { "type": "string", "maxLength": 160 },
+        "enabled": { "type": "boolean" },
+        "instructions": { "type": "string", "minLength": 1, "maxLength": 12000 },
+        "model": { "$ref": "#/$defs/modelIdentity" },
+        "requestedToolIds": { "$ref": "#/$defs/toolIds" },
+        "dangerousActionMode": { "enum": ["ask", "deny"] },
+        "behavior": { "$ref": "#/$defs/behavior" }
+      },
+      "additionalProperties": false
+    },
+    "profile": {
+      "type": "object",
+      "required": [
+        "profileId",
+        "revision",
+        "displayName",
+        "description",
+        "enabled",
+        "instructions",
+        "model",
+        "requestedToolIds",
+        "dangerousActionMode",
+        "behavior",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "profileId": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/opaqueId" },
+        "revision": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/positiveSafeInteger" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "description": { "type": "string", "maxLength": 160 },
+        "enabled": { "type": "boolean" },
+        "instructions": { "type": "string", "minLength": 1, "maxLength": 12000 },
+        "model": { "$ref": "#/$defs/modelIdentity" },
+        "requestedToolIds": { "$ref": "#/$defs/toolIds" },
+        "dangerousActionMode": { "enum": ["ask", "deny"] },
+        "behavior": { "$ref": "#/$defs/behavior" },
+        "createdAt": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/utcTime" },
+        "updatedAt": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/utcTime" }
+      },
+      "additionalProperties": false
+    },
+    "profileReference": {
+      "type": "object",
+      "required": ["profileId", "revision"],
+      "properties": {
+        "profileId": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/opaqueId" },
+        "revision": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/positiveSafeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "runSnapshot": {
+      "type": "object",
+      "required": [
+        "profileId",
+        "revision",
+        "displayName",
+        "instructions",
+        "model",
+        "requestedToolIds",
+        "effectiveToolIds",
+        "dangerousActionMode",
+        "behavior"
+      ],
+      "properties": {
+        "profileId": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/opaqueId" },
+        "revision": { "$ref": "https://schemas.agentprotocol.local/spec/0.1/schemas/common.schema.json#/$defs/positiveSafeInteger" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "instructions": { "type": "string", "minLength": 1, "maxLength": 12000 },
+        "model": { "$ref": "#/$defs/modelIdentity" },
+        "requestedToolIds": { "$ref": "#/$defs/toolIds" },
+        "effectiveToolIds": { "$ref": "#/$defs/toolIds" },
+        "dangerousActionMode": { "enum": ["ask", "deny"] },
+        "behavior": { "$ref": "#/$defs/behavior" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

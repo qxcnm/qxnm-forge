@@ -1,8 +1,10 @@
-# qxnm-forge core specification v0.1
+# qxnm-forge core specification v0.2
 
 Status: **draft**  
 Protocol version: `0.1`  
 Session format version: `0.1`  
+Application database logical version: `0.2`
+Agent Profile contract version: `0.2`
 Author: 高宏顺 `<18272669457@163.com>`  
 Reference snapshot: PI commit `3f9aa5d10b35223abf6146f960ff5cb5c68053ee` (MIT, evidence only)
 
@@ -27,6 +29,8 @@ requirement containing one of those key words.
 - [provider-commercial-state.md](provider-commercial-state.md) — 用户明确确认的本地推广 route 与工作区外 CredentialStore。
 - [storage.md](storage.md) — 默认 SQLite、SeaORM/EF Core、远程 provider 和 migration 安全边界。
 - [ui.md](ui.md) — 未来 TypeScript + React 客户端与 application service 的权限边界。
+- [agent-profile.schema.json](schemas/agent-profile.schema.json) — 品牌中立 Profile 输入、实体、
+  revision 引用与 durable run snapshot。
 - [architecture.md](architecture.md) — component boundaries and native API
   requirements.
 - [protocol.md](protocol.md) — JSON-RPC 2.0 message semantics over UTF-8 NDJSON.
@@ -77,6 +81,12 @@ Linux 文件路径竞态的公共决策是
 文件工具、process cwd 或 mount change，`security.path_boundary` 因而继续保持
 `implemented`，不能仅凭 Linux `6+2` 门禁登记为 `conformant`。
 
+Agent Profile 的公共决策是
+[ADR 0028](adr/0028-brand-neutral-agent-profiles.md)：application service 提供封闭 CAS CRUD，
+`run/start` 使用精确 `(profileId,revision)` 并在 `run.accepted` 持久化最小安全快照；Profile
+永远只能收窄工具和审批。application database 以单事务从旧 metadata v0.1 迁至品牌中立
+v0.2，portable Session 格式版本仍独立保持 0.1。
+
 ## Conformance contract
 
 An implementation may advertise a public feature only at status `conformant`
@@ -97,6 +107,11 @@ The minimum v0.1 black-box path is:
 The `run/start` response MUST be emitted before any event for that run and only
 after the accepted input and run record are durably appended.
 
+Agent Profile 静态 contract 由
+`CONFORMANCE/fixtures/agent-profile/profile-cases.json` 与
+`CONFORMANCE/tests/test_spec_schemas.py` 验证；动态 CRUD/migration/run-binding runner 未通过前，
+相关能力最多为 `implemented`。
+
 ## Source documentation rule
 
 Every newly added source-code method or function in either active
@@ -115,9 +130,9 @@ marked and the generator emits equivalent API documentation.
 中文规则：所有新增方法都必须写方法级注释，明确功能，并包含作者“高宏顺”和邮箱
 `18272669457@163.com`；不能只在文件头统一写作者而省略方法注释。
 
-## Scope of v0.1
+## Scope of v0.2
 
-v0.1 specifies the headless foundation, pure-text CLI, application database
-bootstrap and future React UI boundary. It does not yet include a runnable web,
-desktop or full-screen UI. Future UIs consume the application service and MUST
-NOT directly execute tools, hold secrets, open SQLite or mutate session journals.
+v0.2 保留 protocol/session v0.1，新增 application database 与 Agent Profile v0.2 contract，
+并允许 React/Tauri faux 交互预览。生产 UI transport、认证 HTTP/WebSocket、远程 event replay
+仍未由本规范声明完成。所有 UI 都必须消费 application service，MUST NOT 直接执行工具、
+持有 secret、打开 SQLite 或修改 Session journal。

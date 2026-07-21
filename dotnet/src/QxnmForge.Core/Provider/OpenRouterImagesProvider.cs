@@ -209,7 +209,16 @@ public sealed class OpenRouterImagesProvider : HttpSseProviderBase
     protected override JsonElement CreateRequestBody(ProviderRequest request)
     {
         var counters = new InputCounters();
-        var messages = new List<Dictionary<string, object?>>(request.Messages.Count);
+        var messages = new List<Dictionary<string, object?>>(request.Messages.Count + 1);
+        if (request.SystemInstructions is not null)
+        {
+            messages.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["role"] = "system",
+                ["content"] = request.SystemInstructions,
+            });
+        }
+
         foreach (var message in request.Messages)
         {
             messages.Add(MapMessage(message, request.ResolvedImages, counters));

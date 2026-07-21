@@ -152,7 +152,9 @@ public class GoogleGenerativeAiProvider : HttpSseProviderBase
         {
             ["contents"] = MapContents(request.Messages),
         };
-        var systemInstruction = MapSystemInstruction(request.Messages);
+        var systemInstruction = MapSystemInstruction(
+            request.Messages,
+            request.SystemInstructions);
         if (systemInstruction is not null)
         {
             body["systemInstruction"] = systemInstruction;
@@ -409,19 +411,27 @@ public class GoogleGenerativeAiProvider : HttpSseProviderBase
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="messages">完整 portable 历史。</param>
+    /// <param name="requestInstructions">可选 request-local Profile 指令。</param>
     /// <returns>有 system 文本时返回 parts 对象，否则返回 null。</returns>
     /// <remarks>不变量：工具调用、结果和实现元数据不会进入 systemInstruction。</remarks>
-    private static Dictionary<string, object?>? MapSystemInstruction(IReadOnlyList<JsonElement> messages)
+    private static Dictionary<string, object?>? MapSystemInstruction(
+        IReadOnlyList<JsonElement> messages,
+        string? requestInstructions)
     {
-        var text = messages
+        var text = new List<string>();
+        if (requestInstructions is not null)
+        {
+            text.Add(requestInstructions);
+        }
+
+        text.AddRange(messages
             .Where(static message =>
                 message.TryGetProperty("role", out var role) &&
                 role.ValueKind == JsonValueKind.String &&
                 role.GetString() == "system")
             .Select(ProviderJson.ExtractText)
-            .Where(static value => !string.IsNullOrEmpty(value))
-            .ToArray();
-        return text.Length == 0
+            .Where(static value => !string.IsNullOrEmpty(value)));
+        return text.Count == 0
             ? null
             : new Dictionary<string, object?>(StringComparer.Ordinal)
             {

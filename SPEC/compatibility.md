@@ -5,8 +5,10 @@
 Protocol, session journal, faux scenario, provider manifest, model catalog, and
 individual artifact formats have independent versions. Protocol, journal, and
 faux scenario currently use `"0.1"`; Provider manifest v0.2 references model
-catalog v1.0. A product release version does not imply any one data-format
-version.
+catalog v1.0；Agent Profile contract 与 application database 逻辑 schema 使用 `"0.2"`。
+A product release version does not imply any one data-format version. Profile v0.2 是仍处于 draft
+阶段的 capability-gated protocol v0.1 增量；只有广告完整 Profile capability 组的服务才接受
+对应方法和 `run/start.agentProfile`。
 
 Protocol negotiation occurs only in `initialize`. The client offers an ordered
 set of versions and the server selects exactly one offered version. No common

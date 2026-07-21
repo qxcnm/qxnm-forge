@@ -276,6 +276,9 @@ struct BedrockStreamState {
 fn bedrock_request_body(request: &ProviderRequest) -> Value {
     let mut messages = Vec::<Value>::new();
     let mut system = Vec::<Value>::new();
+    if let Some(instructions) = &request.system_instructions {
+        system.push(json!({"text":instructions}));
+    }
     for message in &request.messages {
         if message.role == Role::System {
             for block in &message.content {
@@ -1258,6 +1261,7 @@ mod tests {
     fn serializes_bedrock_converse_request() {
         let body = bedrock_request_body(&ProviderRequest {
             model: "mock-bedrock-v1".to_owned(),
+            system_instructions: Some("profile guidance".to_owned()),
             messages: vec![Message::text("user", Role::User, "hello")],
             tools: vec![ToolDefinition {
                 name: "file.read".to_owned(),
@@ -1270,6 +1274,7 @@ mod tests {
             run_id: None,
         });
         assert_eq!(body["messages"][0]["content"][0]["text"], "hello");
+        assert_eq!(body["system"][0]["text"], "profile guidance");
         assert_eq!(
             body["toolConfig"]["tools"][0]["toolSpec"]["name"],
             "file.read"

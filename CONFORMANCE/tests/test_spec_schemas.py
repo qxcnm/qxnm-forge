@@ -286,9 +286,7 @@ class SpecSchemaTests(unittest.TestCase):
         credential_validator.validate(
             {
                 "schemaVersion": "0.1",
-                "credentials": [
-                    {"providerId": "relay-example-relay", "apiKey": "x"}
-                ],
+                "credentials": [{"providerId": "relay-example-relay", "apiKey": "x"}],
             }
         )
         with self.assertRaises(jsonschema.ValidationError):
@@ -305,7 +303,9 @@ class SpecSchemaTests(unittest.TestCase):
                 }
             )
 
-    def test_storage_configuration_schema_closes_provider_and_secret_fields(self) -> None:
+    def test_storage_configuration_schema_closes_provider_and_secret_fields(
+        self,
+    ) -> None:
         """功能：验证 SQLite/远程配置互斥，并拒绝内联连接串和未知 provider。
 
         作者：高宏顺
@@ -359,6 +359,220 @@ class SpecSchemaTests(unittest.TestCase):
             with self.subTest(provider=invalid["provider"]):
                 with self.assertRaises(jsonschema.ValidationError):
                     validator.validate(invalid)
+
+    def test_agent_profile_v02_contract_and_security_negatives(self) -> None:
+        """功能：验证 Agent Profile v0.2 的封闭 DTO、RPC、快照与安全负例。
+
+        输入：共同 profile fixture 以及由其派生的边界和未知字段负例。
+        输出：合法 CRUD/run wire 与 journal 快照通过，所有越界输入稳定拒绝。
+        不变量：Profile 不携带 secret/endpoint，模型身份完整，工具无重复且快照只收窄能力。
+        失败：字段长度、枚举、未知属性、引用或共同错误表发生漂移时测试失败。
+        作者：高宏顺
+        邮箱：18272669457@163.com
+        """
+
+        fixture = json.loads(
+            (CONFORMANCE / "fixtures/agent-profile/profile-cases.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.validator("agent-profile-cases.schema.json", "").validate(fixture)
+
+        profile_validator = self.validator(
+            "agent-profile.schema.json", "#/$defs/profileInput"
+        )
+        invalid_profiles = []
+        for field, value in (
+            ("displayName", ""),
+            ("displayName", "x" * 49),
+            ("description", "x" * 161),
+            ("instructions", ""),
+            ("instructions", "x" * 12001),
+            ("dangerousActionMode", "allow"),
+        ):
+            changed = deepcopy(fixture["profileInput"])
+            changed[field] = value
+            invalid_profiles.append((field, changed))
+
+        missing_family = deepcopy(fixture["profileInput"])
+        del missing_family["model"]["apiFamily"]
+        invalid_profiles.append(("model.apiFamily", missing_family))
+        duplicate_tools = deepcopy(fixture["profileInput"])
+        duplicate_tools["requestedToolIds"].append(
+            duplicate_tools["requestedToolIds"][0]
+        )
+        invalid_profiles.append(("requestedToolIds", duplicate_tools))
+        invalid_behavior = deepcopy(fixture["profileInput"])
+        invalid_behavior["behavior"]["responseStyle"] = "unbounded"
+        invalid_profiles.append(("behavior.responseStyle", invalid_behavior))
+        for forbidden_field in ("apiKey", "secret", "endpoint", "extensions"):
+            changed = deepcopy(fixture["profileInput"])
+            changed[forbidden_field] = "forbidden-field"
+            invalid_profiles.append((forbidden_field, changed))
+
+        for name, invalid in invalid_profiles:
+            with (
+                self.subTest(profile_negative=name),
+                self.assertRaises(jsonschema.ValidationError),
+            ):
+                profile_validator.validate(invalid)
+
+        request_validator = self.validator(
+            "protocol/jsonrpc.schema.json", "#/$defs/request"
+        )
+        for request in fixture["wire"].values():
+            if isinstance(request, dict) and "method" in request:
+                request_validator.validate(request)
+
+        invalid_list = deepcopy(fixture["wire"]["listRequest"])
+        invalid_list["params"]["includeDisabled"] = True
+        invalid_create = deepcopy(fixture["wire"]["createRequest"])
+        invalid_create["params"]["credential"] = "forbidden-field"
+        invalid_run = deepcopy(fixture["wire"]["runStartRequest"])
+        invalid_run["params"]["agentProfile"]["latest"] = True
+        for name, invalid in (
+            ("list unknown param", invalid_list),
+            ("create secret param", invalid_create),
+            ("run profile unknown param", invalid_run),
+        ):
+            with (
+                self.subTest(request_negative=name),
+                self.assertRaises(jsonschema.ValidationError),
+            ):
+                request_validator.validate(invalid)
+
+        snapshot = fixture["runSnapshot"]
+        self.assertTrue(
+            set(snapshot["effectiveToolIds"]).issubset(snapshot["requestedToolIds"])
+        )
+        self.assertEqual(
+            fixture["wire"]["runStartRequest"]["params"]["provider"],
+            {
+                "id": snapshot["model"]["providerId"],
+                "modelId": snapshot["model"]["modelId"],
+                "apiFamily": snapshot["model"]["apiFamily"],
+            },
+        )
+        self.validator(
+            "session/journal.schema.json", "#/$defs/runAcceptedData"
+        ).validate(
+            {
+                "runId": "run-profile-1",
+                "inputMessageId": "message-profile-1",
+                "provider": {"id": "faux", "modelId": "faux-v1", "apiFamily": "faux"},
+                "agentProfileSnapshot": snapshot,
+            }
+        )
+        self.assertEqual(
+            fixture["advertisementExpectations"]["productionForbiddenMethods"],
+            ["faux/configure"],
+        )
+        self.assertIn(
+            {
+                "implementation": "rust",
+                "mode": "production",
+                "method": "faux/configure",
+            },
+            fixture["advertisementExpectations"]["knownRegressionTargets"],
+        )
+        self.assertEqual(fixture["createdProfile"]["revision"], 1)
+        self.assertEqual(fixture["updatedProfile"]["revision"], 2)
+        self.assertEqual(
+            fixture["createdProfile"]["profileId"],
+            fixture["updatedProfile"]["profileId"],
+        )
+        expected_error_contract = {
+            "profileInvalid": (-32602, False, "agent_profile_invalid"),
+            "profileNotFound": (-32602, False, "agent_profile_not_found"),
+            "crudRevisionConflict": (-32010, True, "stale_agent_profile_revision"),
+            "revisionExhausted": (
+                -32009,
+                False,
+                "agent_profile_revision_exhausted",
+            ),
+            "runRevisionConflict": (-32010, False, "stale_agent_profile_revision"),
+            "profileDisabled": (-32003, False, "agent_profile_disabled"),
+            "profileModelMismatch": (-32602, False, "agent_profile_model_mismatch"),
+            "profileModelUnavailable": (
+                -32005,
+                True,
+                "agent_profile_model_unavailable",
+            ),
+        }
+        self.assertEqual(
+            {
+                name: (error["code"], error["retryable"], error["details"]["kind"])
+                for name, error in fixture["expectedErrors"].items()
+            },
+            expected_error_contract,
+        )
+        self.assertEqual(
+            fixture["normalizationExpectations"],
+            {
+                "lengthUnit": "unicode_scalar_value",
+                "rawLengthBeforeTrim": True,
+                "trimmedTextFields": [
+                    "displayName",
+                    "description",
+                    "instructions",
+                ],
+                "identityFields": [
+                    "model.providerId",
+                    "model.modelId",
+                    "model.apiFamily",
+                    "requestedToolIds[]",
+                ],
+                "identityEdgeWhitespace": "reject",
+                "whitespaceOnlyRequiredText": "reject",
+            },
+        )
+        self.assertEqual(
+            fixture["migrationExpectations"],
+            {
+                "logicalVersion": "0.2",
+                "metadataTable": "application_metadata",
+                "legacyMetadataTable": "forge_metadata",
+                "profileTables": ["agent_profiles", "agent_profile_tools"],
+                "cases": {
+                    "fresh": "create_v02",
+                    "legacyV01": "migrate_transactionally",
+                    "currentV02": "validate_and_noop",
+                    "unversionedNonEmpty": "reject_without_modification",
+                    "missingVersion": "reject_without_modification",
+                    "bothMetadata": "reject_without_modification",
+                    "newer": "reject_without_modification",
+                    "incompleteV02": "reject_without_modification",
+                },
+            },
+        )
+        matrix = json.loads(
+            (ROOT / "SPEC/capabilities.json").read_text(encoding="utf-8")
+        )
+        profile_claims = [
+            claim
+            for claim in matrix["claims"]
+            if claim["target"]["kind"] == "foundation"
+            and claim["target"]["id"]
+            in {"agent.profile_crud", "agent.profile_run_binding"}
+        ]
+        self.assertEqual(len(profile_claims), 4)
+        self.assertEqual(
+            {
+                (claim["implementation"], claim["target"]["id"])
+                for claim in profile_claims
+            },
+            {
+                (implementation, feature)
+                for implementation in ("rust", "dotnet")
+                for feature in ("agent.profile_crud", "agent.profile_run_binding")
+            },
+        )
+        for claim in profile_claims:
+            self.assertEqual(claim["status"], "implemented")
+            self.assertIn("共同动态", claim["notes"])
+            self.assertIn("conformant", claim["notes"])
+            for evidence in claim["evidence"]:
+                self.assertTrue((ROOT / evidence).is_file(), evidence)
 
     def test_provider_claims_are_exactly_route_scoped_and_evidence_backed(self) -> None:
         """功能：验证首批 Provider claims 精确落到双实现六 route 的 48 个 feature cells。

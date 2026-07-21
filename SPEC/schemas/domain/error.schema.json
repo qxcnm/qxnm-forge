@@ -39,6 +39,16 @@
           "type": "string",
           "maxLength": 256
         },
+        "apiFamily": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "expectedRevision": {
+          "$ref": "../common.schema.json#/$defs/positiveSafeInteger"
+        },
+        "currentRevision": {
+          "$ref": "../common.schema.json#/$defs/positiveSafeInteger"
+        },
         "toolName": {
           "type": "string",
           "maxLength": 128

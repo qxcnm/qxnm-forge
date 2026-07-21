@@ -79,10 +79,20 @@ public sealed class MistralConversationsProvider : OpenAiChatProvider
     /// <remarks>不变量：工具顺序保持且 `strict:false`；不发送 stream_options。</remarks>
     protected override JsonElement CreateRequestBody(ProviderRequest request)
     {
+        var messages = MapMessages(request.Messages);
+        if (request.SystemInstructions is not null)
+        {
+            messages.Insert(0, new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["role"] = "system",
+                ["content"] = request.SystemInstructions,
+            });
+        }
+
         var body = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["model"] = request.Selection.ModelId,
-            ["messages"] = MapMessages(request.Messages),
+            ["messages"] = messages,
             ["stream"] = true,
         };
         if (request.Tools.Count > 0)

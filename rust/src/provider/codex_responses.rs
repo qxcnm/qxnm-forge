@@ -200,6 +200,7 @@ mod tests {
     fn freezes_codex_body_and_named_events() {
         let body = request_body(&ProviderRequest {
             model: "mock-codex-v1".to_owned(),
+            system_instructions: None,
             messages: vec![Message::text("user", Role::User, "hello")],
             tools: Vec::new(),
             max_output_tokens: None,
