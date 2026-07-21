@@ -93,6 +93,65 @@ describe("pending approval projection", () => {
   });
 
   /**
+   * 验证不同 run 复用 approvalId 时互不覆盖，解决一个请求不会移除另一个请求的按钮。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("keeps colliding approval IDs isolated by run", () => {
+    const secondRequest = {
+      ...APPROVAL_REQUEST,
+      toolCallId: "tool-call-2",
+      operationHash: "b".repeat(64),
+    };
+    const snapshot: SessionSnapshot = {
+      sessionId: "session-1",
+      latestSeq: 3,
+      activeRunId: "run-2",
+      messages: [],
+      events: [
+        {
+          sessionId: "session-1",
+          runId: "run-1",
+          seq: 1,
+          time: "2026-07-21T09:59:00Z",
+          type: "approval.requested",
+          data: { approval: APPROVAL_REQUEST },
+        },
+        {
+          sessionId: "session-1",
+          runId: "run-2",
+          seq: 2,
+          time: "2026-07-21T09:59:01Z",
+          type: "approval.requested",
+          data: { approval: secondRequest },
+        },
+        {
+          sessionId: "session-1",
+          runId: "run-1",
+          seq: 3,
+          time: "2026-07-21T09:59:02Z",
+          type: "approval.resolved",
+          data: {
+            approvalId: APPROVAL_REQUEST.approvalId,
+            decision: { choice: "deny" },
+            resolutionSource: "client",
+          },
+        },
+      ],
+    };
+
+    expect(projectPendingApprovals(snapshot)).toEqual([
+      {
+        sessionId: "session-1",
+        runId: "run-2",
+        requestedAt: "2026-07-21T09:59:01Z",
+        request: secondRequest,
+      },
+    ]);
+  });
+
+  /**
    * 验证损坏或伪造的 event data 安全回退为空，不生成审批能力。
    *
    * 作者：高宏顺

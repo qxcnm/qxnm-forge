@@ -87,6 +87,11 @@ Agent Profile 的公共决策是
 永远只能收窄工具和审批。application database 以单事务从旧 metadata v0.1 迁至品牌中立
 v0.2，portable Session 格式版本仍独立保持 0.1。
 
+Provider 设置边界由 [ADR 0029](adr/0029-custom-provider-connections.md) 与
+[ADR 0031](adr/0031-brand-neutral-provider-template-catalog.md) 共同约束：连接配置与 credential
+分离，`providerCatalog/list` 只返回从冻结目录推导的非敏感配置建议。模板不构成已配置、可执行或
+远端验证声明；只有重启后真实出现在 `models/list` 的完整路由才能用于 `run/start`。
+
 ## Conformance contract
 
 An implementation may advertise a public feature only at status `conformant`

@@ -20,6 +20,7 @@ import type {
 interface ApprovalRequestCardProps {
   readonly approval: PendingApproval;
   readonly responseAvailable: boolean;
+  readonly snapshotReady: boolean;
   readonly interactionLocked: boolean;
   readonly submittingChoice: ApprovalChoice | null;
   readonly decisionAccepted: boolean;
@@ -57,6 +58,7 @@ function getRiskClassName(risk: PendingApproval["request"]["risk"]): string {
 export function ApprovalRequestCard({
   approval,
   responseAvailable,
+  snapshotReady,
   interactionLocked,
   submittingChoice,
   decisionAccepted,
@@ -157,6 +159,8 @@ export function ApprovalRequestCard({
               ? t("approval.responseUnavailable")
               : decisionAccepted
                 ? t("approval.decisionAccepted")
+              : !snapshotReady
+                ? t("approval.snapshotUnavailable")
               : expired
               ? t("approval.expired")
               : t("approval.expiresAt", {
@@ -176,9 +180,7 @@ export function ApprovalRequestCard({
               variant={
                 choice === "deny"
                   ? "outline"
-                  : choice === "allow_session"
-                    ? "secondary"
-                    : "default"
+                  : "default"
               }
               size="sm"
               className={cn(
@@ -187,6 +189,7 @@ export function ApprovalRequestCard({
               )}
               disabled={
                 !responseAvailable ||
+                !snapshotReady ||
                 expired ||
                 interactionLocked ||
                 decisionAccepted ||

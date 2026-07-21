@@ -254,6 +254,110 @@ class SpecSchemaTests(unittest.TestCase):
             ):
                 validator.validate(changed)
 
+    def test_provider_template_catalog_fixture_protocol_and_security_negatives(
+        self,
+    ) -> None:
+        """功能：验证品牌中立 Provider 配置模板目录及其只读 RPC 契约。
+
+        输入：冻结的 20 项配置模板 fixture、空参数请求、能力矩阵及安全负例。
+        输出：合法目录、RPC 和双实现声明通过，未知参数与敏感或能力声明字段被拒绝。
+        不变量：模板仅是本地配置建议，不携带凭据且不声称可执行或已经远程验证。
+        失败：目录字段、顺序、协议引用或封闭对象约束漂移时测试失败。
+        作者：高宏顺
+        邮箱：18272669457@163.com
+        """
+
+        fixture = json.loads(
+            (
+                CONFORMANCE
+                / "fixtures/provider-catalog/configuration-templates.json"
+            ).read_text(encoding="utf-8")
+        )
+        catalog_validator = self.validator(
+            "provider-catalog.schema.json", "#/$defs/listResult"
+        )
+        catalog_validator.validate(fixture)
+        template_ids = [template["templateId"] for template in fixture["templates"]]
+        self.assertEqual(
+            [
+                "ant-ling",
+                "cerebras",
+                "deepseek",
+                "fireworks",
+                "groq",
+                "huggingface",
+                "moonshotai",
+                "moonshotai-cn",
+                "nvidia",
+                "opencode",
+                "opencode-go",
+                "openrouter",
+                "together",
+                "xai",
+                "xiaomi",
+                "xiaomi-token-plan-ams",
+                "xiaomi-token-plan-cn",
+                "xiaomi-token-plan-sgp",
+                "zai",
+                "zai-coding-cn",
+            ],
+            template_ids,
+        )
+        self.assertEqual(sorted(template_ids), template_ids)
+
+        request = {
+            "jsonrpc": "2.0",
+            "id": "provider-catalog",
+            "method": "providerCatalog/list",
+            "params": {},
+        }
+        self.validator(
+            "protocol/jsonrpc.schema.json", "#/$defs/providerCatalogListRequest"
+        ).validate(request)
+        self.validator(
+            "protocol/jsonrpc.schema.json", "#/$defs/providerCatalogListResult"
+        ).validate(fixture)
+
+        invalid_request = deepcopy(request)
+        invalid_request["params"]["refresh"] = True
+        with self.assertRaises(jsonschema.ValidationError):
+            self.validator(
+                "protocol/jsonrpc.schema.json", "#/$defs/providerCatalogListRequest"
+            ).validate(invalid_request)
+
+        for field, value in (
+            ("credential", "forbidden"),
+            ("apiKey", "forbidden"),
+            ("executable", True),
+            ("verified", True),
+        ):
+            invalid_catalog = deepcopy(fixture)
+            invalid_catalog["templates"][0][field] = value
+            with (
+                self.subTest(template_negative=field),
+                self.assertRaises(jsonschema.ValidationError),
+            ):
+                catalog_validator.validate(invalid_catalog)
+
+        matrix = json.loads(
+            (ROOT / "SPEC/capabilities.json").read_text(encoding="utf-8")
+        )
+        catalog_claims = [
+            claim
+            for claim in matrix["claims"]
+            if claim["target"]
+            == {"kind": "foundation", "id": "provider.template_catalog"}
+        ]
+        self.assertEqual(
+            {"rust", "dotnet"},
+            {claim["implementation"] for claim in catalog_claims},
+        )
+        self.assertEqual(2, len(catalog_claims))
+        for claim in catalog_claims:
+            self.assertEqual("implemented", claim["status"])
+            for evidence in claim["evidence"]:
+                self.assertTrue((ROOT / evidence).is_file(), evidence)
+
     def test_sponsored_installation_and_credential_store_schemas(self) -> None:
         """功能：验证非敏感安装 fixture，并拒绝 route/credential 未知字段和危险 family。
 

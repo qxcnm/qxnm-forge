@@ -106,6 +106,7 @@ struct JournalInspection {
     title: String,
     project: String,
     updated_at: DateTime<Utc>,
+    status: Option<String>,
 }
 
 /// 持有归档文档跨进程独占锁的 RAII 句柄。
@@ -313,7 +314,7 @@ impl SessionLifecycleService {
                     project: inspection.project,
                     updated_at: inspection.updated_at,
                     archived: archived.contains(&session_id),
-                    status: None,
+                    status: inspection.status,
                 },
                 Err(_) => corrupt_summary(&session_id, archived.contains(&session_id)),
             };
@@ -382,7 +383,7 @@ impl SessionLifecycleService {
             project: inspection.project,
             updated_at: inspection.updated_at,
             archived,
-            status: None,
+            status: inspection.status,
         })
     }
 
@@ -606,7 +607,7 @@ fn validate_archive_document(document: &ArchiveDocument) -> Result<(), AgentErro
     Ok(())
 }
 
-/// 功能：流式验证 portable journal 并提取有界标题、项目和更新时间。
+/// 功能：流式验证 portable journal 并提取有界标题、项目、更新时间与 durable 运行状态。
 ///
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -629,6 +630,9 @@ fn inspect_journal(
     let mut saw_user_message = false;
     let mut project = None;
     let mut updated_at = DateTime::<Utc>::from(std::time::UNIX_EPOCH);
+    let mut seen_runs = HashSet::new();
+    let mut active_runs = HashSet::new();
+    let mut pending_approvals = HashSet::new();
     for_each_committed_line(file, session_id, allow_uncommitted_tail, |line| {
         let text = std::str::from_utf8(line).map_err(|_| lifecycle_corrupt(session_id))?;
         let value = parse_strict_value(text).map_err(|_| lifecycle_corrupt(session_id))?;
@@ -662,6 +666,73 @@ fn inspect_journal(
                 serde_json::from_value(value).map_err(|_| lifecycle_corrupt(session_id))?;
             validate_record(&record, session_id, line_number, &mut record_ids)?;
             updated_at = record.time;
+            match record.kind.as_str() {
+                "run.accepted" => {
+                    let run_id = record
+                        .data
+                        .get("runId")
+                        .and_then(Value::as_str)
+                        .filter(|value| session_id_is_valid(value))
+                        .ok_or_else(|| lifecycle_corrupt(session_id))?;
+                    if !seen_runs.insert(run_id.to_owned())
+                        || !active_runs.insert(run_id.to_owned())
+                    {
+                        return Err(lifecycle_corrupt(session_id));
+                    }
+                }
+                "run.terminal" => {
+                    let run_id = record
+                        .data
+                        .get("runId")
+                        .and_then(Value::as_str)
+                        .filter(|value| session_id_is_valid(value))
+                        .ok_or_else(|| lifecycle_corrupt(session_id))?;
+                    if pending_approvals
+                        .iter()
+                        .any(|(pending_run_id, _)| pending_run_id == run_id)
+                        || !active_runs.remove(run_id)
+                    {
+                        return Err(lifecycle_corrupt(session_id));
+                    }
+                }
+                "approval.requested" => {
+                    let run_id = record
+                        .data
+                        .get("runId")
+                        .and_then(Value::as_str)
+                        .filter(|value| session_id_is_valid(value))
+                        .ok_or_else(|| lifecycle_corrupt(session_id))?;
+                    let approval_id = record
+                        .data
+                        .pointer("/approval/approvalId")
+                        .and_then(Value::as_str)
+                        .filter(|value| session_id_is_valid(value))
+                        .ok_or_else(|| lifecycle_corrupt(session_id))?;
+                    if !active_runs.contains(run_id)
+                        || !pending_approvals.insert((run_id.to_owned(), approval_id.to_owned()))
+                    {
+                        return Err(lifecycle_corrupt(session_id));
+                    }
+                }
+                "approval.resolved" => {
+                    let run_id = record
+                        .data
+                        .get("runId")
+                        .and_then(Value::as_str)
+                        .filter(|value| session_id_is_valid(value))
+                        .ok_or_else(|| lifecycle_corrupt(session_id))?;
+                    let approval_id = record
+                        .data
+                        .get("approvalId")
+                        .and_then(Value::as_str)
+                        .filter(|value| session_id_is_valid(value))
+                        .ok_or_else(|| lifecycle_corrupt(session_id))?;
+                    if !pending_approvals.remove(&(run_id.to_owned(), approval_id.to_owned())) {
+                        return Err(lifecycle_corrupt(session_id));
+                    }
+                }
+                _ => {}
+            }
             if !saw_user_message {
                 let (is_user, candidate) = extract_user_title(&record, session_id)?;
                 saw_user_message = is_user;
@@ -678,6 +749,11 @@ fn inspect_journal(
         title: title.unwrap_or_else(|| session_id.to_owned()),
         project,
         updated_at,
+        status: if pending_approvals.is_empty() {
+            (!active_runs.is_empty()).then(|| "active".to_owned())
+        } else {
+            Some("approval".to_owned())
+        },
     })
 }
 
@@ -1333,6 +1409,185 @@ mod tests {
                 .and_then(|v| v.to_str())
                 .unwrap_or("unknown")
         );
+        Ok(())
+    }
+
+    /// 功能：验证列表只从 committed journal 重建 active 与待审批状态，并在 resolution/terminal 后清除。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn list_projects_durable_run_and_approval_status() -> Result<(), crate::error::AgentError>
+    {
+        let (workspace, _state, store, lifecycle) = fixture().await?;
+        create_session(
+            &store,
+            workspace.path(),
+            "session-approval",
+            "approve durable write",
+        )
+        .await?;
+        let _lease = store.acquire_writer("session-approval").await?;
+        store
+            .append_record(
+                "session-approval",
+                "run.accepted",
+                json!({
+                    "runId":"run-approval",
+                    "inputMessageId":"message-session-approval",
+                    "provider":{"id":"faux","modelId":"faux-v1"}
+                }),
+            )
+            .await?;
+        assert_eq!(lifecycle.list().await?[0].status.as_deref(), Some("active"));
+
+        store
+            .append_record(
+                "session-approval",
+                "approval.requested",
+                json!({
+                    "runId":"run-approval",
+                    "approval":{
+                        "approvalId":"approval-1",
+                        "toolCallId":"tool-call-1",
+                        "operation":"file.write",
+                        "arguments":{"path":"approval.txt"},
+                        "operationHash":"a".repeat(64),
+                        "risk":"medium",
+                        "resources":[{"kind":"path","value":"approval.txt"}],
+                        "choices":["allow_once","deny"],
+                        "expiresAt":"2099-07-22T00:00:00Z"
+                    }
+                }),
+            )
+            .await?;
+        assert_eq!(
+            lifecycle.list().await?[0].status.as_deref(),
+            Some("approval")
+        );
+
+        store
+            .append_record(
+                "session-approval",
+                "approval.requested",
+                json!({
+                    "runId":"run-approval",
+                    "approval":{
+                        "approvalId":"approval-2",
+                        "toolCallId":"tool-call-2",
+                        "operation":"file.write",
+                        "arguments":{"path":"approval-two.txt"},
+                        "operationHash":"b".repeat(64),
+                        "risk":"medium",
+                        "resources":[{"kind":"path","value":"approval-two.txt"}],
+                        "choices":["allow_once","deny"],
+                        "expiresAt":"2099-07-22T00:00:00Z"
+                    }
+                }),
+            )
+            .await?;
+
+        store
+            .append_record(
+                "session-approval",
+                "approval.resolved",
+                json!({
+                    "runId":"run-approval",
+                    "approvalId":"approval-1",
+                    "decision":{"choice":"deny"},
+                    "resolutionSource":"client"
+                }),
+            )
+            .await?;
+        assert_eq!(
+            lifecycle.list().await?[0].status.as_deref(),
+            Some("approval")
+        );
+
+        store
+            .append_record(
+                "session-approval",
+                "approval.resolved",
+                json!({
+                    "runId":"run-approval",
+                    "approvalId":"approval-2",
+                    "decision":{"choice":"deny"},
+                    "resolutionSource":"client"
+                }),
+            )
+            .await?;
+        assert_eq!(lifecycle.list().await?[0].status.as_deref(), Some("active"));
+
+        store
+            .append_record(
+                "session-approval",
+                "run.terminal",
+                json!({"runId":"run-approval","status":"cancelled"}),
+            )
+            .await?;
+        assert_eq!(lifecycle.list().await?[0].status, None);
+
+        store
+            .append_record(
+                "session-approval",
+                "approval.resolved",
+                json!({
+                    "runId":"run-approval",
+                    "approvalId":"approval-2",
+                    "decision":{"choice":"deny"},
+                    "resolutionSource":"client"
+                }),
+            )
+            .await?;
+        let corrupt = lifecycle.list().await?;
+        assert_eq!(corrupt[0].title, "会话数据不可用");
+        assert_eq!(corrupt[0].project, "未知项目");
+        assert_eq!(corrupt[0].status, None);
+        drop(_lease);
+
+        create_session(
+            &store,
+            workspace.path(),
+            "session-reused-run",
+            "reject reused run id",
+        )
+        .await?;
+        let _reused_lease = store.acquire_writer("session-reused-run").await?;
+        store
+            .append_record(
+                "session-reused-run",
+                "run.accepted",
+                json!({
+                    "runId":"run-reused",
+                    "inputMessageId":"message-session-reused-run",
+                    "provider":{"id":"faux","modelId":"faux-v1"}
+                }),
+            )
+            .await?;
+        store
+            .append_record(
+                "session-reused-run",
+                "run.terminal",
+                json!({"runId":"run-reused","status":"cancelled"}),
+            )
+            .await?;
+        store
+            .append_record(
+                "session-reused-run",
+                "run.accepted",
+                json!({
+                    "runId":"run-reused",
+                    "inputMessageId":"message-session-reused-run",
+                    "provider":{"id":"faux","modelId":"faux-v1"}
+                }),
+            )
+            .await?;
+        let summaries = lifecycle.list().await?;
+        let reused = summaries
+            .iter()
+            .find(|summary| summary.session_id == "session-reused-run")
+            .expect("reused run Session must remain visible");
+        assert_eq!(reused.title, "会话数据不可用");
+        assert_eq!(reused.status, None);
         Ok(())
     }
 

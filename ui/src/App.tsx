@@ -27,7 +27,10 @@ import {
   AgentWorkspace,
   type AgentWorkspaceNavigationState,
 } from "@/features/agents/agent-workspace";
-import { projectPendingApprovals } from "@/features/approvals/pending-approvals";
+import {
+  getApprovalIdentityKey,
+  projectPendingApprovals,
+} from "@/features/approvals/pending-approvals";
 import { PluginWorkspace } from "@/features/plugins/plugin-workspace";
 import { ArchiveWorkspace } from "@/features/sessions/archive-workspace";
 import { SettingsWorkspace } from "@/features/settings/settings-workspace";
@@ -44,6 +47,7 @@ import type {
   ApprovalChoice,
   ApplicationServiceClient,
   BackendKind,
+  ModelDescriptor,
   PendingApproval,
   RunStartInput,
   SessionSnapshot,
@@ -79,10 +83,13 @@ interface InitializedServiceSnapshot {
   readonly generation: string;
 }
 
-interface ApprovalConfirmation {
+interface ApprovalIdentity {
   readonly approvalId: string;
   readonly sessionId: string;
   readonly runId: string;
+}
+
+interface ApprovalConfirmation extends ApprovalIdentity {
   readonly choice: ApprovalChoice;
   readonly status: "submitting" | "awaiting_snapshot" | "refresh_error";
 }
@@ -126,7 +133,11 @@ async function initializeApplicationService(
  * 邮箱：18272669457@163.com
  */
 function getApprovalStateKey(approval: PendingApproval): string {
-  return `${approval.sessionId}\u0000${approval.runId}\u0000${approval.request.approvalId}`;
+  return getApprovalIdentityKey(
+    approval.sessionId,
+    approval.runId,
+    approval.request.approvalId,
+  );
 }
 
 /**
@@ -238,7 +249,7 @@ export default function App({
   const [sessionOperationKeys, setSessionOperationKeys] = useState<ReadonlySet<string>>(new Set());
   const [pendingSessionDelete, setPendingSessionDelete] = useState<SessionSummary | null>(null);
   const [sessionOperationError, setSessionOperationError] = useState<string | null>(null);
-  const [approvalErrorId, setApprovalErrorId] = useState<string | null>(null);
+  const [approvalError, setApprovalError] = useState<ApprovalIdentity | null>(null);
   const [approvalConfirmations, setApprovalConfirmations] = useState<
     ReadonlyMap<string, ApprovalConfirmation>
   >(new Map());
@@ -286,7 +297,7 @@ export default function App({
     setPreviewSessions([]);
     setPendingSessionDelete(null);
     setSessionOperationError(null);
-    setApprovalErrorId(null);
+    setApprovalError(null);
     setApprovalConfirmations(new Map());
   }, [backend, setActiveAgentProfileId]);
 
@@ -560,7 +571,7 @@ export default function App({
         { choice: request.choice },
       ),
     onMutate: (request) => {
-      setApprovalErrorId(null);
+      setApprovalError(null);
       if (useWorkspaceUiStore.getState().backend !== request.backend) {
         return;
       }
@@ -580,7 +591,7 @@ export default function App({
     onSuccess: async (_result, request) => {
       const approvalKey = getApprovalStateKey(request.approval);
       if (useWorkspaceUiStore.getState().backend === request.backend) {
-        setApprovalErrorId(null);
+        setApprovalError(null);
         setApprovalConfirmations((currentConfirmations) => {
           const nextConfirmations = new Map(currentConfirmations);
           nextConfirmations.set(approvalKey, {
@@ -653,7 +664,11 @@ export default function App({
           nextConfirmations.delete(approvalKey);
           return nextConfirmations;
         });
-        setApprovalErrorId(request.approval.request.approvalId);
+        setApprovalError({
+          approvalId: request.approval.request.approvalId,
+          sessionId: request.approval.sessionId,
+          runId: request.approval.runId,
+        });
       }
     },
   });
@@ -767,6 +782,8 @@ export default function App({
         : [],
     [sessionSnapshotQuery.data],
   );
+  const approvalSnapshotReady =
+    sessionSnapshotQuery.isSuccess && sessionSnapshotQuery.fetchStatus === "idle";
   useEffect(() => {
     if (
       !sessionSnapshotQuery.data ||
@@ -918,6 +935,7 @@ export default function App({
   ) => {
     if (
       approvalMutation.isPending ||
+      !approvalSnapshotReady ||
       !canRespondToApprovals ||
       !approval.request.choices.includes(choice) ||
       isApprovalExpired(approval) ||
@@ -1135,6 +1153,25 @@ export default function App({
     if (activeAgentProfile && nextModelRouteKey !== agentModelRouteKey) {
       setActiveAgentProfileId(null);
     }
+  };
+
+  /**
+   * 采用 Provider 发现流程刚写入 models/list 的首个完整模型路由。
+   *
+   * 输入：发起发现的后端及结果中的 Provider、模型与 API family；输出：下一次输入器选择。
+   * 不变量：迟到的非当前后端结果不得修改选择；不会把显示名当作路由，也不会保留模型不匹配的 Agent 绑定。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  const handleProviderModelReady = (
+    sourceBackend: BackendKind,
+    model: Pick<ModelDescriptor, "providerId" | "modelId" | "apiFamily">,
+  ) => {
+    if (useWorkspaceUiStore.getState().backend !== sourceBackend) {
+      return;
+    }
+    setActiveAgentProfileId(null);
+    setSelectedModelRouteKey(getModelRouteKey(model));
   };
 
   /**
@@ -1406,6 +1443,7 @@ export default function App({
             runtimeEnvironment={runtimeEnvironmentQuery.data}
             onOpenArchive={() => setActiveView("archive")}
             onOpenAgentTools={handleOpenAgentTools}
+            onModelReady={handleProviderModelReady}
             onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
           />
         ) : activeView === "archive" ? (
@@ -1438,10 +1476,13 @@ export default function App({
               onRetryHistory={() => void sessionSnapshotQuery.refetch()}
               pendingApprovals={pendingApprovals}
               approvalResponseAvailable={canRespondToApprovals}
+              approvalSnapshotReady={approvalSnapshotReady}
               approvalInteractionLocked={approvalMutation.isPending}
               approvalSubmission={
                 approvalMutation.isPending && approvalMutation.variables
                   ? {
+                      sessionId: approvalMutation.variables.approval.sessionId,
+                      runId: approvalMutation.variables.approval.runId,
                       approvalId:
                         approvalMutation.variables.approval.request.approvalId,
                       choice: approvalMutation.variables.choice,
@@ -1449,9 +1490,9 @@ export default function App({
                   : null
               }
               approvalError={
-                approvalErrorId
+                approvalError
                   ? {
-                      approvalId: approvalErrorId,
+                      ...approvalError,
                       message: t("approval.responseFailed"),
                     }
                   : null
@@ -1464,6 +1505,7 @@ export default function App({
                   ? [
                       {
                         approvalId: confirmation.approvalId,
+                        sessionId: confirmation.sessionId,
                         runId: confirmation.runId,
                         choice: confirmation.choice,
                         refreshFailed: confirmation.status === "refresh_error",

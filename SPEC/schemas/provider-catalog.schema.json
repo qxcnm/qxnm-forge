@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/provider-catalog.schema.json",
+  "title": "Brand-neutral Provider configuration template catalog v0.1",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>. Templates are local configuration suggestions, not executable or remotely verified Provider claims.",
+  "$ref": "#/$defs/listResult",
+  "$defs": {
+    "template": {
+      "type": "object",
+      "required": [
+        "templateId",
+        "displayName",
+        "suggestedProviderId",
+        "apiFamily",
+        "defaultBaseUrl",
+        "modelDiscovery",
+        "logoAssetId"
+      ],
+      "properties": {
+        "templateId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "maxLength": 128
+        },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "suggestedProviderId": {
+          "type": "string",
+          "pattern": "^custom-[a-z0-9][a-z0-9.-]*$",
+          "maxLength": 128
+        },
+        "apiFamily": { "const": "openai-completions" },
+        "defaultBaseUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$",
+          "maxLength": 2048
+        },
+        "modelDiscovery": { "const": "openai-models" },
+        "logoAssetId": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "listParams": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "listResult": {
+      "type": "object",
+      "required": ["templates"],
+      "properties": {
+        "templates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/template" },
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -104,6 +104,36 @@ describe("TauriApplicationServiceClient", () => {
   });
 
   /**
+   * 验证 Provider 模板只从后端目录 RPC 读取，并保持模板与可执行模型语义分离。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("reads provider templates from the backend catalog", async () => {
+    invokeMock.mockResolvedValue({
+      templates: [
+        {
+          templateId: "deepseek-openai-completions",
+          displayName: "DeepSeek",
+          suggestedProviderId: "custom-deepseek",
+          apiFamily: "openai-completions",
+          defaultBaseUrl: "https://api.deepseek.com/v1",
+          modelDiscovery: "openai-models",
+          logoAssetId: null,
+        },
+      ],
+    });
+    const client = new TauriApplicationServiceClient("rust");
+
+    await expect(client.listProviderCatalog()).resolves.toHaveLength(1);
+    expect(invokeMock).toHaveBeenCalledWith("application_service_request", {
+      backend: "rust",
+      method: "providerCatalog/list",
+      params: {},
+    });
+  });
+
+  /**
    * 验证桌面传输边界按共同 Schema 接受包含点号的 Logo 资源 ID。
    *
    * 作者：高宏顺

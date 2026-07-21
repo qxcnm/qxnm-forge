@@ -264,14 +264,6 @@ describe("MockApplicationServiceClient", () => {
     const [approval] = projectPendingApprovals(initial);
 
     expect(approval?.request.operation).toBe("file.write");
-    await expect(
-      client.respondToApproval(
-        "approval-flow",
-        "preview-run-approval",
-        "preview-approval-1",
-        { choice: "allow_session" },
-      ),
-    ).rejects.toThrow();
     await client.respondToApproval(
       "approval-flow",
       "preview-run-approval",
@@ -282,6 +274,11 @@ describe("MockApplicationServiceClient", () => {
     const resolved = await client.getSession("approval-flow");
     expect(projectPendingApprovals(resolved)).toEqual([]);
     expect(resolved.activeRunId).toBeNull();
+    expect(
+      (await client.listSessions()).find(
+        (session) => session.sessionId === "approval-flow",
+      ),
+    ).not.toHaveProperty("status");
     expect(resolved.events.at(-1)).toMatchObject({
       type: "approval.resolved",
       data: {

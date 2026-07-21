@@ -255,6 +255,14 @@ Profile 字段、边界、模型三元组与运行快照以 `agent-profile.schem
 未知参数、未知 Profile 字段、credential/endpoint 字段都属于
 `-32602/agent_profile_invalid`。失败的 mutation 不修改 application database。
 
+`providerCatalog/list {}` 是 ADR 0031 的本地只读配置模板目录，返回
+`{templates:[{templateId,displayName,suggestedProviderId,apiFamily,defaultBaseUrl,modelDiscovery,logoAssetId}]}`。
+空参数对象必须严格拒绝未知字段。模板只从冻结 Provider/model catalog 推导并按
+`templateId` 排序；调用不得读取 credential、发送网络请求或修改任何状态。
+目录项只是 OpenAI-compatible 自定义连接的配置建议，不表示 Provider 已配置、远端发现成功、
+route 可执行或 capability 已验证。`modelDiscovery:"openai-models"` 只允许用户随后显式尝试
+`providerConnections/discoverModels`；失败时客户端必须保留手工模型 ID 回退。
+
 自定义 Provider connection 使用 ADR 0029 的封闭 DTO：
 
 - `providerConnections/list {}` 返回 `{connections:[...]}`，每项只有非敏感配置和
@@ -272,12 +280,13 @@ Profile 字段、边界、模型三元组与运行快照以 `agent-profile.schem
 本地管理边界还定义 `providerCredentials/set {providerId,credential}` 与
 `providerCredentials/remove {providerId}`，成功只返回
 `{providerId,credentialConfigured,restartRequired:true}`。它们不得由通用 WebView 方法
-转发器开放。credential 绝不进入 connection DTO、模型、Session、日志或错误。连接 mutation
-成功后旧 daemon capability 快照必须失效；新的 `models/list` 与 initialize Provider 广告从
-同一启用且 credential 可用的连接快照重建。
+转发器开放。credential 绝不进入 connection DTO、模型、Session、日志或错误。任一连接或
+credential mutation 向共享 state root 的 Rust/.NET daemon 发出后，无论成功、错误、超时或
+连接丢失，host 都必须与两套实现的在途请求串行化并同时丢弃两套旧 capability 快照；新的
+`models/list` 与 initialize Provider 广告从同一启用且 credential 可用的连接快照重建。
 
 `models/list` 不执行 Provider 请求；远端发现只能通过上述显式 mutation 发生。模型发现成功后
-旧 daemon capability 快照同样必须失效，客户端重新 `initialize` 后才能使用新模型三元组。
+两套旧 daemon capability 快照同样必须失效，客户端重新 `initialize` 后才能使用新模型三元组。
 
 - `run/cancel {sessionId, runId}` is idempotent. It returns the current
   `cancellationState`: `requested`, `alreadyRequested`, or `terminal`. A return
@@ -302,7 +311,11 @@ Profile 字段、边界、模型三元组与运行快照以 `agent-profile.schem
 - `session/list {cursor?, limit?}` 返回真实 Session 的脱敏摘要页。默认 `limit` 为 64，
   合法范围为 1..128；结果严格包含 `{sessions,nextCursor,hasMore}`，终页也返回
   `nextCursor:null`。排序、live-view cursor 语义、帧上限和摘要字段遵循
-  [ADR 0030](adr/0030-session-lifecycle-application-service.md)。
+  [ADR 0030](adr/0030-session-lifecycle-application-service.md)。可选 `status` 仅从完整 LF durable
+  journal 前缀折叠：有未决 `(runId,approvalId)` 时为 `approval`，否则有未 terminal 的
+  `run.accepted` 时为 `active`，匹配 terminal 后省略。多个未决审批必须全部 resolved；terminal
+  后复用 `runId`，以及重复、错配或无活动 run 的审批状态记录，使列表返回不带 `status` 的固定
+  损坏摘要，不能伪造可审批入口。
 - `session/archive {sessionId}` 在 Session 静止且 journal 健康时 durable 更新工作区外
   归档元数据，返回 `{session}` 且 `archived:true`；它不改写 journal。
 - `session/restore {sessionId}` 使用相同边界移除归档状态，返回 `{session}` 且

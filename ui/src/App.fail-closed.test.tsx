@@ -9,6 +9,7 @@ import { createApplicationServiceClient } from "@/lib/mock-application-service";
 import { useWorkspaceUiStore } from "@/store/workspace-ui-store";
 import type {
   ApplicationServiceClient,
+  BackendKind,
   InitializeResult,
   ModelDescriptor,
   SessionSnapshot,
@@ -32,6 +33,15 @@ const REPLACEMENT_MODEL: ModelDescriptor = {
   displayName: "Replacement v1",
   supportsReasoning: false,
   supportsTools: false,
+};
+
+const DISCOVERED_MODEL: ModelDescriptor = {
+  providerId: "newapi-gzxsy",
+  modelId: "discovered-model",
+  apiFamily: "openai-completions",
+  displayName: "Discovered model",
+  supportsReasoning: false,
+  supportsTools: true,
 };
 
 const METHODS = [
@@ -121,6 +131,8 @@ function createTestService(
     cancelRun: overrides.cancelRun ?? base.cancelRun.bind(base),
     respondToApproval:
       overrides.respondToApproval ?? base.respondToApproval.bind(base),
+    listProviderCatalog:
+      overrides.listProviderCatalog ?? base.listProviderCatalog.bind(base),
     listProviderConnections:
       overrides.listProviderConnections ?? base.listProviderConnections.bind(base),
     createProviderConnection:
@@ -148,19 +160,27 @@ function createTestService(
 }
 
 /**
- * 使用隔离 QueryClient 和可注入 application service 渲染工作台。
+ * 使用隔离 QueryClient 和可注入 application service 或后端工厂渲染工作台。
  *
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
-function renderTestApp(service: ApplicationServiceClient) {
+function renderTestApp(
+  serviceOrFactory:
+    | ApplicationServiceClient
+    | ((backend: BackendKind) => ApplicationServiceClient),
+  staleTime = 0,
+) {
   const queryClient = new QueryClient({
     defaultOptions: {
-      queries: { retry: false },
+      queries: { retry: false, staleTime },
       mutations: { retry: false },
     },
   });
-  const serviceFactory = () => service;
+  const serviceFactory =
+    typeof serviceOrFactory === "function"
+      ? serviceOrFactory
+      : () => serviceOrFactory;
   const view = render(
     <QueryClientProvider client={queryClient}>
       <InterfaceProviders>
@@ -390,6 +410,393 @@ describe("App fail-closed boundaries", () => {
   });
 
   /**
+   * 验证设置页完成后端模型发现后，主输入器采用新 Provider 路由而不是继续停留在 Faux。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("selects the first discovered provider model in the composer", async () => {
+    const timestamp = "2026-07-22T00:00:00Z";
+    const createdConnection = {
+      connectionId: "connection-discovered",
+      revision: 1,
+      displayName: "星思研 New API",
+      providerId: "newapi-gzxsy",
+      baseUrl: "https://api.example.invalid/v1",
+      apiFamily: "openai-completions" as const,
+      modelIds: [] as readonly string[],
+      logoAssetId: "newapi-gzxsy",
+      enabled: true,
+      credentialConfigured: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const discoveredConnection = {
+      ...createdConnection,
+      revision: 2,
+      modelIds: [DISCOVERED_MODEL.modelId],
+      credentialConfigured: true,
+    };
+    const providerMethods = [
+      ...METHODS,
+      "providerCatalog/list",
+      "providerConnections/list",
+      "providerConnections/create",
+      "providerConnections/update",
+      "providerConnections/delete",
+      "providerConnections/discoverModels",
+      "providerCredentials/set",
+      "providerCredentials/remove",
+    ];
+    const service = createTestService({
+      initialize: vi.fn().mockResolvedValue({
+        ...INITIALIZE_RESULT,
+        capabilities: {
+          ...INITIALIZE_RESULT.capabilities,
+          methods: providerMethods,
+        },
+      }),
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce([MODEL])
+        .mockResolvedValue([MODEL, DISCOVERED_MODEL]),
+      listProfiles: vi.fn().mockResolvedValue([]),
+      listProviderCatalog: vi.fn().mockResolvedValue([]),
+      listProviderConnections: vi.fn().mockResolvedValue([]),
+      createProviderConnection: vi.fn().mockResolvedValue({
+        connection: createdConnection,
+        restartRequired: true,
+      }),
+      setProviderCredential: vi.fn().mockResolvedValue({
+        providerId: createdConnection.providerId,
+        credentialConfigured: true,
+        restartRequired: true,
+      }),
+      discoverProviderModels: vi.fn().mockResolvedValue({
+        connection: discoveredConnection,
+        discoveredCount: 1,
+        restartRequired: true,
+      }),
+    });
+    renderTestApp(service);
+
+    await waitFor(() => expect(screen.getByLabelText("选择模型")).toHaveTextContent("Faux v1"));
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    const providersTab = await screen.findByRole("tab", { name: "提供商" });
+    fireEvent.mouseDown(providersTab, { button: 0, ctrlKey: false });
+    fireEvent.click(providersTab);
+    const importInput = await screen.findByLabelText("导入 New API 连接 JSON");
+    fireEvent.change(importInput, {
+      target: {
+        value:
+          '{"_type":"newapi_channel_conn","key":"test-discovery-secret","url":"https://api.example.invalid"}',
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并获取模型" }));
+
+    expect(
+      await screen.findByText("已获取并保存 1 个模型，模型选择器已刷新"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: /实现跨平台桌面端/ }))[0],
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("选择模型")).toHaveTextContent("Discovered model"),
+    );
+  });
+
+  /**
+   * 验证 Provider 保存期间切换后端仍会重握手当前后端，不复用无限新鲜的旧模型快照。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("reinitializes the backend activated during a provider mutation", async () => {
+    const timestamp = "2026-07-22T00:00:00Z";
+    const providerMethods = [
+      ...METHODS,
+      "providerCatalog/list",
+      "providerConnections/list",
+      "providerConnections/create",
+    ];
+    const providerInitialize: InitializeResult = {
+      ...INITIALIZE_RESULT,
+      capabilities: {
+        ...INITIALIZE_RESULT.capabilities,
+        methods: providerMethods,
+      },
+    };
+    const dotnetInitializeResult: InitializeResult = {
+      ...INITIALIZE_RESULT,
+      implementation: {
+        ...INITIALIZE_RESULT.implementation,
+        name: "test-dotnet-service",
+        language: "dotnet",
+      },
+    };
+    const dotnetReinitialize = createDeferred<InitializeResult>();
+    const dotnetInitialize = vi
+      .fn<ApplicationServiceClient["initialize"]>()
+      .mockResolvedValueOnce(dotnetInitializeResult)
+      .mockImplementationOnce(() => dotnetReinitialize.promise);
+    const dotnetModels = vi
+      .fn<ApplicationServiceClient["listModels"]>()
+      .mockResolvedValueOnce([MODEL])
+      .mockResolvedValue([REPLACEMENT_MODEL]);
+    const pendingCreate = createDeferred<
+      Awaited<ReturnType<ApplicationServiceClient["createProviderConnection"]>>
+    >();
+    const rustInitialize = vi
+      .fn<ApplicationServiceClient["initialize"]>()
+      .mockResolvedValue(providerInitialize);
+    const createProviderConnection = vi.fn(() => pendingCreate.promise);
+    const rustService = createTestService({
+      initialize: rustInitialize,
+      listModels: vi.fn().mockResolvedValue([MODEL]),
+      listProfiles: vi.fn().mockResolvedValue([]),
+      listProviderCatalog: vi.fn().mockResolvedValue([]),
+      listProviderConnections: vi.fn().mockResolvedValue([]),
+      createProviderConnection,
+    });
+    const dotnetService = createTestService({
+      initialize: dotnetInitialize,
+      listModels: dotnetModels,
+      listProfiles: vi.fn().mockResolvedValue([]),
+    });
+    useWorkspaceUiStore.setState({ backend: "dotnet" });
+    renderTestApp(
+      (candidateBackend) =>
+        candidateBackend === "rust" ? rustService : dotnetService,
+      Number.POSITIVE_INFINITY,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("选择模型")).toBeEnabled();
+      expect(screen.getByLabelText("选择模型")).toHaveTextContent("Faux v1");
+    });
+    expect(dotnetInitialize).toHaveBeenCalledTimes(1);
+    expect(dotnetModels).toHaveBeenCalledTimes(1);
+
+    act(() => useWorkspaceUiStore.getState().setBackend("rust"));
+    await waitFor(() => expect(rustInitialize).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    const providersTab = await screen.findByRole("tab", { name: "提供商" });
+    fireEvent.mouseDown(providersTab, { button: 0, ctrlKey: false });
+    fireEvent.click(providersTab);
+    const importInput = await screen.findByLabelText("导入 New API 连接 JSON");
+    fireEvent.change(importInput, {
+      target: {
+        value:
+          '{"_type":"newapi_channel_conn","url":"https://api.example.invalid"}',
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    fireEvent.change(screen.getByLabelText("模型 ID"), {
+      target: { value: "manual-rust-model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(createProviderConnection).toHaveBeenCalledTimes(1),
+    );
+
+    act(() => {
+      useWorkspaceUiStore.setState({
+        backend: "dotnet",
+        activeView: "conversation",
+      });
+    });
+    await waitFor(() => expect(screen.getByLabelText("选择模型")).toBeEnabled());
+    expect(dotnetInitialize).toHaveBeenCalledTimes(1);
+    expect(dotnetModels).toHaveBeenCalledTimes(1);
+
+    act(() =>
+      pendingCreate.resolve({
+        connection: {
+          connectionId: "connection-race",
+          revision: 1,
+          displayName: "星思研 New API",
+          providerId: "newapi-gzxsy",
+          baseUrl: "https://api.example.invalid/v1",
+          apiFamily: "openai-completions",
+          modelIds: ["manual-rust-model"],
+          logoAssetId: "newapi-gzxsy",
+          enabled: true,
+          credentialConfigured: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        restartRequired: true,
+      }),
+    );
+    await waitFor(() => {
+      expect(dotnetInitialize).toHaveBeenCalledTimes(2);
+      expect(screen.getByLabelText("选择模型")).toBeDisabled();
+    });
+
+    act(() => dotnetReinitialize.resolve(dotnetInitializeResult));
+    await waitFor(() => {
+      expect(dotnetModels).toHaveBeenCalledTimes(2);
+      expect(screen.getByLabelText("选择模型")).toBeEnabled();
+      expect(screen.getByLabelText("选择模型")).toHaveTextContent(
+        "Replacement v1",
+      );
+    });
+  });
+
+  /**
+   * 验证迟到的 Rust 模型发现结果不能覆盖已经切换到 .NET 的 Agent 与模型选择。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("ignores late provider discovery after switching backends", async () => {
+    const timestamp = "2026-07-22T00:00:00Z";
+    const providerMethods = [
+      ...METHODS,
+      "providerCatalog/list",
+      "providerConnections/list",
+      "providerConnections/create",
+      "providerConnections/discoverModels",
+      "providerCredentials/set",
+    ];
+    const createdConnection = {
+      connectionId: "connection-late-discovery",
+      revision: 1,
+      displayName: "星思研 New API",
+      providerId: "newapi-gzxsy",
+      baseUrl: "https://api.example.invalid/v1",
+      apiFamily: "openai-completions" as const,
+      modelIds: [] as readonly string[],
+      logoAssetId: "newapi-gzxsy",
+      enabled: true,
+      credentialConfigured: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const discoveredConnection = {
+      ...createdConnection,
+      revision: 2,
+      modelIds: [DISCOVERED_MODEL.modelId],
+      credentialConfigured: true,
+    };
+    const providerInitialize: InitializeResult = {
+      ...INITIALIZE_RESULT,
+      capabilities: {
+        ...INITIALIZE_RESULT.capabilities,
+        methods: providerMethods,
+      },
+    };
+    const dotnetInitializeResult: InitializeResult = {
+      ...INITIALIZE_RESULT,
+      implementation: {
+        ...INITIALIZE_RESULT.implementation,
+        name: "test-dotnet-service",
+        language: "dotnet",
+      },
+    };
+    const pendingDiscovery = createDeferred<
+      Awaited<ReturnType<ApplicationServiceClient["discoverProviderModels"]>>
+    >();
+    const rustInitialize = vi
+      .fn<ApplicationServiceClient["initialize"]>()
+      .mockResolvedValue(providerInitialize);
+    const rustDiscovery = vi
+      .fn<ApplicationServiceClient["discoverProviderModels"]>()
+      .mockImplementation(() => pendingDiscovery.promise);
+    const dotnetInitialize = vi
+      .fn<ApplicationServiceClient["initialize"]>()
+      .mockResolvedValue(dotnetInitializeResult);
+    const dotnetModels = vi
+      .fn<ApplicationServiceClient["listModels"]>()
+      .mockResolvedValue([MODEL, REPLACEMENT_MODEL]);
+    const dotnetProfiles = vi
+      .fn<ApplicationServiceClient["listProfiles"]>()
+      .mockResolvedValue([REPLACEMENT_PROFILE]);
+    const rustService = createTestService({
+      initialize: rustInitialize,
+      listModels: vi.fn().mockResolvedValue([MODEL]),
+      listProfiles: vi.fn().mockResolvedValue([]),
+      listProviderCatalog: vi.fn().mockResolvedValue([]),
+      listProviderConnections: vi.fn().mockResolvedValue([]),
+      createProviderConnection: vi.fn().mockResolvedValue({
+        connection: createdConnection,
+        restartRequired: true,
+      }),
+      setProviderCredential: vi.fn().mockResolvedValue({
+        providerId: createdConnection.providerId,
+        credentialConfigured: true,
+        restartRequired: true,
+      }),
+      discoverProviderModels: rustDiscovery,
+    });
+    const dotnetService = createTestService({
+      initialize: dotnetInitialize,
+      listModels: dotnetModels,
+      listProfiles: dotnetProfiles,
+    });
+    useWorkspaceUiStore.setState({ backend: "dotnet" });
+    const { queryClient } = renderTestApp(
+      (candidateBackend) =>
+        candidateBackend === "rust" ? rustService : dotnetService,
+      Number.POSITIVE_INFINITY,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("选择模型")).toBeEnabled());
+    act(() => useWorkspaceUiStore.getState().setBackend("rust"));
+    await waitFor(() => expect(rustInitialize).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    const providersTab = await screen.findByRole("tab", { name: "提供商" });
+    fireEvent.mouseDown(providersTab, { button: 0, ctrlKey: false });
+    fireEvent.click(providersTab);
+    const importInput = await screen.findByLabelText("导入 New API 连接 JSON");
+    fireEvent.change(importInput, {
+      target: {
+        value:
+          '{"_type":"newapi_channel_conn","key":"late-discovery-secret","url":"https://api.example.invalid"}',
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并获取模型" }));
+    await waitFor(() => expect(rustDiscovery).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useWorkspaceUiStore.setState({
+        backend: "dotnet",
+        activeView: "conversation",
+      });
+    });
+    await waitFor(() => expect(screen.getByLabelText("选择模型")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("选择智能体"));
+    fireEvent.click(await screen.findByRole("option", { name: "编码助手" }));
+    expect(useWorkspaceUiStore.getState().activeAgentProfileId).toBe(
+      REPLACEMENT_PROFILE.profileId,
+    );
+    expect(screen.getByLabelText("选择模型")).toHaveTextContent("Replacement v1");
+    const profilesBeforeDiscovery = dotnetProfiles.mock.calls.length;
+
+    act(() =>
+      pendingDiscovery.resolve({
+        connection: discoveredConnection,
+        discoveredCount: 1,
+        restartRequired: true,
+      }),
+    );
+    await waitFor(() => {
+      expect(dotnetInitialize).toHaveBeenCalledTimes(2);
+      expect(dotnetModels).toHaveBeenCalledTimes(2);
+      expect(dotnetProfiles).toHaveBeenCalledTimes(profilesBeforeDiscovery + 1);
+      expect(queryClient.isFetching()).toBe(0);
+    });
+    await act(async () => Promise.resolve());
+
+    expect(useWorkspaceUiStore.getState().activeAgentProfileId).toBe(
+      REPLACEMENT_PROFILE.profileId,
+    );
+    expect(screen.getByLabelText("选择模型")).toHaveTextContent("Replacement v1");
+  });
+
+  /**
    * 验证重新握手和新代际查询期间保留非首模型与 Agent 偏好，稳定快照未撤销时恢复原选择。
    *
    * 作者：高宏顺
@@ -561,7 +968,7 @@ describe("App fail-closed boundaries", () => {
     ).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "对 process.exec 选择允许一次" }),
-    ).toBeEnabled();
+    ).toBeDisabled();
     expect(respondToApproval).toHaveBeenCalledTimes(1);
 
     fireEvent.click(
@@ -569,6 +976,9 @@ describe("App fail-closed boundaries", () => {
     );
     await waitFor(() => expect(screen.queryByText("file.write")).not.toBeInTheDocument());
     expect(screen.getByText("process.exec")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "对 process.exec 选择允许一次" }),
+    ).toBeEnabled();
     expect(respondToApproval).toHaveBeenCalledTimes(1);
   });
 

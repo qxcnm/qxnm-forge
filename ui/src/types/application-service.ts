@@ -105,6 +105,17 @@ export interface ProviderCredentialStatus {
   readonly restartRequired: true;
 }
 
+/** 后端冻结目录投影出的 OpenAI-compatible Provider 配置模板。 */
+export interface ProviderCatalogEntry {
+  readonly templateId: string;
+  readonly displayName: string;
+  readonly suggestedProviderId: string;
+  readonly apiFamily: "openai-completions";
+  readonly defaultBaseUrl: string;
+  readonly modelDiscovery: "openai-models";
+  readonly logoAssetId: string | null;
+}
+
 /** 协议扩展字段的只读 JSON 对象投影。 */
 export type ProtocolExtensions = Readonly<Record<string, unknown>>;
 
@@ -297,7 +308,7 @@ export interface SessionReplayEvent {
 }
 
 /** 服务端允许客户端选择的单次审批结果。 */
-export type ApprovalChoice = "allow_once" | "allow_session" | "deny";
+export type ApprovalChoice = "allow_once" | "deny";
 
 /** 审批请求中已经规范化且可向用户展示的资源。 */
 export interface ApprovalResource {
@@ -432,6 +443,18 @@ export interface ApplicationServiceClient extends AgentProfileService {
     approvalId: string,
     decision: ApprovalDecision,
   ): Promise<void>;
+
+  /**
+   * 读取后端冻结目录中可投影为通用连接的 Provider 模板。
+   *
+   * 输入：无。
+   * 输出：不含凭据、模型可用性声明或执行状态的配置建议列表。
+   * 不变量：模板不等同于已配置或已验证 Provider；可执行模型仍只来自 models/list。
+   * 失败：传输、目录解析或响应校验失败时拒绝，不由前端补猜模板。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  listProviderCatalog(): Promise<readonly ProviderCatalogEntry[]>;
 
   /**
    * 列出 Provider 连接的脱敏配置。

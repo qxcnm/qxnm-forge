@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ProviderSettings } from "@/features/settings/provider-settings";
@@ -11,6 +12,7 @@ import {
 import type { ApplicationServiceClient } from "@/types/application-service";
 
 const PROVIDER_METHODS = [
+  "providerCatalog/list",
   "providerConnections/list",
   "providerConnections/create",
   "providerConnections/update",
@@ -29,6 +31,7 @@ function renderProviderSettings(
   options: {
     readonly service?: ApplicationServiceClient;
     readonly supportedMethods?: readonly string[];
+    readonly onModelReady?: ComponentProps<typeof ProviderSettings>["onModelReady"];
   } = {},
 ) {
   const queryClient = new QueryClient({
@@ -44,6 +47,7 @@ function renderProviderSettings(
         backend="rust"
         service={service}
         supportedMethods={options.supportedMethods ?? PROVIDER_METHODS}
+        onModelReady={options.onModelReady}
       />
     </QueryClientProvider>,
   );
@@ -55,6 +59,41 @@ describe("ProviderSettings secret import boundary", () => {
     window.localStorage.clear();
     resetMockApplicationServiceState();
     await i18n.changeLanguage("zh-CN");
+  });
+
+  /**
+   * 验证兼容模板来自 application service 目录，而不是设置组件内的固定数组。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("renders the provider catalog returned by the backend", async () => {
+    const service = createApplicationServiceClient("rust");
+    const listProviderCatalog = vi
+      .spyOn(service, "listProviderCatalog")
+      .mockResolvedValue([
+        {
+          templateId: "backend-only-openai-completions",
+          displayName: "Backend Only",
+          suggestedProviderId: "custom-backend-only",
+          apiFamily: "openai-completions",
+          defaultBaseUrl: "https://api.example.invalid/v1",
+          modelDiscovery: "openai-models",
+          logoAssetId: null,
+        },
+      ]);
+
+    renderProviderSettings({ service });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "配置 Backend Only" }),
+    );
+    expect(listProviderCatalog).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("名称")).toHaveValue("Backend Only");
+    expect(screen.getByLabelText("Provider ID")).toHaveValue("custom-backend-only");
+    expect(screen.getByLabelText("Base URL")).toHaveValue(
+      "https://api.example.invalid/v1",
+    );
   });
 
   /**
@@ -179,12 +218,14 @@ describe("ProviderSettings secret import boundary", () => {
           restartRequired: true,
         }),
       );
+    const onModelReady = vi.fn();
     renderProviderSettings({
       service,
       supportedMethods: [
         ...PROVIDER_METHODS,
         "providerConnections/discoverModels",
       ],
+      onModelReady,
     });
     const importInput = await screen.findByLabelText("导入 New API 连接 JSON");
 
@@ -206,6 +247,104 @@ describe("ProviderSettings secret import boundary", () => {
     expect(discoverModels).toHaveBeenCalledWith(expect.any(String), 1);
     expect(screen.getByLabelText("模型 ID")).toHaveValue("model-a\nmodel-b");
     expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(onModelReady).toHaveBeenCalledWith("rust", {
+      providerId: "newapi-gzxsy",
+      modelId: "model-a",
+      apiFamily: "openai-completions",
+    });
+  });
+
+  /**
+   * 验证 mutation 响应丢失但状态已落盘时会重读连接，而不是把旧 Query 快照继续留在界面。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("reconciles provider state after an ambiguous mutation failure", async () => {
+    const service = createApplicationServiceClient("rust");
+    const createConnection = service.createProviderConnection.bind(service);
+    const listConnections = vi.spyOn(service, "listProviderConnections");
+    vi.spyOn(service, "createProviderConnection").mockImplementation(async (input) => {
+      await createConnection(input);
+      throw new Error("response lost after commit");
+    });
+    renderProviderSettings({ service });
+    await waitFor(() => expect(listConnections).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText("导入 New API 连接 JSON"), {
+      target: {
+        value:
+          '{"_type":"newapi_channel_conn","url":"https://api.example.invalid"}',
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    fireEvent.change(screen.getByLabelText("模型 ID"), {
+      target: { value: "reconciled-model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(
+      await screen.findByText(
+        "连接保存结果未确认；已重新加载最新状态，请核对后再试",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(listConnections.mock.calls.length).toBeGreaterThan(1));
+    expect(
+      await screen.findByRole("button", {
+        name: /编辑提供商 星思研 New API · 凭据未配置/,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * 验证 mutation 结果和后续重读同时失败时不会误报“已重新加载”。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("reports when an ambiguous mutation cannot be reconciled", async () => {
+    const service = createApplicationServiceClient("rust");
+    const createConnection = service.createProviderConnection.bind(service);
+    vi.spyOn(service, "createProviderConnection").mockImplementation(async (input) => {
+      await createConnection(input);
+      throw new Error("response lost after commit");
+    });
+    const { queryClient } = renderProviderSettings({ service });
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryState([
+          "provider-connections",
+          "faux-preview",
+          "rust",
+        ])?.status,
+      ).toBe("success"),
+    );
+    vi.spyOn(queryClient, "invalidateQueries").mockRejectedValue(
+      new Error("refresh failed"),
+    );
+
+    fireEvent.change(screen.getByLabelText("导入 New API 连接 JSON"), {
+      target: {
+        value:
+          '{"_type":"newapi_channel_conn","url":"https://api.example.invalid"}',
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    fireEvent.change(screen.getByLabelText("模型 ID"), {
+      target: { value: "unconfirmed-model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(
+      await screen.findByText(
+        "操作结果未确认，且无法重新加载最新 Provider 状态；请重新打开设置后核对",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "连接保存结果未确认；已重新加载最新状态，请核对后再试",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   /**
@@ -252,7 +391,7 @@ describe("ProviderSettings secret import boundary", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
-    await waitFor(() => expect(invalidationSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(invalidationSpy).toHaveBeenCalledTimes(4));
     expect(invalidationSpy).toHaveBeenNthCalledWith(
       1,
       {
@@ -273,20 +412,64 @@ describe("ProviderSettings secret import boundary", () => {
     );
     expect(
       invalidationSpy.mock.calls.some(
-        ([filters]) => filters?.queryKey?.[2] === "models",
+        ([filters]) =>
+          JSON.stringify(filters?.queryKey) ===
+          JSON.stringify(["application-service", "rust", "models"]),
       ),
     ).toBe(false);
 
     resolveInitialize();
     expect(await screen.findByText("已保存，预览已更新")).toBeInTheDocument();
-    expect(invalidationSpy).toHaveBeenNthCalledWith(
-      3,
+    expect(invalidationSpy).toHaveBeenCalledWith(
       {
         queryKey: ["application-service", "rust", "models"],
         refetchType: "active",
       },
       { throwOnError: true },
     );
+  });
+
+  /**
+   * 验证共享 Provider 状态变更会让另一套后端的握手与连接缓存立即过期。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("invalidates inactive backend provider snapshots after a mutation", async () => {
+    const { queryClient } = renderProviderSettings();
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryState([
+          "provider-connections",
+          "faux-preview",
+          "rust",
+        ])?.status,
+      ).toBe("success"),
+    );
+    const peerKeys = [
+      ["application-service", "dotnet", "initialize"],
+      ["provider-connections", "faux-preview", "dotnet"],
+    ] as const;
+    for (const peerKey of peerKeys) {
+      queryClient.setQueryData(peerKey, []);
+    }
+
+    fireEvent.change(screen.getByLabelText("导入 New API 连接 JSON"), {
+      target: {
+        value:
+          '{"_type":"newapi_channel_conn","url":"https://api.example.invalid"}',
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    fireEvent.change(screen.getByLabelText("模型 ID"), {
+      target: { value: "cross-backend-model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("已保存，预览已更新")).toBeInTheDocument();
+    for (const peerKey of peerKeys) {
+      expect(queryClient.getQueryState(peerKey)?.isInvalidated).toBe(true);
+    }
   });
 
   /**
@@ -331,7 +514,7 @@ describe("ProviderSettings secret import boundary", () => {
 
     expect(
       await screen.findByText(
-        "连接已保存，但最新 Provider 状态刷新失败；请重新打开设置",
+        "操作已被服务接受，但最新 Provider 状态刷新失败；请重新打开设置",
       ),
     ).toBeInTheDocument();
     expect(

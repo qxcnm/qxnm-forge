@@ -7,6 +7,7 @@ import type {
   BackendKind,
   InitializeResult,
   ModelDescriptor,
+  ProviderCatalogEntry,
   ProviderConnection,
   ProviderConnectionDeleteResult,
   ProviderConnectionInput,
@@ -146,6 +147,21 @@ const providerConnectionInputSchema = z
     logoAssetId: z.string().min(1).max(128).regex(PROVIDER_ID_PATTERN).nullable(),
     enabled: z.boolean(),
   })
+  .strict();
+
+const providerCatalogEntrySchema = z
+  .object({
+    templateId: z.string().max(128).regex(PROVIDER_ID_PATTERN),
+    displayName: z.string().min(1).max(64),
+    suggestedProviderId: z.string().max(128).regex(PROVIDER_ID_PATTERN),
+    apiFamily: z.literal("openai-completions"),
+    defaultBaseUrl: z.string().min(1).max(2_048).refine(isSafeProviderBaseUrl),
+    modelDiscovery: z.literal("openai-models"),
+    logoAssetId: z.string().min(1).max(128).regex(PROVIDER_ID_PATTERN).nullable(),
+  })
+  .strict();
+const providerCatalogListResultSchema = z
+  .object({ templates: z.array(providerCatalogEntrySchema).max(64) })
   .strict();
 
 const providerConnectionSchema = providerConnectionInputSchema
@@ -417,7 +433,7 @@ const toolResultSchema = z
   .strict();
 const approvalDecisionSchema = z
   .object({
-    choice: z.enum(["allow_once", "allow_session", "deny"]),
+    choice: z.enum(["allow_once", "deny"]),
     reason: z.string().max(4_096).optional(),
     ...optionalExtensions,
   })
@@ -429,7 +445,7 @@ const approvalResourceSchema = z
   })
   .strict();
 const approvalChoicesSchema = z
-  .array(z.enum(["allow_once", "allow_session", "deny"]))
+  .array(z.enum(["allow_once", "deny"]))
   .min(2)
   .refine(hasUniqueValues)
   .refine((choices) => choices.includes("deny"));
@@ -858,6 +874,24 @@ export class TauriApplicationServiceClient implements ApplicationServiceClient {
     approvalRespondResultSchema.parse(
       await this.#request("approval/respond", params),
     );
+  }
+
+  /**
+   * 从 daemon 冻结目录读取可配置 Provider 模板。
+   *
+   * 输出：只含非敏感配置建议；模板不表示模型当前可执行。
+   * 失败：响应包含未知、重复或不安全 URL 字段时拒绝。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public async listProviderCatalog(): Promise<readonly ProviderCatalogEntry[]> {
+    const providers = providerCatalogListResultSchema.parse(
+      await this.#request("providerCatalog/list", {}),
+    ).templates;
+    if (new Set(providers.map((provider) => provider.templateId)).size !== providers.length) {
+      throw new Error("Provider catalog contains duplicate template IDs");
+    }
+    return providers;
   }
 
   /**

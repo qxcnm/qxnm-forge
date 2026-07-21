@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter as _, Manager as _};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{Mutex, RwLock, oneshot};
 
 const MAX_FRAME_BYTES: usize = 1_048_576;
 const MAX_EVENT_BYTES: usize = 262_144;
@@ -77,6 +77,7 @@ impl BridgeError {
 
 pub(crate) struct ApplicationServiceBridge {
     connections: Mutex<BTreeMap<BackendKind, Arc<DaemonConnection>>>,
+    state_lifecycle: RwLock<()>,
 }
 
 impl Default for ApplicationServiceBridge {
@@ -87,7 +88,21 @@ impl Default for ApplicationServiceBridge {
     fn default() -> Self {
         Self {
             connections: Mutex::new(BTreeMap::new()),
+            state_lifecycle: RwLock::new(()),
         }
+    }
+}
+
+impl ApplicationServiceBridge {
+    /// 返回共享 application state 的 daemon 生命周期门禁。
+    ///
+    /// 输出：所有 Rust/.NET 普通请求共用的读锁，以及 Provider 状态变更共用的独占写锁。
+    /// 不变量：两套 daemon 指向同一 state root；Provider 快照变更持有写锁直到两套旧连接均被移除，普通请求持有读锁直到响应完成。
+    /// 失败：本方法不执行 I/O 且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn lifecycle(&self) -> &RwLock<()> {
+        &self.state_lifecycle
     }
 }
 
@@ -202,6 +217,7 @@ pub(crate) async fn application_service_initialize(
     state: tauri::State<'_, ApplicationServiceBridge>,
     backend: BackendKind,
 ) -> Result<Value, BridgeError> {
+    let _lifecycle = state.lifecycle().read().await;
     ensure_connection(&app, &state, backend)
         .await?
         .initialize_result()
@@ -212,7 +228,7 @@ pub(crate) async fn application_service_initialize(
 ///
 /// 输入：后端选择、固定 allowlist 方法和 JSON object params。
 /// 输出：对应 JSON-RPC success result。
-/// 不变量：WebView 不能指定 executable、argv、state path、workspace 或通用 shell。
+/// 不变量：WebView 不能指定 executable、argv、state path、workspace 或通用 shell；Provider 变更帧一旦发出，无论回执结果都丢弃共享 state root 的两套旧启动快照。
 /// 失败：移动平台、未知方法、连接、协议、daemon error 或超时均拒绝。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -229,19 +245,26 @@ pub(crate) async fn application_service_request(
             "application service method is not allowed",
         ));
     }
-    let connection = ensure_connection(&app, &state, backend).await?;
-    let result = connection.request(&method, params).await?;
-    if restarts_daemon_after_success(&method) {
-        state.connections.lock().await.remove(&backend);
+    validate_forwarded_request(&method, &params)?;
+    if invalidates_daemon_snapshot(&method) {
+        let _lifecycle = state.lifecycle().write().await;
+        let connection = ensure_connection(&app, &state, backend).await?;
+        let result = connection.request(&method, params).await;
+        state.connections.lock().await.clear();
+        return result;
     }
-    Ok(result)
+    let _lifecycle = state.lifecycle().read().await;
+    ensure_connection(&app, &state, backend)
+        .await?
+        .request(&method, params)
+        .await
 }
 
 /// 把 Provider credential 送到本地 daemon 的专用写入边界。
 ///
 /// 输入：后端、受限 Provider ID 与密码输入框中的 credential。
 /// 输出：只含 `credentialConfigured` 的脱敏结果。
-/// 不变量：此方法不属于通用 RPC allowlist；credential 不进入 argv、日志、Session 或返回值，成功后旧 daemon 必须退出。
+/// 不变量：此方法不属于通用 RPC allowlist；credential 不进入 argv、日志、Session 或返回值；写入帧发出后无论回执结果都丢弃共享 state root 的两套旧 daemon。
 /// 失败：Provider ID、credential、连接、CredentialStore 或协议失败时返回脱敏错误。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -258,22 +281,23 @@ pub(crate) async fn provider_credential_set(
             "provider credential input is invalid",
         ));
     }
+    let _lifecycle = state.lifecycle().write().await;
     let connection = ensure_connection(&app, &state, backend).await?;
     let result = connection
         .request(
             "providerCredentials/set",
             json!({"providerId":provider_id,"credential":credential}),
         )
-        .await?;
-    state.connections.lock().await.remove(&backend);
-    Ok(result)
+        .await;
+    state.connections.lock().await.clear();
+    result
 }
 
 /// 删除本地 daemon `CredentialStore` 中指定 Provider 的 credential。
 ///
 /// 输入：后端与受限 Provider ID。
 /// 输出：只含 `credentialConfigured:false` 的脱敏结果。
-/// 不变量：WebView 无法指定 state root、文件路径或任意 daemon 方法；成功后旧 daemon 必须退出。
+/// 不变量：WebView 无法指定 state root、文件路径或任意 daemon 方法；写入帧发出后无论回执结果都丢弃共享 state root 的两套旧 daemon。
 /// 失败：Provider ID、连接、CredentialStore 或协议失败时返回脱敏错误。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -289,15 +313,16 @@ pub(crate) async fn provider_credential_remove(
             "provider credential input is invalid",
         ));
     }
+    let _lifecycle = state.lifecycle().write().await;
     let connection = ensure_connection(&app, &state, backend).await?;
     let result = connection
         .request(
             "providerCredentials/remove",
             json!({"providerId":provider_id}),
         )
-        .await?;
-    state.connections.lock().await.remove(&backend);
-    Ok(result)
+        .await;
+    state.connections.lock().await.clear();
+    result
 }
 
 /// 在同一后端连接健康时复用，否则完成一次 fail-closed 重启与握手。
@@ -545,6 +570,7 @@ fn allowed_method(method: &str) -> bool {
             | "run/steer"
             | "run/followUp"
             | "approval/respond"
+            | "providerCatalog/list"
             | "session/get"
             | "session/branch/select"
             | "session/compact"
@@ -564,11 +590,43 @@ fn allowed_method(method: &str) -> bool {
     )
 }
 
-/// 判断成功响应后是否必须丢弃启动期 capability/model 快照。
+/// 在启动或失效 daemon 前验证转发请求一定能形成有界 JSON object 帧。
 ///
+/// 输入：已通过 allowlist 的方法和来自 `WebView` 的未信任 params。
+/// 输出：使用最大长度 host request ID 仍不超过帧上限时成功。
+/// 不变量：失败发生在获取生命周期写锁和启动 daemon 之前；本函数不读取状态或发送数据。
+/// 失败：params 不是对象、JSON 编码失败或完整帧超过 1 MiB 时返回脱敏 bridge 错误。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
-fn restarts_daemon_after_success(method: &str) -> bool {
+fn validate_forwarded_request(method: &str, params: &Value) -> Result<(), BridgeError> {
+    if !params.is_object() {
+        return Err(BridgeError::internal(
+            "application service request parameters are invalid",
+        ));
+    }
+    let frame = serde_json::to_vec(&json!({
+        "jsonrpc":"2.0",
+        "id":"desktop-18446744073709551615",
+        "method":method,
+        "params":params
+    }))
+    .map_err(|_| BridgeError::internal("application service request encoding failed"))?;
+    if frame.len() > MAX_FRAME_BYTES {
+        return Err(BridgeError::internal(
+            "application service request exceeds frame limit",
+        ));
+    }
+    Ok(())
+}
+
+/// 判断请求一旦发出是否必须丢弃启动期 capability/model 快照。
+///
+/// 输入：已通过 allowlist 的 application-service 方法；输出：是否属于 Provider 配置变更。
+/// 不变量：返回 true 的请求即使回执失败也必须失效旧快照，以覆盖 durable mutation 与响应丢失的歧义。
+/// 失败：本函数不执行 I/O 且不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn invalidates_daemon_snapshot(method: &str) -> bool {
     matches!(
         method,
         "providerConnections/create"
@@ -764,9 +822,11 @@ fn terminate_process_tree(process_id: u32) {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackendKind, allowed_method, daemon_arguments, restarts_daemon_after_success,
-        valid_credential, valid_provider_id,
+        ApplicationServiceBridge, BackendKind, MAX_FRAME_BYTES, allowed_method, daemon_arguments,
+        invalidates_daemon_snapshot, valid_credential, valid_provider_id,
+        validate_forwarded_request,
     };
+    use serde_json::json;
     use std::path::Path;
 
     /// 验证 `WebView` allowlist 不开放测试、terminal 或任意 shell 方法。
@@ -776,6 +836,7 @@ mod tests {
     #[test]
     fn method_allowlist_is_narrow() {
         assert!(allowed_method("agentProfiles/create"));
+        assert!(allowed_method("providerCatalog/list"));
         assert!(allowed_method("providerConnections/list"));
         assert!(allowed_method("providerConnections/discoverModels"));
         assert!(allowed_method("session/archive"));
@@ -792,13 +853,52 @@ mod tests {
     /// 邮箱：18272669457@163.com
     #[test]
     fn provider_mutations_restart_capability_snapshot() {
-        assert!(restarts_daemon_after_success("providerConnections/create"));
-        assert!(restarts_daemon_after_success("providerConnections/update"));
-        assert!(restarts_daemon_after_success(
+        assert!(invalidates_daemon_snapshot("providerConnections/create"));
+        assert!(invalidates_daemon_snapshot("providerConnections/update"));
+        assert!(invalidates_daemon_snapshot(
             "providerConnections/discoverModels"
         ));
-        assert!(!restarts_daemon_after_success("providerConnections/list"));
-        assert!(!restarts_daemon_after_success("session/archive"));
+        assert!(!invalidates_daemon_snapshot("providerConnections/list"));
+        assert!(!invalidates_daemon_snapshot("session/archive"));
+    }
+
+    /// 验证非法或超限 mutation params 在进入共享生命周期门禁前失败关闭。
+    ///
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn forwarded_request_is_validated_before_snapshot_invalidation() {
+        assert!(validate_forwarded_request("providerConnections/create", &json!({})).is_ok());
+        assert!(validate_forwarded_request("providerConnections/create", &json!([])).is_err());
+        assert!(
+            validate_forwarded_request(
+                "providerConnections/create",
+                &json!({"value":"x".repeat(MAX_FRAME_BYTES)})
+            )
+            .is_err()
+        );
+    }
+
+    /// 验证两套后端的普通请求共享读门禁，并共同阻止 Provider 状态变更。
+    ///
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn shared_state_lifecycle_gates_snapshot_mutations() {
+        let bridge = ApplicationServiceBridge::default();
+        let first_reader = bridge
+            .lifecycle()
+            .try_read()
+            .expect("first backend should acquire a shared lifecycle guard");
+        let second_reader = bridge
+            .lifecycle()
+            .try_read()
+            .expect("second backend should share the lifecycle read guard");
+
+        assert!(bridge.lifecycle().try_write().is_err());
+        drop(second_reader);
+        drop(first_reader);
+        assert!(bridge.lifecycle().try_write().is_ok());
     }
 
     /// 验证专用 credential command 拒绝协议注入与非法 Provider ID。

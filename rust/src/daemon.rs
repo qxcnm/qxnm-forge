@@ -21,6 +21,7 @@ use crate::protocol::{
     SessionGetParams, is_valid_request_id, parse_strict_request,
 };
 use crate::provider::{FauxProvider, FauxScenario};
+use crate::provider_catalog::{ProviderCatalog, ProviderCatalogListParams};
 use crate::provider_connection::{
     CustomProviderConnectionRuntime, ProviderConnectionsCreateParams,
     ProviderConnectionsDeleteParams, ProviderConnectionsDiscoverModelsParams,
@@ -107,6 +108,7 @@ pub struct Daemon {
     conformance_mode: bool,
     provider_identity: Option<ProviderIdentityAdvertisement>,
     provider_route: Option<ProviderRouteSnapshot>,
+    provider_catalog: ProviderCatalog,
     provider_connections: CustomProviderConnectionRuntime,
     session_lifecycle: SessionLifecycleService,
     terminal: TerminalManager,
@@ -120,10 +122,10 @@ impl Daemon {
     ///
     /// 输入：完整 Agent、faux provider、Profile/Provider connection services、互斥 identity/route、
     /// 自定义 Provider 启动快照和 CLI 选定 workspace。
-    /// 输出：初始化前的连接状态；terminal 只有 conformance + fixture-only 双门控时可用。
-    /// 不变量：identity 广告不注册 adapter；canonical/custom 广告与 Agent adapter 来自同一启动快照；构造不启动 Provider、工具或 PTY；
+    /// 输出：初始化前的连接状态及冻结 Provider 配置模板；terminal 只有 conformance + fixture-only 双门控时可用。
+    /// 不变量：identity 广告不注册 adapter；canonical/custom 广告与 Agent adapter 来自同一启动快照；模板不读取 credential 或扩大 registry；构造不启动 Provider、工具或 PTY；
     /// `QXNM_FORGE_CONFORMANCE=1` 单独不授权 terminal。
-    /// 失败：terminal workspace 无法 canonicalize 时返回结构化参数错误。
+    /// 失败：terminal workspace 无法 canonicalize 或冻结 Provider 目录无效时返回脱敏结构化错误。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     pub fn new(
@@ -150,6 +152,7 @@ impl Daemon {
             conformance_mode,
             provider_identity,
             provider_route,
+            provider_catalog: ProviderCatalog::from_frozen()?,
             provider_connections,
             session_lifecycle,
             terminal,
@@ -445,6 +448,10 @@ impl Daemon {
                     json!({"connections":self.provider_connections.service().list()?}),
                     None,
                 ))
+            }
+            "providerCatalog/list" => {
+                let _: ProviderCatalogListParams = parse_params(request.params)?;
+                Ok((json!({"templates":self.provider_catalog.templates()}), None))
             }
             "providerConnections/create" => {
                 let params: ProviderConnectionsCreateParams = parse_params(request.params)?;
@@ -923,6 +930,7 @@ impl Daemon {
             "providerCredentials/set",
             "providerCredentials/remove",
             "models/list",
+            "providerCatalog/list",
             "run/start",
             "run/cancel",
             "run/steer",

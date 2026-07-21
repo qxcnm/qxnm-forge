@@ -1,0 +1,184 @@
+{
+  "templates": [
+    {
+      "templateId": "ant-ling",
+      "displayName": "Ant Ling",
+      "suggestedProviderId": "custom-ant-ling",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.ant-ling.com/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "cerebras",
+      "displayName": "Cerebras",
+      "suggestedProviderId": "custom-cerebras",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.cerebras.ai/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "deepseek",
+      "displayName": "DeepSeek",
+      "suggestedProviderId": "custom-deepseek",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.deepseek.com",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "fireworks",
+      "displayName": "Fireworks AI",
+      "suggestedProviderId": "custom-fireworks",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.fireworks.ai/inference/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "groq",
+      "displayName": "Groq",
+      "suggestedProviderId": "custom-groq",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.groq.com/openai/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "huggingface",
+      "displayName": "Hugging Face",
+      "suggestedProviderId": "custom-huggingface",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://router.huggingface.co/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "moonshotai",
+      "displayName": "Moonshot AI",
+      "suggestedProviderId": "custom-moonshotai",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.moonshot.ai/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "moonshotai-cn",
+      "displayName": "Moonshot AI (China)",
+      "suggestedProviderId": "custom-moonshotai-cn",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.moonshot.cn/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "nvidia",
+      "displayName": "NVIDIA NIM",
+      "suggestedProviderId": "custom-nvidia",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://integrate.api.nvidia.com/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "opencode",
+      "displayName": "OpenCode",
+      "suggestedProviderId": "custom-opencode",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://opencode.ai/zen/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "opencode-go",
+      "displayName": "OpenCode Go",
+      "suggestedProviderId": "custom-opencode-go",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://opencode.ai/zen/go/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "openrouter",
+      "displayName": "OpenRouter",
+      "suggestedProviderId": "custom-openrouter",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://openrouter.ai/api/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "together",
+      "displayName": "Together AI",
+      "suggestedProviderId": "custom-together",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.together.ai/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "xai",
+      "displayName": "xAI",
+      "suggestedProviderId": "custom-xai",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.x.ai/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "xiaomi",
+      "displayName": "Xiaomi MiMo",
+      "suggestedProviderId": "custom-xiaomi",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.xiaomimimo.com/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "xiaomi-token-plan-ams",
+      "displayName": "Xiaomi MiMo Token Plan (Amsterdam)",
+      "suggestedProviderId": "custom-xiaomi-token-plan-ams",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://token-plan-ams.xiaomimimo.com/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "xiaomi-token-plan-cn",
+      "displayName": "Xiaomi MiMo Token Plan (China)",
+      "suggestedProviderId": "custom-xiaomi-token-plan-cn",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "xiaomi-token-plan-sgp",
+      "displayName": "Xiaomi MiMo Token Plan (Singapore)",
+      "suggestedProviderId": "custom-xiaomi-token-plan-sgp",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://token-plan-sgp.xiaomimimo.com/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "zai",
+      "displayName": "Z.AI",
+      "suggestedProviderId": "custom-zai",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "zai-coding-cn",
+      "displayName": "Z.AI Coding (China)",
+      "suggestedProviderId": "custom-zai-coding-cn",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    }
+  ]
+}

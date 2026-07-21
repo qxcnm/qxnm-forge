@@ -18,7 +18,7 @@ const PENDING_APPROVAL: PendingApproval = {
     risk: "medium",
     reason: "需要更新工作区文件",
     resources: [{ kind: "path", value: "notes.txt" }],
-    choices: ["allow_once", "allow_session", "deny"],
+    choices: ["allow_once", "deny"],
     expiresAt: "2099-07-21T10:00:00Z",
   },
 };
@@ -44,6 +44,7 @@ describe("ApprovalRequestCard", () => {
       <ApprovalRequestCard
         approval={PENDING_APPROVAL}
         responseAvailable
+        snapshotReady
         interactionLocked={false}
         submittingChoice={null}
         decisionAccepted={false}
@@ -75,6 +76,7 @@ describe("ApprovalRequestCard", () => {
       <ApprovalRequestCard
         approval={PENDING_APPROVAL}
         responseAvailable
+        snapshotReady
         interactionLocked
         submittingChoice={null}
         decisionAccepted={false}
@@ -86,7 +88,6 @@ describe("ApprovalRequestCard", () => {
     );
 
     expect(screen.getByRole("button", { name: /允许一次/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /本会话允许/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /拒绝/ })).toBeDisabled();
   });
 
@@ -103,6 +104,7 @@ describe("ApprovalRequestCard", () => {
       <ApprovalRequestCard
         approval={PENDING_APPROVAL}
         responseAvailable
+        snapshotReady
         interactionLocked={false}
         submittingChoice={null}
         decisionAccepted={false}

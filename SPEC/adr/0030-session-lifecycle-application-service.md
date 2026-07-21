@@ -31,6 +31,16 @@ Session 根。
 Provider、credential、工具参数或 journal 正文。标题来自首条 user 文本的有界单行投影；项目只取
 header workspace 的安全 basename。损坏 journal 可以显示固定占位摘要，但 mutation 必须拒绝。
 
+可选 `status` 只从 journal 的完整 LF durable 前缀重建。`run.accepted` 到同 `runId` 的
+`run.terminal` 之间为活动 run；至少一个活动 run 时为 `active`。活动 run 的
+`approval.requested` 到同 `(runId,approvalId)` 的 `approval.resolved` 之间为未决审批；只要还有
+一个未决审批，`approval` 优先于 `active`。解决其中一个请求不能清除其他未决请求；全部解决后
+恢复为 `active`，匹配的 terminal 后省略 `status`。已经 terminal 的 `runId` 再次 accepted、重复或
+错配审批、无活动 run 的审批、仍有未决审批却出现 terminal 都不能投影为可操作状态，必须把该
+Session 降级为固定损坏摘要并省略 `status`。未终止尾部不参与投影。`session/archive` 与
+`session/restore` 返回的摘要使用同一扫描结果；该状态只用于列表导航，审批详情仍必须通过
+`session/get` 的 durable 事件重建。
+
 归档状态使用 `stateRoot/session-lifecycle/archive-state.json` 的严格、有界、排序 ID 集合，并通过
 专用跨进程锁和同目录原子替换发布。归档与恢复不改写 portable journal。未知、损坏、活动中、
 持有 pending faux 或存在另一 writer 的 Session 必须失败关闭。

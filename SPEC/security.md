@@ -50,7 +50,8 @@ event containing:
   redacted;
 - affected paths/origins/executable;
 - reason, risk class, and requested scope;
-- expiry and choices (`allow_once`, optionally bounded `allow_session`, `deny`).
+- expiry and choices (`allow_once`, `deny`). v0.1 does not define a session-scoped
+  approval grant; persistent policy changes require a separate management interface.
 
 An approval is bound to an exact normalized operation hash. Mutation of
 arguments, resolved path, executable, environment, or workspace invalidates it.

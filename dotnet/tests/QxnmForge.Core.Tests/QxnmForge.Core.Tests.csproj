@@ -45,5 +45,8 @@
     <None Include="../../../SPEC/models.v1.json"
           Link="Fixtures/provider-identity/models.v1.json"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../CONFORMANCE/fixtures/provider-catalog/configuration-templates.json"
+          Link="Fixtures/provider-catalog/configuration-templates.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

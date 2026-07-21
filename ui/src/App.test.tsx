@@ -96,9 +96,7 @@ describe("QXNM Forge workspace", () => {
   it("renders and resolves a pending tool approval", async () => {
     renderApp();
 
-    fireEvent.click(
-      (await screen.findAllByRole("button", { name: /检查工具审批流程/ }))[0],
-    );
+    fireEvent.click(await screen.findByRole("button", { name: /待审批请求/ }));
 
     expect(
       await screen.findByRole("heading", { name: "需要审批" }),

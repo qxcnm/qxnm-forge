@@ -4,6 +4,7 @@ import type {
   BackendKind,
   InitializeResult,
   ModelDescriptor,
+  ProviderCatalogEntry,
   ProviderConnection,
   ProviderConnectionDeleteResult,
   ProviderConnectionInput,
@@ -15,6 +16,10 @@ import type {
   SessionSnapshot,
   SessionSummary,
 } from "@/types/application-service";
+import {
+  getApprovalIdentityKey,
+  projectPendingApprovals,
+} from "@/features/approvals/pending-approvals";
 import { createFauxAgentProfileService } from "@/lib/faux-agent-profile-service";
 import { getModelRouteKey } from "@/lib/model-route";
 import type {
@@ -39,6 +44,7 @@ const SHARED_METHODS = [
   "agentProfiles/create",
   "agentProfiles/update",
   "agentProfiles/delete",
+  "providerCatalog/list",
   "providerConnections/list",
   "providerConnections/create",
   "providerConnections/update",
@@ -64,6 +70,37 @@ const FAUX_MODEL_DESCRIPTOR: ModelDescriptor = {
   supportsReasoning: false,
   supportsTools: true,
 };
+
+const PREVIEW_PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
+  ["ant-ling", "Ant Ling", "https://api.ant-ling.com/v1"],
+  ["cerebras", "Cerebras", "https://api.cerebras.ai/v1"],
+  ["deepseek", "DeepSeek", "https://api.deepseek.com"],
+  ["fireworks", "Fireworks AI", "https://api.fireworks.ai/inference/v1"],
+  ["groq", "Groq", "https://api.groq.com/openai/v1"],
+  ["huggingface", "Hugging Face", "https://router.huggingface.co/v1"],
+  ["moonshotai", "Moonshot AI", "https://api.moonshot.ai/v1"],
+  ["moonshotai-cn", "Moonshot AI (China)", "https://api.moonshot.cn/v1"],
+  ["nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1"],
+  ["opencode", "OpenCode", "https://opencode.ai/zen/v1"],
+  ["opencode-go", "OpenCode Go", "https://opencode.ai/zen/go/v1"],
+  ["openrouter", "OpenRouter", "https://openrouter.ai/api/v1"],
+  ["together", "Together AI", "https://api.together.ai/v1"],
+  ["xai", "xAI", "https://api.x.ai/v1"],
+  ["xiaomi", "Xiaomi MiMo", "https://api.xiaomimimo.com/v1"],
+  ["xiaomi-token-plan-ams", "Xiaomi MiMo Token Plan (Amsterdam)", "https://token-plan-ams.xiaomimimo.com/v1"],
+  ["xiaomi-token-plan-cn", "Xiaomi MiMo Token Plan (China)", "https://token-plan-cn.xiaomimimo.com/v1"],
+  ["xiaomi-token-plan-sgp", "Xiaomi MiMo Token Plan (Singapore)", "https://token-plan-sgp.xiaomimimo.com/v1"],
+  ["zai", "Z.AI", "https://api.z.ai/api/coding/paas/v4"],
+  ["zai-coding-cn", "Z.AI Coding (China)", "https://open.bigmodel.cn/api/coding/paas/v4"],
+].map(([providerId, displayName, defaultBaseUrl]) => ({
+  templateId: providerId,
+  displayName,
+  suggestedProviderId: `custom-${providerId}`,
+  apiFamily: "openai-completions" as const,
+  defaultBaseUrl,
+  modelDiscovery: "openai-models" as const,
+  logoAssetId: null,
+}));
 
 const DEFAULT_SESSIONS: readonly SessionSummary[] = [
   {
@@ -513,6 +550,18 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
   }
 
   /**
+   * 返回与冻结后端目录同形但不表示真实连通性的浏览器预览模板。
+   *
+   * 不变量：这里只复制非敏感配置建议，不广告模型或执行可用性。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public async listProviderCatalog(): Promise<readonly ProviderCatalogEntry[]> {
+    await wait(40);
+    return PREVIEW_PROVIDER_CATALOG.map((provider) => ({ ...provider }));
+  }
+
+  /**
    * 接受一次预览运行并返回临时引用。
    *
    * 输入：非空 prompt 与服务端模型三元标识。
@@ -578,7 +627,12 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
     const alreadyResolved = snapshot?.events.some(
       (event) =>
         event.type === "approval.resolved" &&
-        event.data.approvalId === approvalId,
+        typeof event.data.approvalId === "string" &&
+        getApprovalIdentityKey(
+          event.sessionId,
+          event.runId,
+          event.data.approvalId,
+        ) === getApprovalIdentityKey(sessionId, runId, approvalId),
     );
     const offeredChoices = (
       requestedEvent?.data.approval as { choices?: unknown } | undefined
@@ -601,10 +655,9 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
     }
 
     const nextSequence = snapshot.latestSeq + 1;
-    this.#state.sessionSnapshots.set(sessionId, {
+    const resolvedSnapshot: SessionSnapshot = {
       ...snapshot,
       latestSeq: nextSequence,
-      activeRunId: null,
       events: [
         ...snapshot.events,
         {
@@ -617,13 +670,22 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
           data: { approvalId, decision, resolutionSource: "client" },
         },
       ],
-    });
+    };
+    const remainingApprovals = projectPendingApprovals(resolvedSnapshot);
+    const nextSnapshot = {
+      ...resolvedSnapshot,
+      activeRunId: remainingApprovals[0]?.runId ?? null,
+    };
+    this.#state.sessionSnapshots.set(sessionId, nextSnapshot);
     const session = this.#state.sessions.get(sessionId);
     if (session) {
       this.#state.sessions.set(sessionId, {
-        ...session,
-        status: "active",
+        sessionId: session.sessionId,
+        title: session.title,
+        project: session.project,
         updatedAt: new Date().toISOString(),
+        archived: session.archived,
+        ...(remainingApprovals.length > 0 ? { status: "approval" as const } : {}),
       });
     }
     await wait(80);

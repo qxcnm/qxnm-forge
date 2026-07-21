@@ -9,6 +9,7 @@ import {
   Pin,
   Puzzle,
   Settings,
+  ShieldAlert,
   SquareTerminal,
   Trash2,
 } from "lucide-react";
@@ -187,6 +188,7 @@ export function WorkspaceSidebar({
   const { t } = useTranslation();
   const activeSessionId = useWorkspaceUiStore((state) => state.activeSessionId);
   const activeView = useWorkspaceUiStore((state) => state.activeView);
+  const approvalSessions = sessions.filter((session) => session.status === "approval");
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-muted/70 text-foreground/80">
@@ -222,6 +224,26 @@ export function WorkspaceSidebar({
           <CirclePlus className="size-4 text-muted-foreground" aria-hidden="true" />
           {t("navigation.newTask")}
         </Button>
+        {approvalSessions.length > 0 ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className={cn(
+              "h-8 w-full justify-start gap-2 px-2 text-[12px] font-normal text-foreground/80 hover:bg-accent",
+              activeView === "conversation" &&
+                approvalSessions.some((session) => session.sessionId === activeSessionId) &&
+                "bg-accent text-accent-foreground",
+            )}
+            onClick={() => onSelectSession(approvalSessions[0].sessionId)}
+            disabled={navigationDisabled}
+          >
+            <ShieldAlert className="size-4 text-amber-600" aria-hidden="true" />
+            <span className="min-w-0 flex-1 text-left">{t("navigation.pendingApprovals")}</span>
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[9px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+              {approvalSessions.length}
+            </span>
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="ghost"

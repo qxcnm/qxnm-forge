@@ -59,6 +59,175 @@ public sealed class SessionLifecycleServiceTests
     }
 
     /// <summary>
+    /// 功能：确认列表从 committed journal 重建多审批状态，并对重复 resolution 固定降级。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    [Fact]
+    public async Task ListProjectsDurableRunAndApprovalStatus()
+    {
+        using var temporary = new TemporaryDirectory();
+        var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+        var stateRoot = Path.Combine(temporary.Path, "state");
+        var sessionsRoot = Path.Combine(stateRoot, "sessions");
+        var journalPath = await CreateSessionAsync(
+            sessionsRoot,
+            "session-approval",
+            workspace,
+            "Approve durable write");
+        await using var repository = new SessionRepository(sessionsRoot, workspace);
+        var service = new SessionLifecycleService(stateRoot, workspace, repository);
+        await using var journal = await PortableSessionJournal.OpenAsync(
+            sessionsRoot,
+            "session-approval",
+            workspace,
+            CancellationToken.None);
+        string[] approvalChoices = ["allow_once", "deny"];
+
+        await journal.AppendAsync(
+            "run.accepted",
+            new
+            {
+                RunId = "run-approval",
+                InputMessageId = "message-session-approval",
+                Provider = new { Id = "faux", ModelId = "faux-v1" },
+            },
+            CancellationToken.None);
+        Assert.Equal("active", Assert.Single(service.List()).Status);
+
+        await journal.AppendAsync(
+            "approval.requested",
+            new
+            {
+                RunId = "run-approval",
+                Approval = new
+                {
+                    ApprovalId = "approval-1",
+                    ToolCallId = "tool-call-1",
+                    Operation = "file.write",
+                    Arguments = new { Path = "approval.txt" },
+                    OperationHash = new string('a', 64),
+                    Risk = "medium",
+                    Resources = new[] { new { Kind = "path", Value = "approval.txt" } },
+                    Choices = approvalChoices,
+                    ExpiresAt = "2099-07-22T00:00:00Z",
+                },
+            },
+            CancellationToken.None);
+        await journal.AppendAsync(
+            "approval.requested",
+            new
+            {
+                RunId = "run-approval",
+                Approval = new
+                {
+                    ApprovalId = "approval-2",
+                    ToolCallId = "tool-call-2",
+                    Operation = "file.write",
+                    Arguments = new { Path = "approval-two.txt" },
+                    OperationHash = new string('b', 64),
+                    Risk = "medium",
+                    Resources = new[] { new { Kind = "path", Value = "approval-two.txt" } },
+                    Choices = approvalChoices,
+                    ExpiresAt = "2099-07-22T00:00:00Z",
+                },
+            },
+            CancellationToken.None);
+        Assert.Equal("approval", Assert.Single(service.List()).Status);
+
+        await journal.AppendAsync(
+            "approval.resolved",
+            new
+            {
+                RunId = "run-approval",
+                ApprovalId = "approval-1",
+                Decision = new { Choice = "deny" },
+                ResolutionSource = "client",
+            },
+            CancellationToken.None);
+        Assert.Equal("approval", Assert.Single(service.List()).Status);
+
+        await journal.AppendAsync(
+            "approval.resolved",
+            new
+            {
+                RunId = "run-approval",
+                ApprovalId = "approval-2",
+                Decision = new { Choice = "deny" },
+                ResolutionSource = "client",
+            },
+            CancellationToken.None);
+        Assert.Equal("active", Assert.Single(service.List()).Status);
+
+        await journal.AppendAsync(
+            "run.terminal",
+            new { RunId = "run-approval", Status = "cancelled" },
+            CancellationToken.None);
+        Assert.Null(Assert.Single(service.List()).Status);
+        await journal.DisposeAsync();
+
+        await AppendRawRecordAsync(
+            journalPath,
+            "session-approval",
+            "approval.resolved",
+            "record-duplicate-resolution",
+            new
+            {
+                runId = "run-approval",
+                approvalId = "approval-2",
+                decision = new { choice = "deny" },
+                resolutionSource = "client",
+            });
+        var corrupt = Assert.Single(service.List());
+        Assert.Equal("会话数据不可用", corrupt.Title);
+        Assert.Equal("未知项目", corrupt.Project);
+        Assert.Null(corrupt.Status);
+
+        var reusedJournalPath = await CreateSessionAsync(
+            sessionsRoot,
+            "session-reused-run",
+            workspace,
+            "Reject reused run id");
+        await using (var reusedJournal = await PortableSessionJournal.OpenAsync(
+                         sessionsRoot,
+                         "session-reused-run",
+                         workspace,
+                         CancellationToken.None))
+        {
+            await reusedJournal.AppendAsync(
+                "run.accepted",
+                new
+                {
+                    RunId = "run-reused",
+                    InputMessageId = "message-session-reused-run",
+                    Provider = new { Id = "faux", ModelId = "faux-v1" },
+                },
+                CancellationToken.None);
+            await reusedJournal.AppendAsync(
+                "run.terminal",
+                new { RunId = "run-reused", Status = "cancelled" },
+                CancellationToken.None);
+        }
+
+        await AppendRawRecordAsync(
+            reusedJournalPath,
+            "session-reused-run",
+            "run.accepted",
+            "record-reused-run",
+            new
+            {
+                runId = "run-reused",
+                inputMessageId = "message-session-reused-run",
+                provider = new { id = "faux", modelId = "faux-v1" },
+            });
+        var reused = Assert.Single(
+            service.List(),
+            static summary => summary.SessionId == "session-reused-run");
+        Assert.Equal("会话数据不可用", reused.Title);
+        Assert.Null(reused.Status);
+    }
+
+    /// <summary>
     /// 功能：确认 archive/restore 跨服务持久化，且两种 mutation 不改变 journal 任一字节。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -515,6 +684,41 @@ public sealed class SessionLifecycleServiceTests
         }
 
         return journalPath;
+    }
+
+    /// <summary>
+    /// 功能：在关闭 writer 后追加 envelope 合法的原始记录，用于验证列表对语义损坏 journal 的降级。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="journalPath">目标测试 journal。</param>
+    /// <param name="sessionId">record 所属 Session ID。</param>
+    /// <param name="kind">已冻结的 record kind。</param>
+    /// <param name="recordId">本记录唯一 opaque ID。</param>
+    /// <param name="data">保持协议字段大小写的 record data。</param>
+    /// <returns>记录完成追加后的异步操作。</returns>
+    private static async Task AppendRawRecordAsync(
+        string journalPath,
+        string sessionId,
+        string kind,
+        string recordId,
+        object data)
+    {
+        var lines = await File.ReadAllLinesAsync(journalPath, Encoding.UTF8);
+        using var lastRecord = JsonDocument.Parse(lines[^1]);
+        var record = JsonSerializer.Serialize(
+            new
+            {
+                schemaVersion = "0.1",
+                kind,
+                recordId,
+                sessionId,
+                seq = lastRecord.RootElement.GetProperty("seq").GetInt64() + 1,
+                parentId = lastRecord.RootElement.GetProperty("recordId").GetString(),
+                time = "2099-07-22T00:00:00Z",
+                data,
+            });
+        await File.AppendAllTextAsync(journalPath, record + "\n", Encoding.UTF8);
     }
 
     /// <summary>

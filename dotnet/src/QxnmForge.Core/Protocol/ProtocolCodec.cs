@@ -424,6 +424,19 @@ public static class ProtocolCodec
     }
 
     /// <summary>
+    /// 功能：严格验证 providerCatalog/list 只接受空 params。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">必须是不含字段的 JSON object。</param>
+    /// <remarks>不变量：解析不读取 Provider 环境、credential、网络或目录内容。</remarks>
+    /// <exception cref="ProtocolRequestException">包含任何未知字段。</exception>
+    public static void ParseProviderCatalogList(JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters);
+    }
+
+    /// <summary>
     /// 功能：严格验证 providerConnections/list 只接受空 params。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com

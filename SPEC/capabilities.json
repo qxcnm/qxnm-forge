@@ -6,7 +6,7 @@
     "name": "高宏顺",
     "email": "18272669457@163.com"
   },
-  "updatedAt": "2026-07-21T16:06:03Z",
+  "updatedAt": "2026-07-21T17:39:29Z",
   "defaultStatus": "unsupported",
   "implementations": [
     "dotnet",
@@ -43,6 +43,7 @@
     "provider.sponsored_catalog",
     "provider.credential_store",
     "provider.custom_connection",
+    "provider.template_catalog",
     "provider.sponsored_route",
     "agent.profile_crud",
     "agent.profile_run_binding",
@@ -3347,6 +3348,43 @@
         "CONFORMANCE/fixtures/golden/sponsored-catalog.verify.json"
       ],
       "notes": "已实现签名发布、HTTPS 获取、内容寻址缓存、离线回退、回滚/同版本冲突拒绝、推广披露与 Rust↔.NET 双向签名兼容。.NET 单测以注入 HTTP 验证 remote→offline cache；共同 runner 尚未覆盖两端真实 HTTPS 网络门禁，因此保持 implemented，不是公开支持声明；目录也不会自动注册可执行 route。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.template_catalog"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/provider_catalog.rs",
+        "rust/src/daemon.rs",
+        "rust/tests/provider_catalog_rpc.rs",
+        "SPEC/adr/0031-brand-neutral-provider-template-catalog.md",
+        "SPEC/schemas/provider-catalog.schema.json",
+        "CONFORMANCE/fixtures/provider-catalog/configuration-templates.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": "已从已验证冻结目录派生 20 项只读 OpenAI-compatible 配置模板，按 templateId 排序并通过真实 stdio daemon 独立测试；调用不读取 credential、不联网、不修改状态，也不扩大可执行 Provider 广告。尚无共同双实现黑盒 runner，因此保持 implemented。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "provider.template_catalog"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/ProviderCatalogService.cs",
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/ProviderCatalogServiceTests.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/ProviderCatalogDaemonTests.cs",
+        "SPEC/adr/0031-brand-neutral-provider-template-catalog.md",
+        "SPEC/schemas/provider-catalog.schema.json",
+        "CONFORMANCE/fixtures/provider-catalog/configuration-templates.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": "已从已验证冻结目录派生 20 项只读 OpenAI-compatible 配置模板，按 templateId ordinal 排序并通过服务与 stdio daemon 独立测试；调用不读取 credential、不联网、不修改状态，也不扩大可执行 Provider 广告。尚无共同双实现黑盒 runner，因此保持 implemented。"
     },
     {
       "implementation": "rust",

@@ -36,7 +36,7 @@ const approvalRequestSchema = z
       )
       .max(128),
     choices: z
-      .array(z.enum(["allow_once", "allow_session", "deny"]))
+      .array(z.enum(["allow_once", "deny"]))
       .min(2)
       .refine((choices) => new Set(choices).size === choices.length)
       .refine((choices) => choices.includes("deny")),
@@ -46,11 +46,27 @@ const approvalRequestSchema = z
   .strict();
 
 /**
+ * 生成审批在 Session 与 run 范围内的无歧义身份键。
+ *
+ * 输入：已经通过 wire schema 校验的 Session、run 与 approval ID；输出：仅用于客户端内存索引的复合键。
+ * 不变量：三个协议 ID 都不允许 NUL，因此不同三元组不会发生拼接碰撞；键不进入协议或持久化。
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+export function getApprovalIdentityKey(
+  sessionId: string,
+  runId: string,
+  approvalId: string,
+): string {
+  return `${sessionId}\u0000${runId}\u0000${approvalId}`;
+}
+
+/**
  * 从已经校验的 durable Session 事件中重建尚未决议的审批集合。
  *
  * 输入：`session/get` 返回的完整事件快照；输出：按请求顺序排列的未决审批。
- * 不变量：只有结构完整的 `approval.requested` 才进入视图，任何后续同 ID
- * `approval.resolved` 都会移除它；本函数不根据可见文案推断权限。
+ * 不变量：只有结构完整的 `approval.requested` 才进入视图，后续相同
+ * `(sessionId,runId,approvalId)` 的 `approval.resolved` 才会移除它；本函数不根据可见文案推断权限。
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
@@ -66,7 +82,7 @@ export function projectPendingApprovals(
         continue;
       }
       const request: ApprovalRequest = parsed.data;
-      pending.set(request.approvalId, {
+      pending.set(getApprovalIdentityKey(event.sessionId, event.runId, request.approvalId), {
         sessionId: event.sessionId,
         runId: event.runId,
         ...(event.turnId ? { turnId: event.turnId } : {}),
@@ -79,7 +95,7 @@ export function projectPendingApprovals(
     if (event.type === "approval.resolved") {
       const approvalId = event.data.approvalId;
       if (typeof approvalId === "string") {
-        pending.delete(approvalId);
+        pending.delete(getApprovalIdentityKey(event.sessionId, event.runId, approvalId));
       }
     }
   }

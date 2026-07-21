@@ -23,6 +23,18 @@ const PENDING_APPROVAL: PendingApproval = {
   },
 };
 
+const COLLIDING_APPROVAL: PendingApproval = {
+  ...PENDING_APPROVAL,
+  runId: "run-colliding",
+  request: {
+    ...PENDING_APPROVAL.request,
+    toolCallId: "tool-call-colliding",
+    operation: "process.exec",
+    arguments: { executable: "formatter" },
+    operationHash: "b".repeat(64),
+  },
+};
+
 describe("Conversation", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("zh-CN");
@@ -61,6 +73,7 @@ describe("Conversation", () => {
         onRetryHistory={vi.fn()}
         pendingApprovals={[]}
         approvalResponseAvailable
+        approvalSnapshotReady
         approvalInteractionLocked={false}
         approvalSubmission={null}
         approvalError={null}
@@ -98,6 +111,7 @@ describe("Conversation", () => {
         onRetryHistory={onRetryHistory}
         pendingApprovals={[]}
         approvalResponseAvailable
+        approvalSnapshotReady
         approvalInteractionLocked={false}
         approvalSubmission={null}
         approvalError={null}
@@ -134,6 +148,7 @@ describe("Conversation", () => {
         onRetryHistory={vi.fn()}
         pendingApprovals={[PENDING_APPROVAL]}
         approvalResponseAvailable
+        approvalSnapshotReady
         approvalInteractionLocked={false}
         approvalSubmission={null}
         approvalError={null}
@@ -150,5 +165,52 @@ describe("Conversation", () => {
     expect(transcript.nextElementSibling).toBe(approvalDock);
     expect(within(approvalDock).getByRole("button", { name: /允许一次/ })).toBeVisible();
     expect(within(approvalDock).getByRole("button", { name: /拒绝/ })).toBeVisible();
+  });
+
+  /**
+   * 验证相同 approvalId 的不同 run 只在目标卡片显示提交进度和失败信息。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("scopes approval submission and errors to the full identity", () => {
+    render(
+      <Conversation
+        backendLabel="Rust"
+        messages={[]}
+        busy={false}
+        showFixture={false}
+        historyLoading={false}
+        historyError={false}
+        onRetryHistory={vi.fn()}
+        pendingApprovals={[PENDING_APPROVAL, COLLIDING_APPROVAL]}
+        approvalResponseAvailable
+        approvalSnapshotReady
+        approvalInteractionLocked={false}
+        approvalSubmission={{
+          sessionId: PENDING_APPROVAL.sessionId,
+          runId: PENDING_APPROVAL.runId,
+          approvalId: PENDING_APPROVAL.request.approvalId,
+          choice: "allow_once",
+        }}
+        approvalError={{
+          sessionId: COLLIDING_APPROVAL.sessionId,
+          runId: COLLIDING_APPROVAL.runId,
+          approvalId: COLLIDING_APPROVAL.request.approvalId,
+          message: "second request failed",
+        }}
+        approvalConfirmations={[]}
+        onRespondToApproval={vi.fn()}
+        onRetryApprovalRefresh={vi.fn()}
+      />,
+    );
+
+    const allowButtons = screen.getAllByRole("button", { name: /允许一次/ });
+    expect(allowButtons).toHaveLength(2);
+    expect(allowButtons[0]?.querySelector(".animate-spin")).not.toBeNull();
+    expect(allowButtons[1]?.querySelector(".animate-spin")).toBeNull();
+    const error = screen.getByRole("alert");
+    expect(error).toHaveTextContent("second request failed");
+    expect(error.closest("section")).toHaveTextContent("process.exec");
   });
 });

@@ -52,6 +52,8 @@ Author: 高宏顺 `<18272669457@163.com>`.
   不得把其实例放入 fixture、协议或 Session。
 - `custom-provider-connection.schema.json`：ADR 0029 的非敏感自定义连接、CAS 与显式模型发现
   参数、credential 状态；连接实体、发现结果和列表永远不含 credential。
+- `provider-catalog.schema.json`：ADR 0031 从冻结目录投影的兼容配置模板与空参数只读 RPC；
+  模板不含 secret，也不构成 configured、executable 或远端 verified 声明。
 - `storage-config.schema.json`：不携带远程连接串值的 SQLite/PostgreSQL/MySQL provider 配置。
 - `language-profiles.schema.json`：共享项目检测与工具链操作元数据。
 - `capability-matrix.schema.json`：稀疏支持矩阵；Provider target 必须同时包含

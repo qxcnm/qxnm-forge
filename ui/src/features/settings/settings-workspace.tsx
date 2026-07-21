@@ -38,6 +38,7 @@ import type {
   ApplicationServiceClient,
   BackendKind,
   InitializeResult,
+  ModelDescriptor,
   RuntimeEnvironment,
 } from "@/types/application-service";
 
@@ -48,6 +49,10 @@ interface SettingsWorkspaceProps {
   readonly runtimeEnvironment?: RuntimeEnvironment;
   readonly onOpenArchive: () => void;
   readonly onOpenAgentTools: () => void;
+  readonly onModelReady: (
+    backend: BackendKind,
+    model: Pick<ModelDescriptor, "providerId" | "modelId" | "apiFamily">,
+  ) => void;
   readonly onOpenMobileSidebar: () => void;
 }
 
@@ -88,6 +93,7 @@ export function SettingsWorkspace({
   runtimeEnvironment,
   onOpenArchive,
   onOpenAgentTools,
+  onModelReady,
   onOpenMobileSidebar,
 }: SettingsWorkspaceProps) {
   const { t, i18n } = useTranslation();
@@ -202,6 +208,7 @@ export function SettingsWorkspace({
                 backend={backend}
                 service={service}
                 supportedMethods={methods}
+                onModelReady={onModelReady}
               />
             </div>
             {!initializeResult ? (

@@ -23,6 +23,7 @@ public sealed class StdioDaemon
     private readonly SessionRepository sessions;
     private readonly AgentService agent;
     private readonly AgentProfileService? profiles;
+    private readonly ProviderCatalogService providerCatalog;
     private readonly CustomProviderConnectionService? providerConnections;
     private readonly SessionLifecycleService? sessionLifecycle;
     private readonly bool conformanceMode;
@@ -37,20 +38,25 @@ public sealed class StdioDaemon
     /// <param name="agent">原生 .NET Agent 服务。</param>
     /// <param name="conformanceMode">是否允许 faux/configure 测试方法。</param>
     /// <param name="profiles">成功完成数据库 bootstrap 时注入的 production Profile 服务。</param>
+    /// <param name="providerCatalog">不读取 credential 或可执行状态的冻结 Provider 配置模板服务。</param>
     /// <param name="providerConnections">工作区外 Provider 连接与凭据 application service。</param>
     /// <param name="sessionLifecycle">真实 Session 摘要、归档与安全删除服务。</param>
+    /// <remarks>不变量：Provider catalog 只投影冻结配置建议，不能提升任何 route 的可执行状态。</remarks>
+    /// <exception cref="ProviderIdentityAdvertisementException">冻结 Provider/model 目录无效。</exception>
     public StdioDaemon(
         SessionRepository sessions,
         AgentService agent,
         bool conformanceMode,
         AgentProfileService? profiles = null,
         CustomProviderConnectionService? providerConnections = null,
-        SessionLifecycleService? sessionLifecycle = null)
+        SessionLifecycleService? sessionLifecycle = null,
+        ProviderCatalogService? providerCatalog = null)
     {
         this.sessions = sessions;
         this.agent = agent;
         this.conformanceMode = conformanceMode;
         this.profiles = profiles;
+        this.providerCatalog = providerCatalog ?? new ProviderCatalogService();
         this.providerConnections = providerConnections;
         this.sessionLifecycle = sessionLifecycle;
     }
@@ -225,6 +231,9 @@ public sealed class StdioDaemon
                     break;
                 case "agentProfiles/delete" when profiles is not null:
                     await DeleteAgentProfileAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "providerCatalog/list":
+                    await ListProviderCatalogAsync(request, writer, cancellationToken).ConfigureAwait(false);
                     break;
                 case "providerConnections/list" when providerConnections is not null:
                     await ListProviderConnectionsAsync(request, writer, cancellationToken).ConfigureAwait(false);
@@ -705,6 +714,28 @@ public sealed class StdioDaemon
     }
 
     /// <summary>
+    /// 功能：严格解析空参数并返回冻结的自定义 Provider 配置模板目录。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">providerCatalog/list JSON-RPC 请求。</param>
+    /// <param name="writer">协议专用串行 stdout writer。</param>
+    /// <param name="cancellationToken">响应写入取消信号。</param>
+    /// <returns>完整成功响应 flush 后完成的 Task。</returns>
+    /// <remarks>不变量：响应不读取或包含 credential、configured、available、executable 或 conformance 状态。</remarks>
+    private async Task ListProviderCatalogAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        ProtocolCodec.ParseProviderCatalogList(request.Params);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new ProviderCatalogListResult(providerCatalog.List()),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// 功能：返回全部不含 secret 的自定义 Provider 连接和凭据 presence。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1040,7 +1071,7 @@ public sealed class StdioDaemon
         methods.AddRange(
             [
                 "run/start", "run/cancel", "approval/respond", "session/get",
-                "session/branch/select", "session/compact", "models/list",
+                "session/branch/select", "session/compact", "models/list", "providerCatalog/list",
             ]);
         return new InitializeResult(
             protocolVersion,

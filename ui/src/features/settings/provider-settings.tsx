@@ -5,6 +5,7 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
+  Search,
   Server,
   Trash2,
   Upload,
@@ -32,6 +33,8 @@ import { cn } from "@/lib/utils";
 import type {
   ApplicationServiceClient,
   BackendKind,
+  ModelDescriptor,
+  ProviderCatalogEntry,
   ProviderConnection,
   ProviderConnectionInput,
 } from "@/types/application-service";
@@ -40,6 +43,10 @@ interface ProviderSettingsProps {
   readonly backend: BackendKind;
   readonly service: ApplicationServiceClient;
   readonly supportedMethods: readonly string[];
+  readonly onModelReady?: (
+    backend: BackendKind,
+    model: Pick<ModelDescriptor, "providerId" | "modelId" | "apiFamily">,
+  ) => void;
 }
 
 interface ProviderDraft {
@@ -56,66 +63,6 @@ interface ImportedConnection {
   readonly draft: ProviderDraft;
   readonly credential: string;
 }
-
-interface ProviderPreset {
-  readonly id: string;
-  readonly displayName: string;
-  readonly providerId: string;
-  readonly baseUrl: string;
-  readonly logoAssetId: string;
-}
-
-const PROVIDER_PRESETS: readonly ProviderPreset[] = [
-  {
-    id: "new-api",
-    displayName: "New API",
-    providerId: "custom-newapi",
-    baseUrl: "",
-    logoAssetId: "newapi-gzxsy",
-  },
-  {
-    id: "openai",
-    displayName: "OpenAI",
-    providerId: "custom-openai",
-    baseUrl: "https://api.openai.com/v1",
-    logoAssetId: "",
-  },
-  {
-    id: "openrouter",
-    displayName: "OpenRouter",
-    providerId: "custom-openrouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    logoAssetId: "",
-  },
-  {
-    id: "groq",
-    displayName: "Groq",
-    providerId: "custom-groq",
-    baseUrl: "https://api.groq.com/openai/v1",
-    logoAssetId: "",
-  },
-  {
-    id: "deepseek",
-    displayName: "DeepSeek",
-    providerId: "custom-deepseek",
-    baseUrl: "https://api.deepseek.com",
-    logoAssetId: "",
-  },
-  {
-    id: "mistral",
-    displayName: "Mistral",
-    providerId: "custom-mistral",
-    baseUrl: "https://api.mistral.ai/v1",
-    logoAssetId: "",
-  },
-  {
-    id: "xai",
-    displayName: "xAI",
-    providerId: "custom-xai",
-    baseUrl: "https://api.x.ai/v1",
-    logoAssetId: "",
-  },
-];
 
 const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
   displayName: "",
@@ -238,11 +185,13 @@ export function ProviderSettings({
   backend,
   service,
   supportedMethods,
+  onModelReady,
 }: ProviderSettingsProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const queryKey = ["provider-connections", service.mode, backend] as const;
   const canList = supportedMethods.includes("providerConnections/list");
+  const canListCatalog = supportedMethods.includes("providerCatalog/list");
   const canCreate = supportedMethods.includes("providerConnections/create");
   const canUpdate = supportedMethods.includes("providerConnections/update");
   const canDelete = supportedMethods.includes("providerConnections/delete");
@@ -254,7 +203,14 @@ export function ProviderSettings({
     queryFn: () => service.listProviderConnections(),
     enabled: canList,
   });
+  const catalogQuery = useQuery({
+    queryKey: ["provider-catalog", service.mode, backend],
+    queryFn: () => service.listProviderCatalog(),
+    enabled: canListCatalog,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
   const connections = connectionsQuery.data ?? [];
+  const catalog = catalogQuery.data ?? [];
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [editingRevision, setEditingRevision] = useState<number | null>(null);
   const selectedConnection = connections.find(
@@ -267,42 +223,68 @@ export function ProviderSettings({
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [catalogFilter, setCatalogFilter] = useState("");
   const [failedLogoAssetIds, setFailedLogoAssetIds] = useState<ReadonlySet<string>>(new Set());
   const [deleteConnection, setDeleteConnection] = useState<ProviderConnection | null>(null);
   const draftLogoAssetId = draft.logoAssetId.trim();
   const draftLogoUrl = getProviderLogoUrl(draftLogoAssetId || null);
   const draftLogoAvailable =
     draftLogoUrl !== null && !failedLogoAssetIds.has(draftLogoAssetId);
+  const normalizedCatalogFilter = catalogFilter.trim().toLocaleLowerCase();
+  const visibleCatalog = normalizedCatalogFilter
+    ? catalog.filter((provider) =>
+        `${provider.displayName} ${provider.suggestedProviderId}`
+          .toLocaleLowerCase()
+          .includes(normalizedCatalogFilter),
+      )
+    : catalog;
 
   /**
    * 在 Provider 变更后先刷新初始化代际，再刷新对应模型快照。
    *
    * 不变量：连接列表可与 initialize 并行，但 models 只能在 initialize 成功后 refetch。
-   * 失败：连接、initialize 或 models 任一活动查询失败时向保存流程抛出。
+   * 输出：连接、initialize 与 models 活动查询是否全部刷新成功。
+   * 失败：任一活动查询失败时返回 false，并且不会在 initialize 失败后继续刷新 models。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  const refreshProviderQueries = async () => {
-    const initializeQueryKey = [
-      "application-service",
-      backend,
-      "initialize",
-    ] as const;
-    const modelsQueryKey = ["application-service", backend, "models"] as const;
-    const initializeRefresh = queryClient.invalidateQueries(
-      { queryKey: initializeQueryKey, exact: true, refetchType: "active" },
-      { throwOnError: true },
-    );
-    const connectionsRefresh = queryClient.invalidateQueries(
-      { queryKey, exact: true, refetchType: "active" },
-      { throwOnError: true },
-    );
-    await Promise.all([initializeRefresh, connectionsRefresh]);
-    await queryClient.invalidateQueries(
-      { queryKey: modelsQueryKey, refetchType: "active" },
-      { throwOnError: true },
-    );
+  const refreshProviderQueries = async (): Promise<boolean> => {
+    try {
+      const backends: readonly BackendKind[] = ["rust", "dotnet"];
+      const modelsQueryKey = ["application-service", backend, "models"] as const;
+      await Promise.all(
+        backends.flatMap((candidateBackend) => [
+          queryClient.invalidateQueries(
+            {
+              queryKey: ["application-service", candidateBackend, "initialize"],
+              exact: true,
+              refetchType: "active",
+            },
+            { throwOnError: true },
+          ),
+          queryClient.invalidateQueries(
+            {
+              queryKey: [
+                "provider-connections",
+                service.mode,
+                candidateBackend,
+              ],
+              exact: true,
+              refetchType: "active",
+            },
+            { throwOnError: true },
+          ),
+        ]),
+      );
+      await queryClient.invalidateQueries(
+        { queryKey: modelsQueryKey, refetchType: "active" },
+        { throwOnError: true },
+      );
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   /**
@@ -350,16 +332,16 @@ export function ProviderSettings({
   };
 
   /**
-   * 从受控本地目录填充 OpenAI-compatible 连接草稿，或打开已经保存的同 ID 连接。
+   * 从后端冻结目录填充 OpenAI-compatible 连接草稿，或打开已经保存的同 ID 连接。
    *
-   * 输入：构建期固定 preset；输出：不含 credential 和猜测模型的表单草稿。
-   * 不变量：preset 只选择现有通用 adapter，不把自定义 endpoint 冒充 canonical Provider。
+   * 输入：application service 返回的非敏感模板；输出：不含 credential 和猜测模型的表单草稿。
+   * 不变量：模板只选择现有通用 adapter，不把自定义 endpoint 冒充 canonical Provider。
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  const selectPreset = (preset: ProviderPreset) => {
+  const selectPreset = (preset: ProviderCatalogEntry) => {
     const existingConnection = connections.find(
-      (connection) => connection.providerId === preset.providerId,
+      (connection) => connection.providerId === preset.suggestedProviderId,
     );
     if (existingConnection) {
       selectConnection(existingConnection);
@@ -372,11 +354,11 @@ export function ProviderSettings({
     setEditingRevision(null);
     setDraft({
       displayName: preset.displayName,
-      providerId: preset.providerId,
-      baseUrl: preset.baseUrl,
-      apiFamily: "openai-completions",
+      providerId: preset.suggestedProviderId,
+      baseUrl: preset.defaultBaseUrl,
+      apiFamily: preset.apiFamily,
       modelIdsText: "",
-      logoAssetId: preset.logoAssetId,
+      logoAssetId: preset.logoAssetId ?? "",
       enabled: true,
     });
     setCredential("");
@@ -463,7 +445,10 @@ export function ProviderSettings({
           result = await service.createProviderConnection(draftToInput(draft));
         }
       } catch {
-        setErrorMessage(t("provider.saveFailed"));
+        const refreshed = await refreshProviderQueries();
+        setErrorMessage(
+          t(refreshed ? "provider.saveFailed" : "provider.reconciliationFailed"),
+        );
         return;
       }
 
@@ -471,8 +456,10 @@ export function ProviderSettings({
         try {
           await service.setProviderCredential(result.connection.providerId, pendingCredential);
         } catch {
-          await refreshProviderQueries().catch(() => undefined);
-          setErrorMessage(t("provider.keySaveFailed"));
+          const refreshed = await refreshProviderQueries();
+          setErrorMessage(
+            t(refreshed ? "provider.keySaveFailed" : "provider.reconciliationFailed"),
+          );
           return;
         }
       }
@@ -497,11 +484,16 @@ export function ProviderSettings({
       setSelectedConnectionId(savedConnection.connectionId);
       setEditingRevision(savedConnection.revision);
       setDraft(connectionToDraft(savedConnection));
-      try {
-        await refreshProviderQueries();
-      } catch {
+      if (!(await refreshProviderQueries())) {
         setErrorMessage(t("provider.refreshFailed"));
         return;
+      }
+      if (discoveredCount !== null && savedConnection.modelIds[0]) {
+        onModelReady?.(backend, {
+          providerId: savedConnection.providerId,
+          modelId: savedConnection.modelIds[0],
+          apiFamily: savedConnection.apiFamily,
+        });
       }
       setNotice(
         discoveredCount !== null
@@ -534,14 +526,24 @@ export function ProviderSettings({
     setErrorMessage(null);
     try {
       const status = await service.removeProviderCredential(selectedConnection.providerId);
-      await refreshProviderQueries();
+      if (!(await refreshProviderQueries())) {
+        setErrorMessage(t("provider.refreshFailed"));
+        return;
+      }
       setNotice(
         status.restartRequired && service.mode === "application-service"
           ? t("provider.credentialRemovedAndReconnected")
           : t("provider.credentialRemovedPreview"),
       );
     } catch {
-      setErrorMessage(t("provider.credentialRemoveFailed"));
+      const refreshed = await refreshProviderQueries();
+      setErrorMessage(
+        t(
+          refreshed
+            ? "provider.credentialRemoveFailed"
+            : "provider.reconciliationFailed",
+        ),
+      );
     } finally {
       setSaving(false);
     }
@@ -566,7 +568,10 @@ export function ProviderSettings({
       setEditingRevision(null);
       setDraft(EMPTY_PROVIDER_DRAFT);
       setCredential("");
-      await refreshProviderQueries();
+      if (!(await refreshProviderQueries())) {
+        setErrorMessage(t("provider.refreshFailed"));
+        return;
+      }
       setNotice(
         service.mode === "application-service"
           ? t("provider.deletedAndReconnected")
@@ -574,7 +579,10 @@ export function ProviderSettings({
       );
       setErrorMessage(null);
     } catch {
-      setErrorMessage(t("provider.deleteFailed"));
+      const refreshed = await refreshProviderQueries();
+      setErrorMessage(
+        t(refreshed ? "provider.deleteFailed" : "provider.reconciliationFailed"),
+      );
     } finally {
       setSaving(false);
     }
@@ -633,10 +641,48 @@ export function ProviderSettings({
             <p className="px-2 pb-1 pt-2 text-[9px] font-medium uppercase text-muted-foreground">
               {t("provider.compatibleCatalog")}
             </p>
-            <div className="mb-3 grid grid-cols-2 gap-1">
-              {PROVIDER_PRESETS.map((preset) => (
+            {canListCatalog ? (
+              <div className="relative mx-1 mb-2">
+                <Search
+                  className="pointer-events-none absolute left-2 top-2 size-3 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <Input
+                  value={catalogFilter}
+                  onChange={(event) => setCatalogFilter(event.target.value)}
+                  placeholder={t("provider.catalogSearch")}
+                  aria-label={t("provider.catalogSearch")}
+                  className="h-7 pl-7 text-[9px]"
+                />
+              </div>
+            ) : null}
+            {catalogQuery.isLoading ? (
+              <p className="px-2 py-3 text-[10px] text-muted-foreground">
+                {t("provider.catalogLoading")}
+              </p>
+            ) : catalogQuery.isError ? (
+              <div className="px-2 py-2" role="alert">
+                <p className="text-[10px] text-red-600">{t("provider.catalogLoadFailed")}</p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1 h-7 gap-1 px-1.5 text-[9px]"
+                  onClick={() => void catalogQuery.refetch()}
+                >
+                  <RefreshCw className="size-3" aria-hidden="true" />
+                  {t("common.retry")}
+                </Button>
+              </div>
+            ) : !canListCatalog ? (
+              <p className="px-2 py-3 text-[10px] leading-4 text-muted-foreground">
+                {t("provider.catalogUnavailable")}
+              </p>
+            ) : (
+              <div className="mb-3 grid grid-cols-2 gap-1">
+              {visibleCatalog.map((preset) => (
                 <button
-                  key={preset.id}
+                  key={preset.templateId}
                   type="button"
                   onClick={() => selectPreset(preset)}
                   disabled={saving || !canCreate}
@@ -651,7 +697,7 @@ export function ProviderSettings({
                       className="size-5 shrink-0 rounded border bg-white object-contain"
                       onError={() => {
                         setFailedLogoAssetIds((currentIds) =>
-                          new Set(currentIds).add(preset.logoAssetId),
+                          new Set(currentIds).add(preset.logoAssetId ?? ""),
                         );
                       }}
                     />
@@ -663,7 +709,16 @@ export function ProviderSettings({
                   <span className="truncate">{preset.displayName}</span>
                 </button>
               ))}
-            </div>
+              {visibleCatalog.length === 0 ? (
+                <p className="col-span-2 px-2 py-3 text-[10px] text-muted-foreground">
+                  {t("provider.catalogEmpty")}
+                </p>
+              ) : null}
+              </div>
+            )}
+            <p className="px-2 pb-3 text-[9px] leading-4 text-muted-foreground">
+              {t("provider.catalogDisclaimer")}
+            </p>
             {connections.length > 0 ? (
               <p className="px-2 pb-1 text-[9px] font-medium uppercase text-muted-foreground">
                 {t("provider.savedConnections")}
@@ -733,6 +788,11 @@ export function ProviderSettings({
         onSubmit={(event) => void handleSave(event)}
         aria-busy={saving}
       >
+        {service.mode === "faux-preview" ? (
+          <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+            {t("provider.previewBoundary")}
+          </div>
+        ) : null}
         <div className="mb-4 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-3">
             {draftLogoAvailable ? (

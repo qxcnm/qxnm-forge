@@ -128,6 +128,15 @@ public sealed record InitializeResult(
 public sealed record ModelsListResult(IReadOnlyList<ModelDescriptor> Models);
 
 /// <summary>
+/// 功能：表示 providerCatalog/list 返回的非敏感自定义连接模板目录。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Templates">按 templateId 排序且不含 credential 或可执行状态的模板。</param>
+public sealed record ProviderCatalogListResult(
+    IReadOnlyList<ProviderConnectionTemplate> Templates);
+
+/// <summary>
 /// 功能：表示 providerConnections/list 返回的全部脱敏连接。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com

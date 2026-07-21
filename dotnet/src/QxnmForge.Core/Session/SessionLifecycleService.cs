@@ -46,10 +46,12 @@ internal sealed record SessionArchiveDocument(
 /// <param name="Title">首条用户文本或 Session ID。</param>
 /// <param name="Project">header workspace basename。</param>
 /// <param name="UpdatedAt">最后完整记录/header 时间。</param>
+/// <param name="Status">从 durable run 与 approval 记录重建的可选 active/approval 状态。</param>
 internal sealed record SessionJournalInspection(
     string Title,
     string Project,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? Status);
 
 /// <summary>
 /// 功能：以脱敏 portable error 表示 Session 生命周期读取、锁定、损坏或删除失败。
@@ -341,7 +343,8 @@ public sealed partial class SessionLifecycleService
                         inspection.Title,
                         inspection.Project,
                         inspection.UpdatedAt,
-                        archived.Contains(sessionId)));
+                        archived.Contains(sessionId),
+                        inspection.Status));
                 }
                 catch (SessionLifecycleException)
                 {
@@ -562,7 +565,8 @@ public sealed partial class SessionLifecycleService
             inspection.Title,
             inspection.Project,
             inspection.UpdatedAt,
-            archived);
+            archived,
+            inspection.Status);
     }
 
     /// <summary>
@@ -883,7 +887,7 @@ public sealed partial class SessionLifecycleService
     }
 
     /// <summary>
-    /// 功能：只读并严格检查完整 LF journal 前缀，提取标题、项目与更新时间。
+    /// 功能：只读并严格检查完整 LF journal 前缀，提取标题、项目、更新时间与 durable 运行状态。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -906,6 +910,9 @@ public sealed partial class SessionLifecycleService
             var sawUserMessage = false;
             string? project = null;
             var updatedAt = DateTimeOffset.UnixEpoch;
+            var seenRuns = new HashSet<string>(StringComparer.Ordinal);
+            var activeRuns = new HashSet<string>(StringComparer.Ordinal);
+            var pendingApprovals = new HashSet<(string RunId, string ApprovalId)>();
             foreach (var line in ReadCommittedJournalLines(stream, sessionId))
             {
                 _ = StrictUtf8.GetCharCount(line);
@@ -925,6 +932,66 @@ public sealed partial class SessionLifecycleService
                         lineNumber,
                         recordIds);
                     updatedAt = record.Time;
+                    switch (record.Kind)
+                    {
+                        case "run.accepted":
+                            {
+                                var runId = RequireString(record.Data, "runId", maximumLength: 128);
+                                if (!IsValidOpaqueId(runId) ||
+                                    !seenRuns.Add(runId) ||
+                                    !activeRuns.Add(runId))
+                                {
+                                    throw SessionLifecycleException.Corrupt(sessionId);
+                                }
+
+                                break;
+                            }
+
+                        case "run.terminal":
+                            {
+                                var runId = RequireString(record.Data, "runId", maximumLength: 128);
+                                if (!IsValidOpaqueId(runId) ||
+                                    pendingApprovals.Any(item => item.RunId == runId) ||
+                                    !activeRuns.Remove(runId))
+                                {
+                                    throw SessionLifecycleException.Corrupt(sessionId);
+                                }
+
+                                break;
+                            }
+
+                        case "approval.requested":
+                            {
+                                var runId = RequireString(record.Data, "runId", maximumLength: 128);
+                                var approval = RequireProperty(record.Data, "approval");
+                                RequireObject(approval);
+                                var approvalId = RequireString(approval, "approvalId", maximumLength: 128);
+                                if (!IsValidOpaqueId(runId) ||
+                                    !IsValidOpaqueId(approvalId) ||
+                                    !activeRuns.Contains(runId) ||
+                                    !pendingApprovals.Add((runId, approvalId)))
+                                {
+                                    throw SessionLifecycleException.Corrupt(sessionId);
+                                }
+
+                                break;
+                            }
+
+                        case "approval.resolved":
+                            {
+                                var runId = RequireString(record.Data, "runId", maximumLength: 128);
+                                var approvalId = RequireString(record.Data, "approvalId", maximumLength: 128);
+                                if (!IsValidOpaqueId(runId) ||
+                                    !IsValidOpaqueId(approvalId) ||
+                                    !pendingApprovals.Remove((runId, approvalId)))
+                                {
+                                    throw SessionLifecycleException.Corrupt(sessionId);
+                                }
+
+                                break;
+                            }
+                    }
+
                     if (!sawUserMessage)
                     {
                         var candidate = ExtractUserTitle(record.Kind, record.Data);
@@ -941,7 +1008,12 @@ public sealed partial class SessionLifecycleService
                 throw SessionLifecycleException.Corrupt(sessionId);
             }
 
-            return new SessionJournalInspection(title ?? sessionId, project, updatedAt);
+            var status = pendingApprovals.Count > 0
+                ? "approval"
+                : activeRuns.Count > 0
+                    ? "active"
+                    : null;
+            return new SessionJournalInspection(title ?? sessionId, project, updatedAt, status);
         }
         catch (SessionLifecycleException)
         {

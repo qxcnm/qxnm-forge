@@ -66,6 +66,7 @@
               "agentProfiles/create",
               "agentProfiles/update",
               "agentProfiles/delete",
+              "providerCatalog/list",
               "providerConnections/list",
               "providerConnections/create",
               "providerConnections/update",
@@ -470,6 +471,9 @@
       },
       "additionalProperties": false
     },
+    "providerCatalogListResult": {
+      "$ref": "../provider-catalog.schema.json#/$defs/listResult"
+    },
     "providerConnectionsListResult": {
       "type": "object",
       "required": ["connections"],
@@ -627,6 +631,13 @@
       "properties": {
         "method": { "const": "agentProfiles/delete" },
         "params": { "$ref": "#/$defs/agentProfilesDeleteParams" }
+      }
+    },
+    "providerCatalogListRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "providerCatalog/list" },
+        "params": { "$ref": "../provider-catalog.schema.json#/$defs/listParams" }
       }
     },
     "providerConnectionsListRequest": {
@@ -788,6 +799,7 @@
         { "$ref": "#/$defs/agentProfilesCreateRequest" },
         { "$ref": "#/$defs/agentProfilesUpdateRequest" },
         { "$ref": "#/$defs/agentProfilesDeleteRequest" },
+        { "$ref": "#/$defs/providerCatalogListRequest" },
         { "$ref": "#/$defs/providerConnectionsListRequest" },
         { "$ref": "#/$defs/providerConnectionsCreateRequest" },
         { "$ref": "#/$defs/providerConnectionsUpdateRequest" },
@@ -824,6 +836,7 @@
         { "$ref": "#/$defs/agentProfilesListResult" },
         { "$ref": "#/$defs/agentProfileResult" },
         { "$ref": "#/$defs/agentProfilesDeleteResult" },
+        { "$ref": "#/$defs/providerCatalogListResult" },
         { "$ref": "#/$defs/providerConnectionsListResult" },
         { "$ref": "#/$defs/providerConnectionResult" },
         { "$ref": "#/$defs/providerConnectionDeleteResult" },

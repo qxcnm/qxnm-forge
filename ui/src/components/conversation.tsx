@@ -9,6 +9,7 @@ import {
   COMMAND_LOG_FIXTURES,
 } from "@/data/workspace-fixtures";
 import { ApprovalRequestCard } from "@/features/approvals/approval-request-card";
+import { getApprovalIdentityKey } from "@/features/approvals/pending-approvals";
 import type {
   ApprovalChoice,
   PendingApproval,
@@ -34,16 +35,22 @@ interface ConversationProps {
   readonly onRetryHistory: () => void;
   readonly pendingApprovals: readonly PendingApproval[];
   readonly approvalResponseAvailable: boolean;
+  readonly approvalSnapshotReady: boolean;
   readonly approvalInteractionLocked: boolean;
   readonly approvalSubmission: {
+    readonly sessionId: string;
+    readonly runId: string;
     readonly approvalId: string;
     readonly choice: ApprovalChoice;
   } | null;
   readonly approvalError: {
+    readonly sessionId: string;
+    readonly runId: string;
     readonly approvalId: string;
     readonly message: string;
   } | null;
   readonly approvalConfirmations: readonly {
+    readonly sessionId: string;
     readonly approvalId: string;
     readonly runId: string;
     readonly choice: ApprovalChoice;
@@ -73,6 +80,7 @@ export function Conversation({
   onRetryHistory,
   pendingApprovals,
   approvalResponseAvailable,
+  approvalSnapshotReady,
   approvalInteractionLocked,
   approvalSubmission,
   approvalError,
@@ -278,26 +286,45 @@ export function Conversation({
         >
           <div className="mx-auto w-full max-w-[760px] space-y-3">
             {pendingApprovals.map((approval) => {
+              const approvalKey = getApprovalIdentityKey(
+                approval.sessionId,
+                approval.runId,
+                approval.request.approvalId,
+              );
               const confirmation = approvalConfirmations.find(
                 (candidate) =>
-                  candidate.approvalId === approval.request.approvalId &&
-                  candidate.runId === approval.runId,
+                  getApprovalIdentityKey(
+                    candidate.sessionId,
+                    candidate.runId,
+                    candidate.approvalId,
+                  ) === approvalKey,
               );
               return (
                 <ApprovalRequestCard
-                  key={`${approval.runId}:${approval.request.approvalId}`}
+                  key={approvalKey}
                   approval={approval}
                   responseAvailable={approvalResponseAvailable}
+                  snapshotReady={approvalSnapshotReady}
                   interactionLocked={approvalInteractionLocked}
                   submittingChoice={
-                    approvalSubmission?.approvalId === approval.request.approvalId
+                    approvalSubmission &&
+                    getApprovalIdentityKey(
+                      approvalSubmission.sessionId,
+                      approvalSubmission.runId,
+                      approvalSubmission.approvalId,
+                    ) === approvalKey
                       ? approvalSubmission.choice
                       : null
                   }
                   decisionAccepted={confirmation !== undefined}
                   refreshFailed={confirmation?.refreshFailed ?? false}
                   error={
-                    approvalError?.approvalId === approval.request.approvalId
+                    approvalError &&
+                    getApprovalIdentityKey(
+                      approvalError.sessionId,
+                      approvalError.runId,
+                      approvalError.approvalId,
+                    ) === approvalKey
                       ? approvalError.message
                       : null
                   }

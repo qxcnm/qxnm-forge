@@ -14,6 +14,7 @@ mod path_boundary;
 pub mod policy;
 pub mod protocol;
 pub mod provider;
+pub mod provider_catalog;
 pub mod provider_connection;
 pub mod provider_identity;
 pub mod provider_route;
