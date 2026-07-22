@@ -1,4 +1,4 @@
-//! 冻结 Provider/model 目录派生的自定义连接配置模板。
+//! 冻结 Provider/model 目录与经审计官方兼容入口派生的自定义连接模板。
 //!
 //! 作者：高宏顺 <18272669457@163.com>
 
@@ -16,7 +16,21 @@ const API_FAMILY: &str = "openai-completions";
 const ADAPTER_ID: &str = "openai-completions-v1";
 const API_KEY_PROFILE: &str = "api-key";
 const MODEL_DISCOVERY: &str = "openai-models";
-const EXPECTED_TEMPLATE_COUNT: usize = 20;
+const EXPECTED_DERIVED_TEMPLATE_COUNT: usize = 20;
+const EXPECTED_TEMPLATE_COUNT: usize = 23;
+const AUDITED_OFFICIAL_COMPATIBILITY_TEMPLATES: [(&str, &str, &str); 3] = [
+    ("openai", "OpenAI", "https://api.openai.com/v1"),
+    (
+        "anthropic",
+        "Anthropic Claude",
+        "https://api.anthropic.com/v1",
+    ),
+    (
+        "google",
+        "Google Gemini",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+    ),
+];
 
 /// `providerCatalog/list` 的严格空参数。
 #[derive(Debug, Default, Deserialize)]
@@ -36,20 +50,20 @@ pub struct ProviderConnectionTemplate {
     pub logo_asset_id: Option<String>,
 }
 
-/// daemon 启动期从冻结目录派生、后续仅只读投影的连接模板快照。
+/// daemon 启动期从冻结目录和受控官方入口派生、后续仅只读投影的模板快照。
 #[derive(Debug, Clone)]
 pub struct ProviderCatalog {
     templates: Vec<ProviderConnectionTemplate>,
 }
 
 impl ProviderCatalog {
-    /// 功能：加载并验证冻结 Provider/model 目录，再派生可尝试 OpenAI 模型发现的连接模板。
+    /// 功能：加载冻结目录并追加经审计官方 OpenAI-compatible 连接模板。
     ///
     /// 输入：无；目录路径、摘要和 census 均由编译期冻结加载器决定。
     /// 输出：按 `templateId` ordinal 排序的不可变、无 secret 模板快照。
     /// 不变量：模板不读取 credential/environment presence，不声明远端已验证、已配置或可执行；
-    /// endpoint 只来自冻结 catalog，且必须同时可安全追加 `/chat/completions` 与 `/models`。
-    /// 失败：冻结目录、引用、兼容筛选或受控展示映射漂移时返回不含路径、URL 或目录内容的内部错误。
+    /// 冻结派生 base 与受控官方兼容 base 都必须可安全追加 `/chat/completions` 与 `/models`。
+    /// 失败：冻结目录、引用、兼容筛选、官方入口或受控展示映射漂移时返回脱敏内部错误。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     pub fn from_frozen() -> Result<Self, AgentError> {
@@ -110,6 +124,29 @@ impl ProviderCatalog {
                 logo_asset_id: None,
             });
         }
+        if templates.len() != EXPECTED_DERIVED_TEMPLATE_COUNT {
+            return Err(provider_catalog_unavailable());
+        }
+        for (template_id, display_name, default_base_url) in
+            AUDITED_OFFICIAL_COMPATIBILITY_TEMPLATES
+        {
+            if !fixed_https_base_is_compatible(default_base_url)
+                || templates
+                    .iter()
+                    .any(|template| template.template_id == template_id)
+            {
+                return Err(provider_catalog_unavailable());
+            }
+            templates.push(ProviderConnectionTemplate {
+                template_id: template_id.to_owned(),
+                display_name: display_name.to_owned(),
+                suggested_provider_id: format!("custom-{template_id}"),
+                api_family: API_FAMILY.to_owned(),
+                default_base_url: default_base_url.to_owned(),
+                model_discovery: MODEL_DISCOVERY.to_owned(),
+                logo_asset_id: None,
+            });
+        }
         templates.sort_by(|left, right| left.template_id.cmp(&right.template_id));
         if templates.len() != EXPECTED_TEMPLATE_COUNT {
             return Err(provider_catalog_unavailable());
@@ -131,9 +168,9 @@ impl ProviderCatalog {
     }
 }
 
-/// 功能：验证冻结 base URL 满足当前自定义 Chat 与模型发现的共同安全路径合同。
+/// 功能：验证候选 base URL 满足当前自定义 Chat 与模型发现的共同安全路径合同。
 ///
-/// 输入：冻结 catalog 中一个 fixed base URL。
+/// 输入：冻结 catalog 推导或受控官方入口表中的一个 fixed base URL。
 /// 输出：无敏感 URL 组成且可安全追加两个固定 path 时为 true。
 /// 不变量：仅接受 HTTPS、无 userinfo/query/fragment 且具有 host 的 URL；不访问网络。
 /// 失败：解析或任一路径拼接失败时安全返回 false。
@@ -207,7 +244,7 @@ mod tests {
 
     use super::{ProviderCatalog, fixed_https_base_is_compatible};
 
-    /// 功能：锁定冻结目录派生的 20 个模板、ordinal 顺序与非执行配置语义。
+    /// 功能：锁定 20 个冻结派生模板与 3 个官方兼容模板的 ordinal 顺序。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     #[test]
@@ -223,14 +260,17 @@ mod tests {
             ids,
             vec![
                 "ant-ling",
+                "anthropic",
                 "cerebras",
                 "deepseek",
                 "fireworks",
+                "google",
                 "groq",
                 "huggingface",
                 "moonshotai",
                 "moonshotai-cn",
                 "nvidia",
+                "openai",
                 "opencode",
                 "opencode-go",
                 "openrouter",
@@ -265,10 +305,42 @@ mod tests {
             .find(|template| template.template_id == "deepseek")
             .ok_or("missing DeepSeek template")?;
         assert_eq!(deepseek.default_base_url, "https://api.deepseek.com");
+        let official = templates
+            .iter()
+            .filter(|template| {
+                matches!(
+                    template.template_id.as_str(),
+                    "openai" | "anthropic" | "google"
+                )
+            })
+            .map(|template| {
+                (
+                    template.template_id.as_str(),
+                    template.display_name.as_str(),
+                    template.default_base_url.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            official,
+            vec![
+                (
+                    "anthropic",
+                    "Anthropic Claude",
+                    "https://api.anthropic.com/v1",
+                ),
+                (
+                    "google",
+                    "Google Gemini",
+                    "https://generativelanguage.googleapis.com/v1beta/openai",
+                ),
+                ("openai", "OpenAI", "https://api.openai.com/v1"),
+            ]
+        );
         Ok(())
     }
 
-    /// 功能：验证模板 JSON 只包含冻结的七个公开字段且显式输出空 logo。
+    /// 功能：验证模板 JSON 只包含七个公开字段且显式输出空 logo。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     #[test]
@@ -293,7 +365,7 @@ mod tests {
         Ok(())
     }
 
-    /// 功能：验证 Rust 派生结果与跨语言冻结 golden fixture 逐字段一致。
+    /// 功能：验证 Rust 完整模板目录与跨语言 golden fixture 逐字段一致。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     #[test]

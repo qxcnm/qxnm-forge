@@ -8,13 +8,13 @@ namespace QxnmForge.Provider;
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
-/// <param name="TemplateId">来自冻结 Provider ID 的稳定模板 ID。</param>
+/// <param name="TemplateId">来自冻结 Provider ID 或受控官方入口表的稳定模板 ID。</param>
 /// <param name="DisplayName">受控用户可见名称。</param>
 /// <param name="SuggestedProviderId">避开 canonical 保留身份的自定义 Provider ID 建议。</param>
 /// <param name="ApiFamily">当前固定为 openai-completions。</param>
-/// <param name="DefaultBaseUrl">冻结模型目录中同一 Provider route 的唯一 HTTPS base。</param>
+/// <param name="DefaultBaseUrl">冻结模型目录推导或经 ADR 审计的唯一 HTTPS base。</param>
 /// <param name="ModelDiscovery">保存连接后可显式尝试的模型发现契约。</param>
-/// <param name="LogoAssetId">可选本地公开 Logo 资源 ID；冻结目录当前不提供。</param>
+/// <param name="LogoAssetId">可选本地公开 Logo 资源 ID；当前目录不提供。</param>
 public sealed record ProviderConnectionTemplate(
     string TemplateId,
     string DisplayName,
@@ -25,7 +25,7 @@ public sealed record ProviderConnectionTemplate(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? LogoAssetId);
 
 /// <summary>
-/// 功能：从已验证冻结 Provider/model 目录构造品牌中立的自定义连接模板目录。
+/// 功能：从已验证冻结目录和受控官方兼容入口构造品牌中立连接模板目录。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
@@ -67,12 +67,12 @@ public sealed class ProviderCatalogService
     private readonly ProviderConnectionTemplate[] templates;
 
     /// <summary>
-    /// 功能：加载一次冻结目录并创建只读 Provider 配置模板服务。
+    /// 功能：加载一次冻结目录与受控官方入口并创建只读 Provider 配置模板服务。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <remarks>不变量：构造不读取环境变量、CredentialStore、网络或可执行 registry 状态。</remarks>
-    /// <exception cref="ProviderIdentityAdvertisementException">冻结目录或模板筛选不满足固定安全边界。</exception>
+    /// <exception cref="ProviderIdentityAdvertisementException">冻结目录、官方入口或模板筛选不满足固定安全边界。</exception>
     public ProviderCatalogService()
     {
         templates = SharedTemplates.Value;
@@ -91,13 +91,13 @@ public sealed class ProviderCatalogService
     }
 
     /// <summary>
-    /// 功能：读取并完整验证程序集内冻结文档，再构造稳定模板快照。
+    /// 功能：读取冻结文档并合并受控官方入口，再构造稳定模板快照。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
-    /// <returns>精确二十条、按模板 ID 排序的不可变值数组。</returns>
+    /// <returns>精确二十三条、按模板 ID 排序的不可变值数组。</returns>
     /// <remarks>不变量：任何失败都映射为不含 URL、目录内容或环境名称的统一异常。</remarks>
-    /// <exception cref="ProviderIdentityAdvertisementException">冻结文档、JSON 或候选闭包无效。</exception>
+    /// <exception cref="ProviderIdentityAdvertisementException">冻结文档、JSON、官方入口或候选闭包无效。</exception>
     private static ProviderConnectionTemplate[] LoadTemplates()
     {
         try
@@ -106,7 +106,22 @@ public sealed class ProviderCatalogService
                 ProviderIdentityAdvertisement.LoadValidatedFrozenDocuments();
             using var manifest = JsonDocument.Parse(manifestBytes);
             using var catalog = JsonDocument.Parse(catalogBytes);
-            return BuildTemplates(manifest.RootElement, catalog.RootElement);
+            var templates = BuildTemplates(manifest.RootElement, catalog.RootElement)
+                .Concat(BuildAuditedOfficialTemplates())
+                .OrderBy(static template => template.TemplateId, StringComparer.Ordinal)
+                .ToArray();
+            if (templates.Length != 23 ||
+                templates.Select(static template => template.TemplateId)
+                    .Distinct(StringComparer.Ordinal)
+                    .Count() != templates.Length ||
+                templates.Select(static template => template.SuggestedProviderId)
+                    .Distinct(StringComparer.Ordinal)
+                    .Count() != templates.Length)
+            {
+                throw new InvalidDataException("provider template set drifted");
+            }
+
+            return templates;
         }
         catch (ProviderIdentityAdvertisementException)
         {
@@ -173,6 +188,60 @@ public sealed class ProviderCatalogService
         return templates
             .OrderBy(static template => template.TemplateId, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    /// <summary>
+    /// 功能：构造经过固定 endpoint 审计的官方 OpenAI-compatible 连接模板。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>OpenAI、Anthropic Claude 与 Google Gemini 三条非敏感模板。</returns>
+    /// <remarks>不变量：建议 ID 不遮蔽 canonical 身份，base 仅使用官方 HTTPS OpenAI-compatible 入口。</remarks>
+    /// <exception cref="ProviderConnectionException">任一固定模板不再满足自定义连接安全边界。</exception>
+    private static ProviderConnectionTemplate[] BuildAuditedOfficialTemplates()
+    {
+        ProviderConnectionTemplate[] templates =
+        [
+            new(
+                "anthropic",
+                "Anthropic Claude",
+                "custom-anthropic",
+                ApiFamily,
+                "https://api.anthropic.com/v1",
+                ModelDiscovery,
+                LogoAssetId: null),
+            new(
+                "google",
+                "Google Gemini",
+                "custom-google",
+                ApiFamily,
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                ModelDiscovery,
+                LogoAssetId: null),
+            new(
+                "openai",
+                "OpenAI",
+                "custom-openai",
+                ApiFamily,
+                "https://api.openai.com/v1",
+                ModelDiscovery,
+                LogoAssetId: null),
+        ];
+        foreach (var template in templates)
+        {
+            CustomProviderConnectionStore.ValidateInput(
+                new ProviderConnectionInput(
+                    template.DisplayName,
+                    template.SuggestedProviderId,
+                    template.ApiFamily,
+                    template.DefaultBaseUrl,
+                    [],
+                    template.LogoAssetId,
+                    Enabled: true),
+                allowLoopbackHttp: false);
+        }
+
+        return templates;
     }
 
     /// <summary>

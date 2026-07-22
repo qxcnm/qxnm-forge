@@ -102,11 +102,26 @@ fn stdio_daemon_exposes_strict_provider_catalog_contract() {
         BTreeSet::from(["templates"])
     );
     let templates = result["templates"].as_array().expect("catalog templates");
-    assert_eq!(templates.len(), 20);
+    assert_eq!(templates.len(), 23);
     assert_eq!(templates[0]["templateId"], "ant-ling");
-    assert_eq!(templates[8]["templateId"], "nvidia");
-    assert_eq!(templates[8]["displayName"], "NVIDIA NIM");
-    assert_eq!(templates[19]["templateId"], "zai-coding-cn");
+    assert_eq!(templates[1]["templateId"], "anthropic");
+    assert_eq!(templates[1]["suggestedProviderId"], "custom-anthropic");
+    assert_eq!(
+        templates[1]["defaultBaseUrl"],
+        "https://api.anthropic.com/v1"
+    );
+    assert_eq!(templates[5]["templateId"], "google");
+    assert_eq!(templates[5]["suggestedProviderId"], "custom-google");
+    assert_eq!(
+        templates[5]["defaultBaseUrl"],
+        "https://generativelanguage.googleapis.com/v1beta/openai"
+    );
+    assert_eq!(templates[10]["templateId"], "nvidia");
+    assert_eq!(templates[10]["displayName"], "NVIDIA NIM");
+    assert_eq!(templates[11]["templateId"], "openai");
+    assert_eq!(templates[11]["suggestedProviderId"], "custom-openai");
+    assert_eq!(templates[11]["defaultBaseUrl"], "https://api.openai.com/v1");
+    assert_eq!(templates[22]["templateId"], "zai-coding-cn");
     let keys = templates[0]
         .as_object()
         .expect("template object")

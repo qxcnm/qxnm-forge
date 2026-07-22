@@ -74,6 +74,8 @@ const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
   enabled: true,
 };
 
+const OFFICIAL_PROVIDER_TEMPLATE_IDS = new Set(["anthropic", "google", "openai"]);
+
 /**
  * 将脱敏 Provider 投影复制为可编辑表单状态。
  *
@@ -238,6 +240,12 @@ export function ProviderSettings({
           .includes(normalizedCatalogFilter),
       )
     : catalog;
+  const officialCatalog = visibleCatalog.filter((provider) =>
+    OFFICIAL_PROVIDER_TEMPLATE_IDS.has(provider.templateId),
+  );
+  const compatibleCatalog = visibleCatalog.filter(
+    (provider) => !OFFICIAL_PROVIDER_TEMPLATE_IDS.has(provider.templateId),
+  );
 
   /**
    * 在 Provider 变更后先刷新初始化代际，再刷新对应模型快照。
@@ -678,42 +686,77 @@ export function ProviderSettings({
               <p className="px-2 py-3 text-[10px] leading-4 text-muted-foreground">
                 {t("provider.catalogUnavailable")}
               </p>
+            ) : visibleCatalog.length === 0 ? (
+              <p className="px-2 py-3 text-[10px] text-muted-foreground">
+                {t("provider.catalogEmpty")}
+              </p>
             ) : (
-              <div className="mb-3 grid grid-cols-2 gap-1">
-              {visibleCatalog.map((preset) => (
-                <button
-                  key={preset.templateId}
-                  type="button"
-                  onClick={() => selectPreset(preset)}
-                  disabled={saving || !canCreate}
-                  className="flex h-9 min-w-0 items-center gap-2 rounded-md px-2 text-left text-[10px] text-foreground/75 hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
-                  aria-label={t("provider.usePreset", { name: preset.displayName })}
-                >
-                  {preset.logoAssetId &&
-                  !failedLogoAssetIds.has(preset.logoAssetId) ? (
-                    <img
-                      src={getProviderLogoUrl(preset.logoAssetId) ?? undefined}
-                      alt=""
-                      className="size-5 shrink-0 rounded border bg-white object-contain"
-                      onError={() => {
-                        setFailedLogoAssetIds((currentIds) =>
-                          new Set(currentIds).add(preset.logoAssetId ?? ""),
-                        );
-                      }}
-                    />
-                  ) : (
-                    <span className="flex size-5 shrink-0 items-center justify-center rounded border bg-background text-[8px] font-semibold text-muted-foreground">
-                      {preset.displayName.slice(0, 2).toUpperCase()}
-                    </span>
-                  )}
-                  <span className="truncate">{preset.displayName}</span>
-                </button>
-              ))}
-              {visibleCatalog.length === 0 ? (
-                <p className="col-span-2 px-2 py-3 text-[10px] text-muted-foreground">
-                  {t("provider.catalogEmpty")}
-                </p>
-              ) : null}
+              <div className="mb-3 space-y-2">
+                {officialCatalog.length > 0 ? (
+                  <div>
+                    <p className="px-2 pb-1 text-[9px] font-medium text-muted-foreground">
+                      {t("provider.officialProviders")}
+                    </p>
+                    <div className="space-y-0.5">
+                      {officialCatalog.map((preset) => (
+                        <button
+                          key={preset.templateId}
+                          type="button"
+                          onClick={() => selectPreset(preset)}
+                          disabled={saving || !canCreate}
+                          className="flex h-9 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[10px] text-foreground/80 hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+                          aria-label={t("provider.usePreset", { name: preset.displayName })}
+                        >
+                          <span className="flex size-5 shrink-0 items-center justify-center rounded border bg-background text-[8px] font-semibold text-foreground/70">
+                            {preset.displayName.slice(0, 2).toUpperCase()}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">{preset.displayName}</span>
+                          <Badge variant="outline" className="h-4 shrink-0 px-1 text-[8px] font-normal">
+                            {t("provider.officialBadge")}
+                          </Badge>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {compatibleCatalog.length > 0 ? (
+                  <div>
+                    <p className="px-2 pb-1 text-[9px] font-medium text-muted-foreground">
+                      {t("provider.compatibleProviders")}
+                    </p>
+                    <div className="grid grid-cols-2 gap-1">
+                      {compatibleCatalog.map((preset) => (
+                        <button
+                          key={preset.templateId}
+                          type="button"
+                          onClick={() => selectPreset(preset)}
+                          disabled={saving || !canCreate}
+                          className="flex h-9 min-w-0 items-center gap-2 rounded-md px-2 text-left text-[10px] text-foreground/75 hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+                          aria-label={t("provider.usePreset", { name: preset.displayName })}
+                        >
+                          {preset.logoAssetId &&
+                          !failedLogoAssetIds.has(preset.logoAssetId) ? (
+                            <img
+                              src={getProviderLogoUrl(preset.logoAssetId) ?? undefined}
+                              alt=""
+                              className="size-5 shrink-0 rounded border bg-white object-contain"
+                              onError={() => {
+                                setFailedLogoAssetIds((currentIds) =>
+                                  new Set(currentIds).add(preset.logoAssetId ?? ""),
+                                );
+                              }}
+                            />
+                          ) : (
+                            <span className="flex size-5 shrink-0 items-center justify-center rounded border bg-background text-[8px] font-semibold text-muted-foreground">
+                              {preset.displayName.slice(0, 2).toUpperCase()}
+                            </span>
+                          )}
+                          <span className="truncate">{preset.displayName}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
             <p className="px-2 pb-3 text-[9px] leading-4 text-muted-foreground">

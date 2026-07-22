@@ -10,6 +10,15 @@
       "logoAssetId": null
     },
     {
+      "templateId": "anthropic",
+      "displayName": "Anthropic Claude",
+      "suggestedProviderId": "custom-anthropic",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.anthropic.com/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
       "templateId": "cerebras",
       "displayName": "Cerebras",
       "suggestedProviderId": "custom-cerebras",
@@ -33,6 +42,15 @@
       "suggestedProviderId": "custom-fireworks",
       "apiFamily": "openai-completions",
       "defaultBaseUrl": "https://api.fireworks.ai/inference/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "google",
+      "displayName": "Google Gemini",
+      "suggestedProviderId": "custom-google",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
       "modelDiscovery": "openai-models",
       "logoAssetId": null
     },
@@ -78,6 +96,15 @@
       "suggestedProviderId": "custom-nvidia",
       "apiFamily": "openai-completions",
       "defaultBaseUrl": "https://integrate.api.nvidia.com/v1",
+      "modelDiscovery": "openai-models",
+      "logoAssetId": null
+    },
+    {
+      "templateId": "openai",
+      "displayName": "OpenAI",
+      "suggestedProviderId": "custom-openai",
+      "apiFamily": "openai-completions",
+      "defaultBaseUrl": "https://api.openai.com/v1",
       "modelDiscovery": "openai-models",
       "logoAssetId": null
     },

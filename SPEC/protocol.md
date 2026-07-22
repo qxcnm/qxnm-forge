@@ -257,7 +257,8 @@ Profile 字段、边界、模型三元组与运行快照以 `agent-profile.schem
 
 `providerCatalog/list {}` 是 ADR 0031 的本地只读配置模板目录，返回
 `{templates:[{templateId,displayName,suggestedProviderId,apiFamily,defaultBaseUrl,modelDiscovery,logoAssetId}]}`。
-空参数对象必须严格拒绝未知字段。模板只从冻结 Provider/model catalog 推导并按
+空参数对象必须严格拒绝未知字段。目录由冻结 Provider/model catalog 派生的 20 项与 ADR 0031
+封闭列出的 `anthropic`、`google`、`openai` 三项官方兼容模板组成，合并去重后按
 `templateId` 排序；调用不得读取 credential、发送网络请求或修改任何状态。
 目录项只是 OpenAI-compatible 自定义连接的配置建议，不表示 Provider 已配置、远端发现成功、
 route 可执行或 capability 已验证。`modelDiscovery:"openai-models"` 只允许用户随后显式尝试

@@ -6,7 +6,7 @@
     "name": "高宏顺",
     "email": "18272669457@163.com"
   },
-  "updatedAt": "2026-07-21T17:39:29Z",
+  "updatedAt": "2026-07-22T01:08:00Z",
   "defaultStatus": "unsupported",
   "implementations": [
     "dotnet",
@@ -3365,7 +3365,7 @@
         "CONFORMANCE/fixtures/provider-catalog/configuration-templates.json",
         "CONFORMANCE/tests/test_spec_schemas.py"
       ],
-      "notes": "已从已验证冻结目录派生 20 项只读 OpenAI-compatible 配置模板，按 templateId 排序并通过真实 stdio daemon 独立测试；调用不读取 credential、不联网、不修改状态，也不扩大可执行 Provider 广告。尚无共同双实现黑盒 runner，因此保持 implemented。"
+      "notes": "已合并 20 项已验证冻结目录派生模板与 ADR 0031 封闭列出的 OpenAI、Anthropic Claude、Google Gemini 3 项受控官方兼容模板，23 项按 templateId 排序并通过真实 stdio daemon 独立测试；调用不读取 credential、不联网、不修改状态，也不扩大 canonical 或自定义可执行 Provider 广告。尚无共同双实现黑盒 runner，因此保持 implemented。"
     },
     {
       "implementation": "dotnet",
@@ -3384,7 +3384,7 @@
         "CONFORMANCE/fixtures/provider-catalog/configuration-templates.json",
         "CONFORMANCE/tests/test_spec_schemas.py"
       ],
-      "notes": "已从已验证冻结目录派生 20 项只读 OpenAI-compatible 配置模板，按 templateId ordinal 排序并通过服务与 stdio daemon 独立测试；调用不读取 credential、不联网、不修改状态，也不扩大可执行 Provider 广告。尚无共同双实现黑盒 runner，因此保持 implemented。"
+      "notes": "已合并 20 项已验证冻结目录派生模板与 ADR 0031 封闭列出的 OpenAI、Anthropic Claude、Google Gemini 3 项受控官方兼容模板，23 项按 templateId ordinal 排序并通过服务与 stdio daemon 独立测试；调用不读取 credential、不联网、不修改状态，也不扩大 canonical 或自定义可执行 Provider 广告。尚无共同双实现黑盒 runner，因此保持 implemented。"
     },
     {
       "implementation": "rust",

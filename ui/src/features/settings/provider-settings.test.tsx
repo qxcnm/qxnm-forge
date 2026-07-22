@@ -97,6 +97,29 @@ describe("ProviderSettings secret import boundary", () => {
   });
 
   /**
+   * 验证浏览器预览也展示后端审计过的三家主流官方兼容入口。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("groups mainstream official provider presets ahead of compatible services", async () => {
+    renderProviderSettings();
+
+    expect(await screen.findByText("官方提供商")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "配置 OpenAI" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "配置 Anthropic Claude" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "配置 Google Gemini" }));
+
+    expect(screen.getByLabelText("名称")).toHaveValue("Google Gemini");
+    expect(screen.getByLabelText("Provider ID")).toHaveValue("custom-google");
+    expect(screen.getByLabelText("Base URL")).toHaveValue(
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+    );
+  });
+
+  /**
    * 验证导入原文只停留在遮罩 DOM 输入，失败和成功都会清空且 secret 不进入持久化或 Query cache。
    *
    * 作者：高宏顺

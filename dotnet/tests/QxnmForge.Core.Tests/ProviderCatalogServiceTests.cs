@@ -34,21 +34,21 @@ public sealed class ProviderCatalogServiceTests
     }
 
     /// <summary>
-    /// 功能：锁定二十条跨语言模板、关键受控名称、固定 endpoint 与可创建连接 ID。
+    /// 功能：锁定二十三条模板、关键受控名称、官方兼容 endpoint 与可创建连接 ID。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     [Fact]
-    public void ListReturnsTwentyValidatedConfigurationTemplates()
+    public void ListReturnsTwentyThreeValidatedConfigurationTemplates()
     {
         var service = new ProviderCatalogService();
         var templates = service.List();
 
         Assert.Equal(
             [
-                "ant-ling", "cerebras", "deepseek", "fireworks", "groq", "huggingface",
-                "moonshotai", "moonshotai-cn", "nvidia", "opencode", "opencode-go",
-                "openrouter", "together", "xai", "xiaomi", "xiaomi-token-plan-ams",
+                "ant-ling", "anthropic", "cerebras", "deepseek", "fireworks", "google",
+                "groq", "huggingface", "moonshotai", "moonshotai-cn", "nvidia", "openai",
+                "opencode", "opencode-go", "openrouter", "together", "xai", "xiaomi", "xiaomi-token-plan-ams",
                 "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp", "zai", "zai-coding-cn",
             ],
             templates.Select(static template => template.TemplateId));
@@ -62,6 +62,23 @@ public sealed class ProviderCatalogServiceTests
         var nvidia = Assert.Single(templates, static template => template.TemplateId == "nvidia");
         Assert.Equal("NVIDIA NIM", nvidia.DisplayName);
         Assert.Equal("https://integrate.api.nvidia.com/v1", nvidia.DefaultBaseUrl);
+
+        var anthropic = Assert.Single(templates, static template => template.TemplateId == "anthropic");
+        Assert.Equal("Anthropic Claude", anthropic.DisplayName);
+        Assert.Equal("custom-anthropic", anthropic.SuggestedProviderId);
+        Assert.Equal("https://api.anthropic.com/v1", anthropic.DefaultBaseUrl);
+
+        var google = Assert.Single(templates, static template => template.TemplateId == "google");
+        Assert.Equal("Google Gemini", google.DisplayName);
+        Assert.Equal("custom-google", google.SuggestedProviderId);
+        Assert.Equal(
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            google.DefaultBaseUrl);
+
+        var openAi = Assert.Single(templates, static template => template.TemplateId == "openai");
+        Assert.Equal("OpenAI", openAi.DisplayName);
+        Assert.Equal("custom-openai", openAi.SuggestedProviderId);
+        Assert.Equal("https://api.openai.com/v1", openAi.DefaultBaseUrl);
 
         Assert.All(templates, static template =>
         {

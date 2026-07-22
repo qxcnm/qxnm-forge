@@ -64,9 +64,22 @@ public sealed class ProviderCatalogDaemonTests
             var templates = frames[1].RootElement
                 .GetProperty("result")
                 .GetProperty("templates");
-            Assert.Equal(20, templates.GetArrayLength());
+            Assert.Equal(23, templates.GetArrayLength());
             Assert.Equal("ant-ling", templates[0].GetProperty("templateId").GetString());
-            Assert.Equal("zai-coding-cn", templates[19].GetProperty("templateId").GetString());
+            Assert.Equal("zai-coding-cn", templates[22].GetProperty("templateId").GetString());
+            Assert.Contains(templates.EnumerateArray(), static template =>
+                template.GetProperty("templateId").GetString() == "anthropic" &&
+                template.GetProperty("suggestedProviderId").GetString() == "custom-anthropic" &&
+                template.GetProperty("defaultBaseUrl").GetString() == "https://api.anthropic.com/v1");
+            Assert.Contains(templates.EnumerateArray(), static template =>
+                template.GetProperty("templateId").GetString() == "google" &&
+                template.GetProperty("suggestedProviderId").GetString() == "custom-google" &&
+                template.GetProperty("defaultBaseUrl").GetString() ==
+                    "https://generativelanguage.googleapis.com/v1beta/openai");
+            Assert.Contains(templates.EnumerateArray(), static template =>
+                template.GetProperty("templateId").GetString() == "openai" &&
+                template.GetProperty("suggestedProviderId").GetString() == "custom-openai" &&
+                template.GetProperty("defaultBaseUrl").GetString() == "https://api.openai.com/v1");
             Assert.All(templates.EnumerateArray(), static template =>
             {
                 Assert.Equal("openai-models", template.GetProperty("modelDiscovery").GetString());

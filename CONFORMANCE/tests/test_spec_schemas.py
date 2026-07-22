@@ -259,7 +259,7 @@ class SpecSchemaTests(unittest.TestCase):
     ) -> None:
         """功能：验证品牌中立 Provider 配置模板目录及其只读 RPC 契约。
 
-        输入：冻结的 20 项配置模板 fixture、空参数请求、能力矩阵及安全负例。
+        输入：20 项冻结派生与 3 项受控官方兼容模板 fixture、空参数请求、能力矩阵及安全负例。
         输出：合法目录、RPC 和双实现声明通过，未知参数与敏感或能力声明字段被拒绝。
         不变量：模板仅是本地配置建议，不携带凭据且不声称可执行或已经远程验证。
         失败：目录字段、顺序、协议引用或封闭对象约束漂移时测试失败。
@@ -269,8 +269,7 @@ class SpecSchemaTests(unittest.TestCase):
 
         fixture = json.loads(
             (
-                CONFORMANCE
-                / "fixtures/provider-catalog/configuration-templates.json"
+                CONFORMANCE / "fixtures/provider-catalog/configuration-templates.json"
             ).read_text(encoding="utf-8")
         )
         catalog_validator = self.validator(
@@ -281,14 +280,17 @@ class SpecSchemaTests(unittest.TestCase):
         self.assertEqual(
             [
                 "ant-ling",
+                "anthropic",
                 "cerebras",
                 "deepseek",
                 "fireworks",
+                "google",
                 "groq",
                 "huggingface",
                 "moonshotai",
                 "moonshotai-cn",
                 "nvidia",
+                "openai",
                 "opencode",
                 "opencode-go",
                 "openrouter",
@@ -304,6 +306,49 @@ class SpecSchemaTests(unittest.TestCase):
             template_ids,
         )
         self.assertEqual(sorted(template_ids), template_ids)
+        official_compatibility_templates = {
+            template["templateId"]: {
+                "displayName": template["displayName"],
+                "suggestedProviderId": template["suggestedProviderId"],
+                "apiFamily": template["apiFamily"],
+                "defaultBaseUrl": template["defaultBaseUrl"],
+                "modelDiscovery": template["modelDiscovery"],
+                "logoAssetId": template["logoAssetId"],
+            }
+            for template in fixture["templates"]
+            if template["templateId"] in {"anthropic", "google", "openai"}
+        }
+        self.assertEqual(
+            {
+                "anthropic": {
+                    "displayName": "Anthropic Claude",
+                    "suggestedProviderId": "custom-anthropic",
+                    "apiFamily": "openai-completions",
+                    "defaultBaseUrl": "https://api.anthropic.com/v1",
+                    "modelDiscovery": "openai-models",
+                    "logoAssetId": None,
+                },
+                "google": {
+                    "displayName": "Google Gemini",
+                    "suggestedProviderId": "custom-google",
+                    "apiFamily": "openai-completions",
+                    "defaultBaseUrl": (
+                        "https://generativelanguage.googleapis.com/v1beta/openai"
+                    ),
+                    "modelDiscovery": "openai-models",
+                    "logoAssetId": None,
+                },
+                "openai": {
+                    "displayName": "OpenAI",
+                    "suggestedProviderId": "custom-openai",
+                    "apiFamily": "openai-completions",
+                    "defaultBaseUrl": "https://api.openai.com/v1",
+                    "modelDiscovery": "openai-models",
+                    "logoAssetId": None,
+                },
+            },
+            official_compatibility_templates,
+        )
 
         request = {
             "jsonrpc": "2.0",
