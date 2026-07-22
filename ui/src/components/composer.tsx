@@ -398,14 +398,24 @@ export function Composer({
         className="mx-auto w-full max-w-[760px] rounded-2xl border bg-background p-2 shadow-sm focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/20"
       >
         {attachments.length > 0 ? (
-          <div className="flex flex-wrap gap-1 px-1 pb-2">
+          <div className="flex flex-wrap gap-2 px-1 pb-2">
             {attachments.map((attachment) => (
-              <span key={attachment.id} className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-[10px] text-foreground/75">
-                <span className="max-w-48 truncate">{attachment.name}</span>
-                <span className="text-muted-foreground">{Math.ceil(attachment.byteLength / 1024)} KB</span>
+              <span key={attachment.id} className="inline-flex max-w-60 items-center gap-2 rounded-lg border bg-muted/40 p-1 text-[10px] text-foreground/75">
+                {attachment.kind === "image" ? (
+                  <img
+                    src={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
+                    alt={attachment.name}
+                    className="size-12 shrink-0 rounded-md bg-muted object-cover"
+                    decoding="async"
+                  />
+                ) : null}
+                <span className="min-w-0">
+                  <span className="block max-w-36 truncate">{attachment.name}</span>
+                  <span className="block text-muted-foreground">{Math.ceil(attachment.byteLength / 1024)} KB</span>
+                </span>
                 <button
                   type="button"
-                  className="rounded text-muted-foreground hover:text-foreground"
+                  className="self-start rounded p-0.5 text-muted-foreground hover:text-foreground"
                   onClick={() => onAttachmentsChange(attachments.filter((item) => item.id !== attachment.id))}
                   aria-label={t("composer.removeAttachment", { name: attachment.name })}
                 >

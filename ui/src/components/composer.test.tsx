@@ -67,6 +67,10 @@ describe("Composer attachments", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送任务" }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText("移除附件 pasted.png")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "pasted.png" })).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${btoa(String.fromCharCode(...bytes))}`,
+    );
   });
 
   /**
