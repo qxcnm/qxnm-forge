@@ -70,6 +70,63 @@ describe("Composer attachments", () => {
   });
 
   /**
+   * 验证 WebKitGTK 仅通过 DataTransferItem 暴露截图时仍可创建图片附件。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("accepts WebKit clipboard image items when files is empty", async () => {
+    const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const file = new File([bytes], "webkit-paste.png", { type: "image/png" });
+    Object.defineProperty(file, "arrayBuffer", {
+      value: () => Promise.resolve(bytes.buffer),
+    });
+    const getAsFile = vi.fn(() => file);
+    const onAttachmentsChange = vi.fn();
+    render(
+      <TooltipProvider>
+        <Composer
+          value=""
+          attachments={[]}
+          selectedModelRouteKey="faux\0faux-v1\0faux"
+          models={[MODEL]}
+          modelLoadState="ready"
+          agentProfiles={[]}
+          selectedAgentProfileId={null}
+          submitMode="enter"
+          busy={false}
+          onValueChange={vi.fn()}
+          onModelChange={vi.fn()}
+          onRetryModels={vi.fn()}
+          onAgentChange={vi.fn()}
+          onAttachmentsChange={onAttachmentsChange}
+          onSubmit={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+
+    fireEvent.paste(screen.getByLabelText("任务消息"), {
+      clipboardData: {
+        files: { length: 0 },
+        items: {
+          0: { kind: "file", type: "image/png", getAsFile },
+          length: 1,
+        },
+      },
+    });
+
+    await waitFor(() => expect(onAttachmentsChange).toHaveBeenCalledTimes(1));
+    expect(getAsFile).toHaveBeenCalledTimes(1);
+    const attachments = onAttachmentsChange.mock.calls[0]?.[0] as readonly ComposerAttachment[];
+    expect(attachments[0]).toMatchObject({
+      kind: "image",
+      name: "webkit-paste.png",
+      mediaType: "image/png",
+      byteLength: bytes.length,
+    });
+  });
+
+  /**
    * 验证剪贴板 UTF-8 文本文件会保留文件名、MIME、字节数与完整文本。
    *
    * 作者：高宏顺

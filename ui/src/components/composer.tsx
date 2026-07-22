@@ -28,6 +28,158 @@ import type { ComposerSubmitMode } from "@/store/workspace-ui-store";
 import type { ModelDescriptor, RuntimeEnvironment } from "@/types/application-service";
 import type { AgentProfile } from "@/types/agent-profile";
 
+const MAX_INPUT_IMAGE_BYTES = 524_288;
+const MAX_SOURCE_IMAGE_BYTES = 20 * 1_024 * 1_024;
+const MAX_COMPRESSED_IMAGE_EDGE = 2_048;
+const SUPPORTED_IMAGE_MEDIA_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+] as const;
+
+type SupportedImageMediaType = (typeof SUPPORTED_IMAGE_MEDIA_TYPES)[number];
+
+interface PreparedImage {
+  readonly bytes: Uint8Array;
+  readonly mediaType: SupportedImageMediaType;
+  readonly name: string;
+}
+
+/**
+ * 判断 MIME 是否属于协议允许的输入图片类型。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function isSupportedImageMediaType(value: string): value is SupportedImageMediaType {
+  return SUPPORTED_IMAGE_MEDIA_TYPES.some((mediaType) => mediaType === value);
+}
+
+/**
+ * 从标准 files 与 WebKitGTK 常用的 items 两条剪贴板路径收集文件并去重。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function collectClipboardFiles(clipboardData: DataTransfer): File[] {
+  const files: File[] = [];
+  const seen = new Set<string>();
+  const append = (file: File, fallbackMediaType = "") => {
+    const mediaType = file.type || fallbackMediaType;
+    const signature = `${file.name}\0${mediaType}\0${file.size}\0${file.lastModified}`;
+    if (seen.has(signature)) {
+      return;
+    }
+    seen.add(signature);
+    if (file.type || !isSupportedImageMediaType(mediaType)) {
+      files.push(file);
+      return;
+    }
+    const extension = mediaType === "image/jpeg" ? "jpg" : mediaType.slice("image/".length);
+    files.push(new File([file], file.name || `pasted.${extension}`, {
+      type: mediaType,
+      lastModified: file.lastModified,
+    }));
+  };
+
+  const clipboardFiles = clipboardData.files;
+  for (let index = 0; index < (clipboardFiles?.length ?? 0); index += 1) {
+    const file = clipboardFiles[index];
+    if (file) {
+      append(file);
+    }
+  }
+  const clipboardItems = clipboardData.items;
+  for (let index = 0; index < (clipboardItems?.length ?? 0); index += 1) {
+    const item = clipboardItems[index];
+    if (!item) {
+      continue;
+    }
+    if (item.kind !== "file") {
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file) {
+      append(file, item.type);
+    }
+  }
+  return files;
+}
+
+/**
+ * 将画布编码为 JPEG Blob；浏览器编码失败时拒绝 Promise。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob);
+      } else {
+        reject(new Error("unsupported"));
+      }
+    }, "image/jpeg", quality);
+  });
+}
+
+/**
+ * 解码超过协议上限的静态图片并压缩到 512 KiB 内。
+ *
+ * 输入：受支持且不超过 20 MiB 的浏览器 File。
+ * 输出：可直接发布为 artifact 的 JPEG 字节；保持宽高比且最长边不超过 2048 像素。
+ * 不变量：返回字节非空且不超过协议图片上限。
+ * 失败条件：图片无法解码、画布不可用，或多轮降质缩放后仍超过上限。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+async function compressImage(file: File): Promise<PreparedImage> {
+  if (file.size === 0 || file.size > MAX_SOURCE_IMAGE_BYTES || file.type === "image/gif") {
+    throw new Error("too-large");
+  }
+  const bitmap = await createImageBitmap(file);
+  try {
+    if (bitmap.width === 0 || bitmap.height === 0) {
+      throw new Error("unsupported");
+    }
+    const initialScale = Math.min(
+      1,
+      MAX_COMPRESSED_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height),
+    );
+    let width = Math.max(1, Math.round(bitmap.width * initialScale));
+    let height = Math.max(1, Math.round(bitmap.height * initialScale));
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) {
+      throw new Error("unsupported");
+    }
+    const qualities = [0.88, 0.78, 0.68, 0.58, 0.48];
+    for (let scaleAttempt = 0; scaleAttempt < 5; scaleAttempt += 1) {
+      canvas.width = width;
+      canvas.height = height;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(bitmap, 0, 0, width, height);
+      for (const quality of qualities) {
+        const blob = await canvasToJpegBlob(canvas, quality);
+        if (blob.size > 0 && blob.size <= MAX_INPUT_IMAGE_BYTES) {
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          const baseName = file.name.replace(/\.[^.]+$/, "") || "pasted";
+          return { bytes, mediaType: "image/jpeg", name: `${baseName}.jpg` };
+        }
+      }
+      width = Math.max(1, Math.round(width * 0.8));
+      height = Math.max(1, Math.round(height * 0.8));
+    }
+    throw new Error("too-large");
+  } finally {
+    bitmap.close();
+  }
+}
+
 export type ComposerModelLoadState =
   | "loading"
   | "error"
@@ -161,11 +313,14 @@ export function Composer({
     try {
       for (const file of files) {
         const buffer = await file.arrayBuffer();
-        if (["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
-          if (buffer.byteLength === 0 || buffer.byteLength > 524_288) {
+        if (isSupportedImageMediaType(file.type)) {
+          if (buffer.byteLength === 0 || buffer.byteLength > MAX_SOURCE_IMAGE_BYTES) {
             throw new Error("too-large");
           }
-          const bytes = new Uint8Array(buffer);
+          const prepared = buffer.byteLength <= MAX_INPUT_IMAGE_BYTES
+            ? { bytes: new Uint8Array(buffer), mediaType: file.type, name: file.name }
+            : await compressImage(file);
+          const { bytes } = prepared;
           let binary = "";
           for (let offset = 0; offset < bytes.length; offset += 8_192) {
             binary += String.fromCharCode(...bytes.subarray(offset, offset + 8_192));
@@ -173,8 +328,8 @@ export function Composer({
           added.push({
             id: crypto.randomUUID(),
             kind: "image",
-            name: file.name || t("composer.pastedImage"),
-            mediaType: file.type as "image/png" | "image/jpeg" | "image/webp" | "image/gif",
+            name: prepared.name || t("composer.pastedImage"),
+            mediaType: prepared.mediaType,
             byteLength: bytes.length,
             dataBase64: btoa(binary),
           });
@@ -218,7 +373,7 @@ export function Composer({
    * 邮箱：18272669457@163.com
    */
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = [...event.clipboardData.files];
+    const files = collectClipboardFiles(event.clipboardData);
     if (files.length > 0) {
       event.preventDefault();
       void addFiles(files);
