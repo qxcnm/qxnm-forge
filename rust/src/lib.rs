@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod agent_profile;
 pub mod commercial_state;
+mod computer;
 pub mod daemon;
 pub mod domain;
 pub mod error;

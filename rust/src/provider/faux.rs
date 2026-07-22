@@ -12,7 +12,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{Provider, ProviderRequest, ProviderStream, last_user_text};
-use crate::domain::{ContentBlock, FinishReason, Message, ProviderEvent, Role, Usage};
+use crate::domain::{
+    ContentBlock, FinishReason, Message, ProviderEvent, Role, Usage, artifact_content_type,
+};
 use crate::error::{AgentError, ErrorCode};
 
 const TOOL_ARGUMENT_CHUNK_CHARACTERS: usize = 8;
@@ -1223,7 +1225,8 @@ fn normalize_provider_context(messages: &[Message]) -> Result<Vec<Value>, AgentE
                     content.push(json!({"type":"text","text":text}));
                 }
                 if let Some(artifact) = output.artifact.as_ref() {
-                    content.push(json!({"type":"artifact_ref","artifact":artifact}));
+                    content
+                        .push(json!({"type":artifact_content_type(artifact),"artifact":artifact}));
                 }
                 return Ok(json!({
                     "role":role,
@@ -1401,14 +1404,18 @@ impl Provider for FauxProvider {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::time::Duration;
 
+    use chrono::Utc;
     use futures_util::TryStreamExt;
     use serde_json::{Value, json};
     use tokio_util::sync::CancellationToken;
 
-    use super::{FauxAction, FauxProvider, FauxScenario, FauxScript};
-    use crate::domain::{FinishReason, ProviderEvent};
+    use super::{FauxAction, FauxProvider, FauxScenario, FauxScript, normalize_provider_context};
+    use crate::domain::{
+        ArtifactRef, ContentBlock, FinishReason, Message, ProviderEvent, Role, ToolOutput,
+    };
     use crate::error::ErrorCode;
     use crate::provider::{Provider, ProviderRequest};
 
@@ -1439,6 +1446,60 @@ mod tests {
         provider
             .configure(session_id, vec![scenario.into_script()])
             .await;
+        Ok(())
+    }
+
+    /// 功能：验证 faux expectedContext 对图像工具结果保留 image_ref 语义。
+    ///
+    /// 输入：除 MIME 外相同的 synthetic ToolResult 消息，分别引用 image/png 与 text/plain artifact。
+    /// 输出：图像归一为 image_ref，普通 artifact 仍归一为 artifact_ref。
+    /// 不变量：引用字段原样保留，不读取 artifact bytes 或主机路径。
+    /// 失败：ToolResult 上下文形状或 MIME 路由漂移时测试失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn tool_result_context_uses_image_ref_only_for_image_mime()
+    -> Result<(), crate::error::AgentError> {
+        let artifact = ArtifactRef {
+            artifact_id: "artifact-context".to_owned(),
+            media_type: "image/png".to_owned(),
+            byte_length: 8,
+            sha256: "a".repeat(64),
+            display_name: None,
+            extensions: BTreeMap::new(),
+        };
+        let message = Message {
+            id: "message-tool-result".to_owned(),
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                call_id: "call-context".to_owned(),
+                name: "computer.screenshot".to_owned(),
+                output: ToolOutput {
+                    text: None,
+                    artifact: Some(artifact.clone()),
+                    termination_reason: None,
+                    execution: None,
+                    metadata: BTreeMap::new(),
+                },
+                is_error: false,
+            }],
+            created_at: Utc::now(),
+        };
+        let image_context = normalize_provider_context(std::slice::from_ref(&message))?;
+        assert_eq!(image_context[0]["content"][0]["type"], "image_ref");
+        assert_eq!(image_context[0]["content"][0]["artifact"], json!(artifact));
+
+        let mut ordinary = message;
+        let ContentBlock::ToolResult { output, .. } = &mut ordinary.content[0] else {
+            unreachable!("fixture contains one tool result")
+        };
+        output
+            .artifact
+            .as_mut()
+            .expect("fixture artifact must exist")
+            .media_type = "text/plain".to_owned();
+        let ordinary_context = normalize_provider_context(&[ordinary])?;
+        assert_eq!(ordinary_context[0]["content"][0]["type"], "artifact_ref");
         Ok(())
     }
 

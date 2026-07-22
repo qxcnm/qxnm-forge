@@ -25,6 +25,10 @@ public sealed class SecurityFoundationTests
     [InlineData(OperationMode.Headless, ToolAction.ProcessExec, true, PolicyDecision.Deny)]
     [InlineData(OperationMode.Headless, ToolAction.ShellExec, true, PolicyDecision.Deny)]
     [InlineData(OperationMode.Interactive, ToolAction.FileRead, false, PolicyDecision.Deny)]
+    [InlineData(OperationMode.Interactive, ToolAction.ComputerObserve, false, PolicyDecision.Ask)]
+    [InlineData(OperationMode.Interactive, ToolAction.ComputerInteract, false, PolicyDecision.Ask)]
+    [InlineData(OperationMode.Headless, ToolAction.ComputerObserve, false, PolicyDecision.Deny)]
+    [InlineData(OperationMode.Headless, ToolAction.ComputerInteract, false, PolicyDecision.Deny)]
     public void EvaluateMatchesDefaultPolicyFixture(
         OperationMode mode,
         ToolAction action,

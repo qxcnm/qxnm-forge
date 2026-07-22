@@ -48,6 +48,43 @@ class SpecSchemaTests(unittest.TestCase):
         target = {"$schema": schema["$schema"], "$ref": schema["$id"] + ref}
         return jsonschema.Draft202012Validator(target, registry=self.registry)
 
+    @staticmethod
+    def local_display_allowed(value: object, contract: dict[str, object]) -> bool:
+        """功能：按 ADR 0032 的保守语法判断合成 DISPLAY 是否明确指向本地 Unix display。
+
+        输入：待验证值与 fixture 冻结的长度、display number 和 screen number 上限。
+        输出：仅 :N[.S] 或 unix/:N[.S] 的有界 ASCII 十进制形式返回 true。
+        不变量：不解析宿主 socket、不连接 X11，也不接受 hostname、TCP 或 SSH forwarding。
+        失败：缺失、非字符串、非 ASCII、空数字段、多余点或数值越界均返回 false。
+        作者：高宏顺
+        邮箱：18272669457@163.com
+        """
+
+        if (
+            not isinstance(value, str)
+            or not value.isascii()
+            or len(value) == 0
+            or len(value) > contract["maxLength"]
+        ):
+            return False
+        if value.startswith("unix/:"):
+            numeric = value[len("unix/:") :]
+        elif value.startswith(":"):
+            numeric = value[1:]
+        else:
+            return False
+        parts = numeric.split(".")
+        if len(parts) not in (1, 2):
+            return False
+        if any(
+            not part or any(character < "0" or character > "9" for character in part)
+            for part in parts
+        ):
+            return False
+        if int(parts[0]) > contract["maxDisplayNumber"]:
+            return False
+        return len(parts) == 1 or int(parts[1]) <= contract["maxScreenNumber"]
+
     def test_golden_requests_and_trace_match_protocol_schemas(self) -> None:
         """功能：按请求方法验证 golden 请求，并验证每个实际响应和事件。
 
@@ -970,6 +1007,367 @@ class SpecSchemaTests(unittest.TestCase):
             self.assertIn("conformant", claim["notes"])
             for evidence in claim["evidence"]:
                 self.assertTrue((ROOT / evidence).is_file(), evidence)
+
+    def test_desktop_computer_contract_fixture_and_security_negatives(self) -> None:
+        """功能：验证实验性桌面工具的静态合同、敏感 artifact extension 与安全负例。
+
+        输入：只含合成环境/参数的 computer fixture、公共 Schema 与 capability matrix。
+        输出：原生 X11/本地 DISPLAY 门禁、合法参数、限制、审批资源和 Session 数据通过，扩权输入稳定拒绝。
+        不变量：测试不探测 display、不执行桌面动作、不读取像素，并拒绝 text 与持久化宿主显示标识。
+        失败：双实现广告门、公共合同、限制、extension、journal 或 implemented claim 漂移时失败。
+        作者：高宏顺
+        邮箱：18272669457@163.com
+        """
+
+        fixture = json.loads(
+            (CONFORMANCE / "fixtures/computer/computer-cases.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.validator("computer-cases.schema.json", "").validate(fixture)
+
+        platform_gate = fixture["platformGate"]
+        self.assertEqual(
+            {
+                "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+                "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+            },
+            platform_gate["requiredExactGates"],
+        )
+        self.assertEqual(
+            {
+                "environment": "XDG_SESSION_TYPE",
+                "normalization": "trim_ascii_lowercase",
+                "requiredValue": "x11",
+            },
+            platform_gate["sessionType"],
+        )
+        self.assertEqual(
+            {
+                "environment": "WAYLAND_DISPLAY",
+                "allowedStates": ["missing", "empty"],
+            },
+            platform_gate["waylandDisplay"],
+        )
+        self.assertEqual(
+            {
+                "environment": "DISPLAY",
+                "allowedSyntax": [":N[.S]", "unix/:N[.S]"],
+                "connectionNormalization": "unix/:N[.S]",
+                "maxLength": 64,
+                "maxDisplayNumber": 65535,
+                "maxScreenNumber": 65535,
+            },
+            platform_gate["localDisplay"],
+        )
+        gate_cases = platform_gate["cases"]
+        self.assertEqual(
+            [
+                "native_x11_wayland_missing",
+                "native_x11_normalized_wayland_empty",
+                "desktop_gate_missing",
+                "experimental_gate_missing",
+                "desktop_gate_not_exact",
+                "experimental_gate_not_exact",
+                "session_type_missing",
+                "session_type_empty",
+                "session_type_non_ascii_whitespace",
+                "wayland_session",
+                "xwayland_detected",
+                "wayland_display_whitespace",
+                "unknown_session_type",
+                "windows_platform",
+                "macos_platform",
+                "unknown_platform",
+                "display_missing",
+                "display_empty",
+                "display_remote_hostname",
+                "display_ssh_forwarded",
+                "display_legacy_unix_hostname",
+                "display_number_out_of_range",
+                "display_screen_out_of_range",
+                "display_whitespace",
+                "display_multiple_dots",
+                "display_non_ascii_digits",
+            ],
+            [case["name"] for case in gate_cases],
+        )
+        ascii_lowercase = str.maketrans(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+        )
+        for case in gate_cases:
+            environment = case["environment"]
+            normalized_session_type = (
+                environment.get(platform_gate["sessionType"]["environment"], "")
+                .strip(" \t\n\r\v\f")
+                .translate(ascii_lowercase)
+            )
+            should_advertise = (
+                case["platform"] == "linux"
+                and all(
+                    environment.get(name) == value
+                    for name, value in platform_gate["requiredExactGates"].items()
+                )
+                and normalized_session_type
+                == platform_gate["sessionType"]["requiredValue"]
+                and environment.get(platform_gate["waylandDisplay"]["environment"])
+                in (None, "")
+                and self.local_display_allowed(
+                    environment.get(platform_gate["localDisplay"]["environment"]),
+                    platform_gate["localDisplay"],
+                )
+            )
+            with self.subTest(platform_gate_case=case["name"]):
+                self.assertEqual(case["advertise"], should_advertise)
+
+        invalid_platform_fixture = deepcopy(fixture)
+        invalid_platform_fixture["platformGate"]["cases"][0]["environment"][
+            "XAUTHORITY"
+        ] = "/forbidden/host/path"
+        with self.assertRaises(jsonschema.ValidationError):
+            self.validator("computer-cases.schema.json", "").validate(
+                invalid_platform_fixture
+            )
+        overlong_display_fixture = deepcopy(fixture)
+        overlong_display_fixture["platformGate"]["cases"][0]["environment"][
+            "DISPLAY"
+        ] = ":" + ("1" * 64)
+        with self.assertRaises(jsonschema.ValidationError):
+            self.validator("computer-cases.schema.json", "").validate(
+                overlong_display_fixture
+            )
+
+        cases = fixture["cases"]
+        self.assertEqual(
+            [
+                "computer.observe",
+                "computer.screenshot",
+                "computer.interact",
+                "computer.interact",
+                "computer.interact",
+                "computer.interact",
+            ],
+            [case["tool"] for case in cases],
+        )
+        self.assertEqual(
+            ["move", "click", "scroll", "key"],
+            [case["arguments"]["action"] for case in cases[2:]],
+        )
+        self.assertEqual(
+            [
+                "desktop:screen",
+                "desktop:screen",
+                "desktop:move",
+                "desktop:click",
+                "desktop:scroll",
+                "desktop:key",
+            ],
+            [case["approval"]["resource"]["value"] for case in cases],
+        )
+        self.assertEqual(
+            ["high", "high"],
+            [case["approval"]["risk"] for case in cases[:2]],
+        )
+        self.assertTrue(
+            all(case["approval"]["risk"] == "critical" for case in cases[2:])
+        )
+        self.assertTrue(
+            all(
+                case["approval"]["choices"] == ["allow_once", "deny"]
+                for case in cases
+            )
+        )
+
+        measurement = fixture["capture"]["measurement"]
+        self.assertEqual(
+            measurement["pixelCount"], measurement["width"] * measurement["height"]
+        )
+        self.assertEqual(
+            measurement["rawByteLength"], measurement["pixelCount"] * 4
+        )
+        artifact = fixture["capture"]["result"]["content"][1]["artifact"]
+        artifact_created = fixture["capture"]["artifactCreatedData"]
+        self.assertEqual(measurement["pngByteLength"], artifact["byteLength"])
+        self.assertEqual(artifact, artifact_created["artifact"])
+        extension = artifact["extensions"]["org.agentprotocol.computer"]
+        self.assertEqual(
+            {
+                "source": "desktop_capture",
+                "runId": "run-computer-synthetic-1",
+                "sensitivity": "desktop_sensitive",
+                "retention": "session_lifecycle",
+            },
+            extension,
+        )
+        self.assertEqual(
+            extension,
+            artifact_created["extensions"]["org.agentprotocol.computer"],
+        )
+        self.validator(
+            "session/journal.schema.json", "#/$defs/artifactCreatedData"
+        ).validate(artifact_created)
+
+        serialized = json.dumps(fixture, ensure_ascii=False)
+        for forbidden in (
+            '"backend"',
+            '"displayId"',
+            '"windowTitle"',
+            '"hostPath"',
+            '"credential"',
+            '"apiKey"',
+            '"action": "text"',
+        ):
+            self.assertNotIn(forbidden, serialized)
+
+        observe_validator = self.validator(
+            "domain/computer.schema.json", "#/$defs/observeArguments"
+        )
+        interact_validator = self.validator(
+            "domain/computer.schema.json", "#/$defs/interactArguments"
+        )
+        measurement_validator = self.validator(
+            "domain/computer.schema.json", "#/$defs/captureMeasurement"
+        )
+        extension_validator = self.validator(
+            "domain/computer.schema.json", "#/$defs/computerExtensionValue"
+        )
+        artifact_validator = self.validator(
+            "domain/computer.schema.json", "#/$defs/captureArtifactReference"
+        )
+
+        with self.assertRaises(jsonschema.ValidationError):
+            observe_validator.validate({"display": 0})
+
+        interact_validator.validate(
+            {"action": "scroll", "deltaX": 0, "deltaY": 0}
+        )
+
+        invalid_arguments = (
+            {"action": "move", "y": 1},
+            {"action": "move", "x": 16384, "y": 0},
+            {
+                "action": "click",
+                "x": 1,
+                "y": 1,
+                "button": "left",
+                "clicks": 4,
+            },
+            {"action": "key", "key": "a", "modifiers": []},
+            {
+                "action": "key",
+                "key": "escape",
+                "modifiers": ["shift", "shift"],
+            },
+            {"action": "text", "text": "forbidden"},
+        )
+        for invalid in invalid_arguments:
+            with (
+                self.subTest(arguments=invalid),
+                self.assertRaises(jsonschema.ValidationError),
+            ):
+                interact_validator.validate(invalid)
+
+        for field, value in (
+            ("width", 16385),
+            ("height", 16385),
+            ("pixelCount", 16777217),
+            ("rawByteLength", 67108865),
+            ("pngByteLength", 33554433),
+        ):
+            invalid = deepcopy(measurement)
+            invalid[field] = value
+            with (
+                self.subTest(measurement_negative=field),
+                self.assertRaises(jsonschema.ValidationError),
+            ):
+                measurement_validator.validate(invalid)
+
+        for field in ("backend", "displayId", "windowTitle", "hostPath"):
+            invalid = deepcopy(extension)
+            invalid[field] = "forbidden"
+            with (
+                self.subTest(extension_negative=field),
+                self.assertRaises(jsonschema.ValidationError),
+            ):
+                extension_validator.validate(invalid)
+
+        invalid_artifact = deepcopy(artifact)
+        invalid_artifact["mediaType"] = "image/jpeg"
+        with self.assertRaises(jsonschema.ValidationError):
+            artifact_validator.validate(invalid_artifact)
+        invalid_artifact = deepcopy(artifact)
+        invalid_artifact["byteLength"] = 33554433
+        with self.assertRaises(jsonschema.ValidationError):
+            artifact_validator.validate(invalid_artifact)
+
+        invalid_record_data = deepcopy(artifact_created)
+        invalid_record_data["runId"] = "run-core-field-forbidden"
+        with self.assertRaises(jsonschema.ValidationError):
+            self.validator(
+                "session/journal.schema.json", "#/$defs/artifactCreatedData"
+            ).validate(invalid_record_data)
+
+        invalid_case_fixture = deepcopy(fixture)
+        invalid_case_fixture["cases"][2]["approval"]["resource"]["value"] = (
+            "desktop:click"
+        )
+        with self.assertRaises(jsonschema.ValidationError):
+            self.validator("computer-cases.schema.json", "").validate(
+                invalid_case_fixture
+            )
+
+        matrix = json.loads(
+            (ROOT / "SPEC/capabilities.json").read_text(encoding="utf-8")
+        )
+        computer_features = {"tool.computer_observe", "tool.computer_interact"}
+        self.assertTrue(computer_features.issubset(matrix["foundationFeatures"]))
+        computer_claims = [
+            claim
+            for claim in matrix["claims"]
+            if claim["target"]["kind"] == "foundation"
+            and claim["target"]["id"] in computer_features
+        ]
+        self.assertEqual(
+            {
+                (implementation, feature)
+                for implementation in ("rust", "dotnet")
+                for feature in computer_features
+            },
+            {
+                (claim["implementation"], claim["target"]["id"])
+                for claim in computer_claims
+            },
+        )
+        self.assertEqual(4, len(computer_claims))
+        for claim in computer_claims:
+            self.assertEqual("implemented", claim["status"])
+            self.assertIn("不构成公开支持", claim["notes"])
+            self.assertIn("视觉闭环", claim["notes"])
+            for evidence in claim["evidence"]:
+                self.assertTrue((ROOT / evidence).is_file(), evidence)
+
+        route_features: dict[tuple[str, str, str], set[str]] = {}
+        for claim in matrix["claims"]:
+            if claim["target"]["kind"] != "provider" or claim["status"] not in {
+                "conformant",
+                "live-verified",
+            }:
+                continue
+            target = claim["target"]
+            route_features.setdefault(
+                (
+                    claim["implementation"],
+                    target["id"],
+                    target["apiFamily"],
+                ),
+                set(),
+            ).add(target["feature"])
+        self.assertFalse(
+            any(
+                {"tools", "image_input"}.issubset(features)
+                for features in route_features.values()
+            )
+        )
 
     def test_provider_claims_are_exactly_route_scoped_and_evidence_backed(self) -> None:
         """功能：验证首批 Provider claims 精确落到双实现六 route 的 48 个 feature cells。

@@ -8,6 +8,9 @@ Author: 高宏顺 `<18272669457@163.com>`.
 - `domain/domain.schema.json`: aggregate portable domain object; sibling files
   provide the precise error, usage, artifact, content, message, model, tool,
   approval, and restricted tool-parameter schemas.
+- `domain/computer.schema.json`：ADR 0032 的空 observe/screenshot 参数、四类 action-discriminated
+  interact 参数、捕获前维度/像素/raw/PNG 上限、`image_ref` 和
+  `org.agentprotocol.computer` 敏感 artifact extension。
 - `protocol/jsonrpc.schema.json`: request/response frames and exact method
   definitions.
 - `protocol/event.schema.json`: common event envelope and type-specific data.
@@ -21,6 +24,9 @@ Author: 高宏顺 `<18272669457@163.com>`.
   Conversations, Azure OpenAI Responses, and Google Generative AI.
 - `tool-approval-cases.schema.json`: governed safe file-tool, approval,
   persistence-order, cancellation, and no-replay cases.
+- `computer-cases.schema.json`：验证纯合成平台/环境广告真值表、桌面参数、逐次审批
+  risk/resource、限制、portable screenshot result 与 journal-compatible extension；fixture
+  永不探测 display 或执行真实桌面动作。
 - `session/journal.schema.json`: header and portable append-only records.
 - `session/journal-tail-recovery-cases.schema.json`: ADR 0020 固定的两个
   no-LF repair、四个 LF-complete corruption 案例与 brand-neutral recovery 常量。

@@ -6,7 +6,7 @@
     "name": "高宏顺",
     "email": "18272669457@163.com"
   },
-  "updatedAt": "2026-07-22T01:08:00Z",
+  "updatedAt": "2026-07-22T16:30:00Z",
   "defaultStatus": "unsupported",
   "implementations": [
     "dotnet",
@@ -31,6 +31,8 @@
     "tool.file_write",
     "tool.file_edit",
     "tool.search",
+    "tool.computer_observe",
+    "tool.computer_interact",
     "executor.process",
     "executor.shell",
     "executor.process_tree_unix",
@@ -273,6 +275,45 @@
         "rust/src/tools.rs"
       ]
     },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.computer_observe"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/computer.rs",
+        "rust/src/tools.rs",
+        "rust/src/agent.rs",
+        "SPEC/adr/0032-experimental-desktop-computer.md",
+        "SPEC/schemas/domain/computer.schema.json",
+        "SPEC/schemas/computer-cases.schema.json",
+        "CONFORMANCE/fixtures/computer/computer-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": "Rust 已实现双环境门、本地 Unix DISPLAY allowlist 后的 Linux X11 observe/screenshot 原型、捕获边界与本语言聚焦测试；但 x11rb 0.13 会在适配层校验前按服务端 reply header 分配 transport buffer，当前没有恶意本地 X server 下的 hard allocation cap。共同证据仅覆盖静态 Schema、合成 fixture 和 claim 一致性；真实 daemon 动态门禁、Provider image_ref 续接与 UI artifact 读取/渲染视觉闭环也未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.computer_interact"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/computer.rs",
+        "rust/src/tools.rs",
+        "rust/src/agent.rs",
+        "SPEC/adr/0032-experimental-desktop-computer.md",
+        "SPEC/schemas/domain/computer.schema.json",
+        "SPEC/schemas/computer-cases.schema.json",
+        "CONFORMANCE/fixtures/computer/computer-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": "Rust 已实现双环境门、本地 Unix DISPLAY allowlist 后的 Linux XTEST 四动作原型、critical 逐次审批与本语言聚焦测试；共同证据当前不证明阻塞调用强取消、恶意 reply 的 transport 分配硬上限、X11 服务端错误、Wayland/XWayland 拒绝或跨平台行为。Provider/UI 视觉闭环也未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
+    },
+
     {
       "implementation": "rust",
       "target": {
@@ -798,6 +839,47 @@
         "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs"
       ]
     },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.computer_observe"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Tools/DesktopComputer.cs",
+        "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/DesktopComputerTests.cs",
+        "SPEC/adr/0032-experimental-desktop-computer.md",
+        "SPEC/schemas/domain/computer.schema.json",
+        "SPEC/schemas/computer-cases.schema.json",
+        "CONFORMANCE/fixtures/computer/computer-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": ".NET 已实现双环境门后的 Linux X11 observe/screenshot 原型、捕获边界与本语言聚焦测试；但本地 X server 断连仍可能触发 Xlib 进程级 XIO 默认处理、终止 daemon 并输出诊断，当前没有进程级故障隔离。共同证据当前仅覆盖静态 Schema、合成 fixture 和 claim 一致性。默认广告关闭，Wayland/XWayland、跨平台、真实 daemon 动态门禁、Provider image_ref 续接与 UI artifact 读取/渲染视觉闭环均未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
+        "id": "tool.computer_interact"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Tools/DesktopComputer.cs",
+        "dotnet/src/QxnmForge.Core/Tools/ToolRegistry.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/DesktopComputerTests.cs",
+        "SPEC/adr/0032-experimental-desktop-computer.md",
+        "SPEC/schemas/domain/computer.schema.json",
+        "SPEC/schemas/computer-cases.schema.json",
+        "CONFORMANCE/fixtures/computer/computer-cases.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": ".NET 已实现双环境门后的 Linux XTEST 四动作原型、critical 逐次审批与本语言聚焦测试；但本地 X server 断连仍可能触发 Xlib 进程级 XIO 默认处理、终止 daemon 并输出诊断，当前没有进程级故障隔离。共同证据当前不证明阻塞调用强取消、部分输入释放、X11 服务端错误、Wayland/XWayland 拒绝或跨平台行为。Provider/UI 视觉闭环也未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
+    },
+
     {
       "implementation": "dotnet",
       "target": {
@@ -3657,7 +3739,7 @@
         "SPEC/ui.md",
         "ui/README.md"
       ],
-      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，Computer Use 还要求交互审批方法和 durable 审批事件。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
+      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，ADR 0032 Computer Use 仅为默认关闭的 Community experimental/implemented 能力；当前没有同一路由的 tools + image_input conformant 证据，也没有 artifact 读取/渲染视觉闭环，插件不得标为就绪。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
     },
     {
       "implementation": "dotnet",
@@ -3699,7 +3781,7 @@
         "SPEC/ui.md",
         "ui/README.md"
       ],
-      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，Computer Use 还要求交互审批方法和 durable 审批事件。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
+      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，ADR 0032 Computer Use 仅为默认关闭的 Community experimental/implemented 能力；当前没有同一路由的 tools + image_input conformant 证据，也没有 artifact 读取/渲染视觉闭环，插件不得标为就绪。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
     }
   ]
 }

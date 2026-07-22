@@ -37,6 +37,9 @@ export interface PluginCatalogEntry {
   readonly requiredMethodIds: readonly string[];
   readonly requiredEventTypes: readonly string[];
   readonly capabilityMode: "all" | "any";
+  readonly readinessPolicy:
+    | "capability_intersection"
+    | "experimental_unavailable";
 }
 
 export interface PluginCapabilityStatus {
@@ -88,6 +91,7 @@ export const PLUGIN_CATALOG: readonly PluginCatalogEntry[] = [
     requiredMethodIds: [],
     requiredEventTypes: [],
     capabilityMode: "all",
+    readinessPolicy: "capability_intersection",
   },
   {
     pluginId: "computer-use",
@@ -110,6 +114,7 @@ export const PLUGIN_CATALOG: readonly PluginCatalogEntry[] = [
     requiredMethodIds: ["approval/respond"],
     requiredEventTypes: ["approval.requested", "approval.resolved"],
     capabilityMode: "all",
+    readinessPolicy: "experimental_unavailable",
   },
   {
     pluginId: "openai-docs",
@@ -128,6 +133,7 @@ export const PLUGIN_CATALOG: readonly PluginCatalogEntry[] = [
     requiredMethodIds: [],
     requiredEventTypes: [],
     capabilityMode: "all",
+    readinessPolicy: "capability_intersection",
   },
   {
     pluginId: "data-analytics",
@@ -146,6 +152,7 @@ export const PLUGIN_CATALOG: readonly PluginCatalogEntry[] = [
     requiredMethodIds: [],
     requiredEventTypes: [],
     capabilityMode: "all",
+    readinessPolicy: "capability_intersection",
   },
   {
     pluginId: "github-workflow",
@@ -164,6 +171,7 @@ export const PLUGIN_CATALOG: readonly PluginCatalogEntry[] = [
     requiredMethodIds: [],
     requiredEventTypes: [],
     capabilityMode: "all",
+    readinessPolicy: "capability_intersection",
   },
 ] as const;
 
@@ -171,7 +179,7 @@ export const PLUGIN_CATALOG: readonly PluginCatalogEntry[] = [
  * 计算插件需求与当前 application service 能力广告的精确交集。
  *
  * 输入：目录项和 initialize 返回的工具、方法及事件 ID；输出：可用、已广告与缺失集合。
- * 不变量：不会合成、补全或改写能力 ID；工具需求为空时不会被视为可运行能力。
+ * 不变量：不会合成、补全或改写能力 ID；工具需求为空或 readiness policy 明确冻结时不可用。
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
@@ -202,13 +210,16 @@ export function getPluginCapabilityStatus(
   const missingEventTypes = plugin.requiredEventTypes.filter(
     (eventType) => !supportedEvents.has(eventType),
   );
-  const available =
+  const capabilityRequirementsSatisfied =
     plugin.requiredToolIds.length > 0 &&
     missingMethodIds.length === 0 &&
     missingEventTypes.length === 0 &&
     (plugin.capabilityMode === "any"
       ? availableToolIds.length > 0
       : missingToolIds.length === 0);
+  const available =
+    plugin.readinessPolicy === "capability_intersection" &&
+    capabilityRequirementsSatisfied;
 
   return {
     available,

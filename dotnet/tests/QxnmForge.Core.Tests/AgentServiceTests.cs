@@ -108,7 +108,10 @@ public sealed class AgentServiceTests
         using var temporary = new TemporaryDirectory();
         var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
         await using var repository = new SessionRepository(Path.Combine(temporary.Path, "sessions"), workspace);
-        var service = new AgentService(repository, new FauxProvider());
+        var providerRequestObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new AgentService(
+            repository,
+            new FauxProvider(requestObserver: _ => providerRequestObserved.SetResult()));
         await repository.ConfigureFauxAsync(
             "session-cancel",
             new FauxScenario("0.1", "cancel", 0, [new FauxDelayStep(10_000)]),
@@ -120,13 +123,22 @@ public sealed class AgentServiceTests
             CancellationToken.None);
 
         var collecting = CollectAsync(service.RunAsync(run, CancellationToken.None));
-        await WaitForActiveEventsAsync(repository, "session-cancel", CancellationToken.None);
+        var startup = await Task.WhenAny(providerRequestObserved.Task, collecting)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        if (ReferenceEquals(startup, collecting))
+        {
+            await collecting;
+        }
+
+        Assert.Same(providerRequestObserved.Task, startup);
         Assert.Equal(
             "requested",
             await service.RequestCancellationAsync("session-cancel", run.RunId, CancellationToken.None));
-        Assert.Equal(
-            "alreadyRequested",
-            await service.RequestCancellationAsync("session-cancel", run.RunId, CancellationToken.None));
+        var repeatedCancellation = await service.RequestCancellationAsync(
+            "session-cancel",
+            run.RunId,
+            CancellationToken.None);
+        Assert.True(repeatedCancellation is "alreadyRequested" or "terminal");
         var events = await collecting;
 
         Assert.Equal("run.cancelled", events[^1].Type);
@@ -135,8 +147,11 @@ public sealed class AgentServiceTests
             static item => item.Type.StartsWith("run.", StringComparison.Ordinal) &&
                            item.Type is "run.completed" or "run.failed" or "run.cancelled" or "run.interrupted");
         var runtime = await repository.GetAsync("session-cancel", CancellationToken.None);
-        var attemptTrace = ReadProviderAttemptTrace(
-            await File.ReadAllLinesAsync(runtime.Journal.JournalPath, CancellationToken.None));
+        var journalLines = await File.ReadAllLinesAsync(runtime.Journal.JournalPath, CancellationToken.None);
+        Assert.Single(
+            journalLines.Skip(1),
+            static line => GetKind(line) == "run.cancellation_requested");
+        var attemptTrace = ReadProviderAttemptTrace(journalLines);
         Assert.Equal(["started", "cancelled"], attemptTrace.Statuses);
         Assert.True(attemptTrace.LastAttemptIndex < attemptTrace.RunTerminalIndex);
         Assert.Equal(
@@ -551,34 +566,6 @@ public sealed class AgentServiceTests
         }
 
         return events;
-    }
-
-    /// <summary>
-    /// 功能：等待 Agent 至少持久化 run.started，消除取消测试的启动竞态。
-    /// 作者：高宏顺
-    /// 邮箱：18272669457@163.com
-    /// </summary>
-    /// <param name="repository">session repository。</param>
-    /// <param name="sessionId">目标 session。</param>
-    /// <param name="cancellationToken">测试取消信号。</param>
-    /// <returns>观察到首个事件后的 Task。</returns>
-    private static async Task WaitForActiveEventsAsync(
-        SessionRepository repository,
-        string sessionId,
-        CancellationToken cancellationToken)
-    {
-        var runtime = await repository.GetAsync(sessionId, cancellationToken);
-        for (var attempt = 0; attempt < 100; attempt++)
-        {
-            if (runtime.Journal.LatestEventSequence > 0)
-            {
-                return;
-            }
-
-            await Task.Delay(10, cancellationToken);
-        }
-
-        throw new TimeoutException("agent did not start during test");
     }
 
     /// <summary>

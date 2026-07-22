@@ -35,17 +35,18 @@ describe("plugin catalog capability projection", () => {
   });
 
   /**
-   * 验证 Computer Use 必须等全部声明工具均被广告后才可启用。
+   * 验证 Computer Use 即使全部声明能力已广告也因实验性视觉闭环缺口保持不可用。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  it("requires every Computer Use capability before becoming available", () => {
+  it("keeps a complete Computer Use advertisement experimental and unavailable", () => {
     const plugin = PLUGIN_CATALOG.find(
       (entry) => entry.pluginId === "computer-use",
     );
 
     expect(plugin).toBeDefined();
+    expect(plugin!.readinessPolicy).toBe("experimental_unavailable");
     expect(
       getPluginCapabilityStatus(plugin!, ["computer.screenshot"]),
     ).toEqual({
@@ -65,7 +66,7 @@ describe("plugin catalog capability projection", () => {
         ["approval.requested", "approval.resolved"],
       ),
     ).toEqual({
-      available: true,
+      available: false,
       availableToolIds: [
         "computer.observe",
         "computer.screenshot",

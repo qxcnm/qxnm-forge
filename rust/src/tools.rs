@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+use crate::computer::{ComputerAction, DesktopComputer};
 use crate::domain::{ToolDefinition, ToolEffect, ToolOutput};
 use crate::error::{AgentError, ErrorCode};
 use crate::executor::{
@@ -33,6 +34,7 @@ pub struct ToolRegistry {
     sessions: SessionStore,
     executor: ProcessExecutor,
     hard_sandbox: HardSandboxState,
+    computer: Option<DesktopComputer>,
     max_read_bytes: usize,
     max_search_results: usize,
 }
@@ -80,6 +82,7 @@ impl ToolRegistry {
             sessions,
             executor: ProcessExecutor,
             hard_sandbox,
+            computer: DesktopComputer::detect(),
             max_read_bytes: 256 * 1024,
             max_search_results: 1_000,
         }
@@ -146,6 +149,9 @@ impl ToolRegistry {
             ),
         ];
         definitions.extend(executor_definitions());
+        if let Some(computer) = self.computer {
+            definitions.extend(computer_definitions(computer.interaction_available()));
+        }
         definitions
     }
 
@@ -286,6 +292,18 @@ impl ToolRegistry {
                     let _ = self.hard_sandbox.require_backend()?;
                 }
             }
+            "computer.observe" | "computer.screenshot" => {
+                require_only(arguments, &[])?;
+                self.computer
+                    .ok_or_else(computer_unavailable)?
+                    .preflight_observe()?;
+            }
+            "computer.interact" => {
+                let action = parse_computer_action(arguments)?;
+                self.computer
+                    .ok_or_else(computer_unavailable)?
+                    .preflight_interact(&action)?;
+            }
             _ => unreachable!("effect rejects unknown tools"),
         }
         Ok(effect)
@@ -305,6 +323,16 @@ impl ToolRegistry {
         effect: ToolEffect,
         interactive_approvals: bool,
     ) -> PolicyDecision {
+        if matches!(
+            effect,
+            ToolEffect::ComputerObserve | ToolEffect::ComputerInteract
+        ) {
+            return if interactive_approvals {
+                PolicyDecision::RequireApproval
+            } else {
+                PolicyDecision::Deny
+            };
+        }
         match self.policy.decide(effect) {
             PolicyDecision::Allow => PolicyDecision::Allow,
             PolicyDecision::RequireApproval | PolicyDecision::Deny if interactive_approvals => {
@@ -318,7 +346,7 @@ impl ToolRegistry {
     ///
     /// 输入：已知或未知工具名。
     /// 输出：只读 file.read/search.text 返回 true，其余返回 false。
-    /// 不变量：写入、进程、shell 和未知工具永不声明为幂等。
+    /// 不变量：写入、进程、shell、computer 和未知工具永不声明为幂等。
     /// 失败：本方法不返回错误。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -342,13 +370,13 @@ impl ToolRegistry {
         arguments: &Value,
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, AgentError> {
-        self.execute_authorized_for_call(session_id, "", name, arguments, cancellation)
+        self.execute_authorized_for_call(session_id, None, "", name, arguments, cancellation)
             .await
     }
 
     /// 功能：携带真实工具调用 ID 执行已完成审批交付屏障的工具。
     ///
-    /// 输入：Session ID、Provider 原始 tool-call ID、工具名、精确参数与取消令牌。
+    /// 输入：Session ID、可信 Agent run ID、Provider 原始 tool-call ID、工具名、精确参数与取消令牌。
     /// 输出：规范化内联文本、artifact 或执行结果。
     /// 不变量：tool-call ID 仅用于双门 conformance checkpoint 精确匹配，不改变审批、operation hash 或生产工具语义。
     /// 失败：重复 preflight、路径、barrier、I/O、进程或取消错误按既有结构化边界返回。
@@ -357,6 +385,7 @@ impl ToolRegistry {
     pub(crate) async fn execute_authorized_for_call(
         &self,
         session_id: &str,
+        run_id: Option<&str>,
         tool_call_id: &str,
         name: &str,
         arguments: &Value,
@@ -371,6 +400,15 @@ impl ToolRegistry {
             "search.text" => self.search(arguments).await,
             "process.exec" => self.process(session_id, arguments, cancellation).await,
             "shell.exec" => self.shell(session_id, arguments, cancellation).await,
+            "computer.observe" => {
+                self.capture_desktop(session_id, run_id, "observed", cancellation)
+                    .await
+            }
+            "computer.screenshot" => {
+                self.capture_desktop(session_id, run_id, "captured", cancellation)
+                    .await
+            }
+            "computer.interact" => self.interact_with_desktop(arguments, cancellation).await,
             _ => Err(AgentError::new(
                 ErrorCode::ToolNotFound,
                 format!("unknown tool: {name}"),
@@ -387,11 +425,89 @@ impl ToolRegistry {
             "file.write" | "file.edit" => Ok(ToolEffect::Write),
             "process.exec" => Ok(ToolEffect::Process),
             "shell.exec" => Ok(ToolEffect::Shell),
+            "computer.observe" | "computer.screenshot" if self.computer.is_some() => {
+                Ok(ToolEffect::ComputerObserve)
+            }
+            "computer.interact"
+                if self
+                    .computer
+                    .is_some_and(DesktopComputer::interaction_available) =>
+            {
+                Ok(ToolEffect::ComputerInteract)
+            }
             _ => Err(AgentError::new(
                 ErrorCode::ToolNotFound,
                 format!("unknown tool: {name}"),
             )),
         }
+    }
+
+    /// 功能：捕获桌面、durable 保存 PNG，并返回不含主机路径的 artifact 结果。
+    ///
+    /// 输入：当前 Session ID、可信 Agent run ID、稳定动作描述与运行级取消令牌。
+    /// 输出：包含尺寸、指针坐标和 PNG artifact 引用的工具结果。
+    /// 不变量：截图字节先发布并追加 artifact.created，随后才返回工具结果。
+    /// 失败：后端、阻塞任务或 artifact 发布失败时返回结构化错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    async fn capture_desktop(
+        &self,
+        session_id: &str,
+        run_id: Option<&str>,
+        action: &str,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, AgentError> {
+        let run_id = run_id
+            .filter(|value| !value.is_empty())
+            .ok_or_else(computer_context_unavailable)?;
+        let computer = self.computer.ok_or_else(computer_unavailable)?;
+        let blocking_cancellation = cancellation.clone();
+        let capture = tokio::task::spawn_blocking(move || computer.capture(&blocking_cancellation))
+            .await
+            .map_err(|_| computer_unavailable())??;
+        if cancellation.is_cancelled() {
+            return Err(computer_cancelled());
+        }
+        let artifact = self
+            .sessions
+            .store_computer_screenshot_artifact(session_id, run_id, &capture.png, &cancellation)
+            .await?;
+        let mut metadata = std::collections::BTreeMap::new();
+        metadata.insert("width".to_owned(), json!(capture.width));
+        metadata.insert("height".to_owned(), json!(capture.height));
+        metadata.insert("pointerX".to_owned(), json!(capture.pointer_x));
+        metadata.insert("pointerY".to_owned(), json!(capture.pointer_y));
+        Ok(ToolOutput {
+            text: Some(format!(
+                "desktop {action}: {}x{}, pointer=({}, {})",
+                capture.width, capture.height, capture.pointer_x, capture.pointer_y
+            )),
+            artifact: Some(artifact),
+            termination_reason: None,
+            execution: None,
+            metadata,
+        })
+    }
+
+    /// 功能：解析并在阻塞桌面 backend 中执行一次已授权交互。
+    ///
+    /// 输入：经过 Provider 传入的封闭 JSON 参数。
+    /// 输出：动作成功后的有界文本结果。
+    /// 不变量：本方法只在 `execute_authorized` 边界调用，且重新验证完整参数。
+    /// 失败：参数、backend 或输入注入失败时返回结构化错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    async fn interact_with_desktop(
+        &self,
+        arguments: &Value,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, AgentError> {
+        let action = parse_computer_action(arguments)?;
+        let computer = self.computer.ok_or_else(computer_unavailable)?;
+        tokio::task::spawn_blocking(move || computer.interact(&action, &cancellation))
+            .await
+            .map_err(|_| computer_unavailable())??;
+        Ok(text_output("desktop interaction completed"))
     }
 
     /// 功能：读取工作区内 UTF-8 文件，并将超过内联阈值但未超过硬读取上限的内容转存为 artifact。
@@ -789,6 +905,104 @@ fn executor_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
+/// 功能：按启动期真实 backend 能力构造 computer 工具定义。
+///
+/// 输入：XTEST 交互是否已探测成功。
+/// 输出：始终包含 observe/screenshot，条件包含 interact 的定义列表。
+/// 不变量：交互参数使用封闭 action 枚举和有界坐标、滚动、键盘字段。
+/// 失败：本方法不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn computer_definitions(interaction_available: bool) -> Vec<ToolDefinition> {
+    let empty_schema = json!({
+        "type":"object",
+        "properties":{},
+        "required":[],
+        "additionalProperties":false
+    });
+    let mut definitions = vec![
+        definition(
+            "computer.observe",
+            "观察当前桌面，返回显示几何、指针位置和 PNG artifact",
+            ToolEffect::ComputerObserve,
+            empty_schema.clone(),
+        ),
+        definition(
+            "computer.screenshot",
+            "截取当前桌面并返回 durable PNG artifact",
+            ToolEffect::ComputerObserve,
+            empty_schema,
+        ),
+    ];
+    if interaction_available {
+        definitions.push(definition(
+            "computer.interact",
+            "在逐次审批后执行鼠标移动、点击、滚动或受限命名按键",
+            ToolEffect::ComputerInteract,
+            json!({
+                "type":"object",
+                "x-discriminator":"action",
+                "oneOf":[
+                    {
+                        "type":"object",
+                        "properties":{
+                            "action":{"const":"move"},
+                            "x":{"type":"integer","minimum":0,"maximum":16383},
+                            "y":{"type":"integer","minimum":0,"maximum":16383}
+                        },
+                        "required":["action","x","y"],
+                        "additionalProperties":false
+                    },
+                    {
+                        "type":"object",
+                        "properties":{
+                            "action":{"const":"click"},
+                            "x":{"type":"integer","minimum":0,"maximum":16383},
+                            "y":{"type":"integer","minimum":0,"maximum":16383},
+                            "button":{"type":"string","enum":["left","middle","right"]},
+                            "clicks":{"type":"integer","minimum":1,"maximum":3}
+                        },
+                        "required":["action","x","y","button","clicks"],
+                        "additionalProperties":false
+                    },
+                    {
+                        "type":"object",
+                        "properties":{
+                            "action":{"const":"scroll"},
+                            "deltaX":{"type":"integer","minimum":-20,"maximum":20},
+                            "deltaY":{"type":"integer","minimum":-20,"maximum":20}
+                        },
+                        "required":["action","deltaX","deltaY"],
+                        "additionalProperties":false
+                    },
+                    {
+                        "type":"object",
+                        "properties":{
+                            "action":{"const":"key"},
+                            "key":{
+                                "type":"string",
+                                "enum":[
+                                    "enter","tab","escape","backspace","delete","home","end",
+                                    "page_up","page_down","left","right","up","down","space"
+                                ]
+                            },
+                            "modifiers":{
+                                "type":"array",
+                                "items":{"type":"string","enum":["shift","control","alt","meta"]},
+                                "maxItems":4,
+                                "uniqueItems":true
+                            }
+                        },
+                        "required":["action","key","modifiers"],
+                        "additionalProperties":false
+                    }
+                ]
+            }),
+        ));
+    }
+    definitions
+}
+
 #[cfg(not(target_os = "linux"))]
 /// 功能：在尚未实现受支持进程组或 Windows suspended Job 绑定的平台返回空执行工具定义。
 ///
@@ -1073,6 +1287,184 @@ fn required_array<'a>(arguments: &'a Value, key: &str) -> Result<&'a [Value], Ag
         .ok_or_else(|| invalid_arguments(format!("'{key}' must be an array")))
 }
 
+/// 功能：解析 computer.interact 的 action-specific 参数并拒绝含糊操作。
+///
+/// 输入：未经信任的 JSON 参数对象。
+/// 输出：边界完整的封闭 ComputerAction。
+/// 不变量：每个 action 只允许其精确字段；坐标为 0..16383，滚动最多 20 格且 0/0 是安全 no-op。
+/// 失败：字段缺失、类型、范围、重复修饰键或命名键不在 allowlist 时返回参数错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn parse_computer_action(arguments: &Value) -> Result<ComputerAction, AgentError> {
+    match required_string(arguments, "action")? {
+        "move" => {
+            require_only(arguments, &["action", "x", "y"])?;
+            Ok(ComputerAction::Move {
+                x: required_coordinate(arguments, "x")?,
+                y: required_coordinate(arguments, "y")?,
+            })
+        }
+        "click" => {
+            require_only(arguments, &["action", "x", "y", "button", "clicks"])?;
+            let button = match required_string(arguments, "button")? {
+                "left" => 1,
+                "middle" => 2,
+                "right" => 3,
+                _ => return Err(invalid_arguments("unsupported mouse button")),
+            };
+            let clicks = required_integer(arguments, "clicks", 1, 3)? as u8;
+            Ok(ComputerAction::Click {
+                x: required_coordinate(arguments, "x")?,
+                y: required_coordinate(arguments, "y")?,
+                button,
+                clicks,
+            })
+        }
+        "scroll" => {
+            require_only(arguments, &["action", "deltaX", "deltaY"])?;
+            let delta_x = required_integer(arguments, "deltaX", -20, 20)? as i16;
+            let delta_y = required_integer(arguments, "deltaY", -20, 20)? as i16;
+            Ok(ComputerAction::Scroll { delta_x, delta_y })
+        }
+        "key" => {
+            require_only(arguments, &["action", "key", "modifiers"])?;
+            let key = required_string(arguments, "key")?;
+            if !is_supported_computer_key(key) {
+                return Err(invalid_arguments("unsupported computer key"));
+            }
+            let mut modifiers = Vec::new();
+            for value in required_array(arguments, "modifiers")? {
+                let modifier = value
+                    .as_str()
+                    .filter(|value| matches!(*value, "shift" | "control" | "alt" | "meta"))
+                    .ok_or_else(|| invalid_arguments("unsupported key modifier"))?;
+                if modifiers.iter().any(|existing| existing == modifier) {
+                    return Err(invalid_arguments("key modifiers must be unique"));
+                }
+                modifiers.push(modifier.to_owned());
+            }
+            if modifiers.len() > 4 {
+                return Err(invalid_arguments("too many key modifiers"));
+            }
+            Ok(ComputerAction::Key {
+                key: key.to_owned(),
+                modifiers,
+            })
+        }
+        _ => Err(invalid_arguments("unsupported computer action")),
+    }
+}
+
+/// 功能：纯函数校验 computer.interact 的封闭命名键集合。
+///
+/// 输入：未经信任的键名字符串。
+/// 输出：仅固定十四个可移植命名键返回 true。
+/// 不变量：不接受单字符、控制字符、别名、大小写折叠或 Unicode 近似值。
+/// 失败：本方法不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn is_supported_computer_key(key: &str) -> bool {
+    matches!(
+        key,
+        "enter"
+            | "tab"
+            | "escape"
+            | "backspace"
+            | "delete"
+            | "home"
+            | "end"
+            | "page_up"
+            | "page_down"
+            | "left"
+            | "right"
+            | "up"
+            | "down"
+            | "space"
+    )
+}
+
+/// 功能：读取有符号整数并限制在闭区间内。
+///
+/// 输入：未经信任的参数对象、字段名与闭区间上下界。
+/// 输出：字段存在、类型为整数且位于闭区间时返回其 i64 值。
+/// 不变量：不做字符串转换、浮点截断或区间外钳制。
+/// 失败：对象、字段、类型或范围无效时返回结构化参数错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn required_integer(
+    arguments: &Value,
+    key: &str,
+    minimum: i64,
+    maximum: i64,
+) -> Result<i64, AgentError> {
+    object(arguments)?
+        .get(key)
+        .and_then(Value::as_i64)
+        .filter(|value| (minimum..=maximum).contains(value))
+        .ok_or_else(|| invalid_arguments(format!("'{key}' is outside its integer boundary")))
+}
+
+/// 功能：读取 XTEST 可表示的非负绝对坐标。
+///
+/// 输入：未经信任的参数对象与目标坐标字段名。
+/// 输出：字段属于 0..=16383 时返回无损 i16 坐标。
+/// 不变量：复用闭区间整数验证，不接受负数、浮点、字符串或更大坐标。
+/// 失败：字段缺失、类型/范围无效或转换失败时返回结构化参数错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn required_coordinate(arguments: &Value, key: &str) -> Result<i16, AgentError> {
+    i16::try_from(required_integer(arguments, key, 0, 16_383)?)
+        .map_err(|_| invalid_arguments(format!("'{key}' is outside its coordinate boundary")))
+}
+
+/// 功能：创建 computer backend 运行期消失时的脱敏错误。
+///
+/// 输入：无。
+/// 输出：固定 code、message 与 kind 的结构化 backend 不可用错误。
+/// 不变量：不包含 DISPLAY、路径、窗口标题、像素、动作参数或原生库诊断。
+/// 失败：本函数始终构造错误值，本身不返回失败。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn computer_unavailable() -> AgentError {
+    AgentError::new(
+        ErrorCode::InternalError,
+        "desktop computer backend is unavailable",
+    )
+    .with_details(json!({"kind":"computer_unavailable"}))
+}
+
+/// 功能：创建缺少可信 Agent run 上下文时的 computer 截图失败关闭错误。
+///
+/// 输入：无；调用方已确认公共执行入口没有可信 run ID。
+/// 输出：不包含模型参数或宿主标识的结构化内部错误。
+/// 不变量：调用方不得回退为从工具 arguments 读取 runId。
+/// 失败：本函数始终返回错误值。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn computer_context_unavailable() -> AgentError {
+    AgentError::new(
+        ErrorCode::InternalError,
+        "desktop computer run context is unavailable",
+    )
+    .with_details(json!({"kind":"computer_context_unavailable"}))
+}
+
+/// 功能：创建 computer 阻塞任务结束后观察到取消时的稳定错误。
+///
+/// 输入：无；调用方已在阻塞任务返回后观察到运行级取消。
+/// 输出：固定 code、message 与 kind 的结构化取消错误。
+/// 不变量：不包含截图内容、DISPLAY、动作参数或宿主诊断。
+/// 失败：本函数始终构造错误值，本身不返回失败。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn computer_cancelled() -> AgentError {
+    AgentError::new(
+        ErrorCode::Cancelled,
+        "desktop computer operation was cancelled",
+    )
+    .with_details(json!({"kind":"cancelled"}))
+}
+
 /// 功能：读取 1 至 600000 毫秒的可选超时，缺失时使用 120 秒默认值。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -1125,7 +1517,8 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     use super::MAX_FILE_READ_BYTES;
-    use super::ToolRegistry;
+    use super::{ToolRegistry, computer_definitions, parse_computer_action};
+    use crate::computer::ComputerAction;
     use crate::error::ErrorCode;
     use crate::policy::{ToolPolicy, WorkspaceGuard};
     use crate::session::SessionStore;
@@ -1274,6 +1667,197 @@ mod tests {
         assert_eq!(error.code, ErrorCode::InternalError);
         assert_eq!(error.details["kind"], "sandbox_unavailable");
         assert!(!workspace.path().join("must-not-exist").exists());
+        Ok(())
+    }
+
+    /// 功能：验证 computer.interact schema 与 parser 共享同一四动作封闭接受集合。
+    ///
+    /// 输入：边界坐标、0/0 scroll、全部命名键，以及 text、单字符、控制字符、额外字段和超界反例。
+    /// 输出：安全动作通过，所有 schema 禁止形状在 preflight parser 处拒绝。
+    /// 不变量：测试不依赖环境门、display 或真实输入注入。
+    /// 失败：oneOf/discriminator、动作字段或 parser allowlist 漂移时断言失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn computer_schema_and_parser_are_closed_and_consistent() {
+        let definition = computer_definitions(true)
+            .into_iter()
+            .find(|definition| definition.name == "computer.interact")
+            .expect("interact definition must exist when XTEST is available");
+        assert_eq!(definition.input_schema["x-discriminator"], "action");
+        let branches = definition.input_schema["oneOf"]
+            .as_array()
+            .expect("interact schema must use oneOf");
+        assert_eq!(branches.len(), 4);
+        let actions = branches
+            .iter()
+            .map(|branch| {
+                assert_eq!(branch["additionalProperties"], false);
+                branch["properties"]["action"]["const"]
+                    .as_str()
+                    .expect("each branch must have an action const")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actions, ["move", "click", "scroll", "key"]);
+        assert_eq!(branches[0]["properties"]["x"]["maximum"], json!(16_383));
+        assert_eq!(branches[0]["required"], json!(["action", "x", "y"]));
+        assert!(matches!(
+            parse_computer_action(&json!({"action":"move","x":16383,"y":0})),
+            Ok(ComputerAction::Move { x: 16383, y: 0 })
+        ));
+        assert!(matches!(
+            parse_computer_action(&json!({"action":"scroll","deltaX":0,"deltaY":0})),
+            Ok(ComputerAction::Scroll {
+                delta_x: 0,
+                delta_y: 0
+            })
+        ));
+        for key in [
+            "enter",
+            "tab",
+            "escape",
+            "backspace",
+            "delete",
+            "home",
+            "end",
+            "page_up",
+            "page_down",
+            "left",
+            "right",
+            "up",
+            "down",
+            "space",
+        ] {
+            assert!(
+                parse_computer_action(&json!({"action":"key","key":key,"modifiers":[]})).is_ok()
+            );
+        }
+        for invalid in [
+            json!({"action":"move","x":16384,"y":0}),
+            json!({"action":"move","x":0,"y":0,"button":"left"}),
+            json!({"action":"text","text":"hello"}),
+            json!({"action":"key","key":"a","modifiers":[]}),
+            json!({"action":"key","key":"\n","modifiers":[]}),
+            json!({"action":"key","key":"enter","modifiers":["shift","shift"]}),
+        ] {
+            assert!(
+                parse_computer_action(&invalid).is_err(),
+                "accepted {invalid}"
+            );
+        }
+    }
+
+    /// 功能：验证无可信 Agent run 上下文的截图入口在 backend 探测前失败关闭。
+    ///
+    /// 输入：普通测试 registry、空模型参数和缺失 run ID。
+    /// 输出：稳定 computer_context_unavailable，且不需要 desktop 环境门。
+    /// 不变量：runId 不能从 arguments 获取，也不连接 X11 或创建 artifact。
+    /// 失败：错误边界漂移或意外进入捕获时测试失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn screenshot_without_trusted_run_context_fails_closed()
+    -> Result<(), crate::error::AgentError> {
+        let workspace = tempdir()?;
+        let state = tempdir()?;
+        let registry = ToolRegistry::new(
+            WorkspaceGuard::new(workspace.path())?,
+            ToolPolicy::allow_all_for_host(),
+            SessionStore::new(state.path(), 1024).await?,
+        );
+        assert_eq!(
+            registry.policy_decision(crate::domain::ToolEffect::ComputerObserve, true),
+            crate::policy::PolicyDecision::RequireApproval
+        );
+        assert_eq!(
+            registry.policy_decision(crate::domain::ToolEffect::ComputerInteract, true),
+            crate::policy::PolicyDecision::RequireApproval
+        );
+        assert_eq!(
+            registry.policy_decision(crate::domain::ToolEffect::ComputerObserve, false),
+            crate::policy::PolicyDecision::Deny
+        );
+        assert_eq!(
+            registry.policy_decision(crate::domain::ToolEffect::ComputerInteract, false),
+            crate::policy::PolicyDecision::Deny
+        );
+        assert_eq!(
+            registry.policy_decision(crate::domain::ToolEffect::Write, true),
+            crate::policy::PolicyDecision::Allow
+        );
+        let error = registry
+            .capture_desktop("s1", None, "captured", CancellationToken::new())
+            .await
+            .expect_err("missing trusted run context must fail");
+        assert_eq!(error.details["kind"], "computer_context_unavailable");
+        Ok(())
+    }
+
+    /// 功能：在显式独立原生 X11 fixture 下验证 computer 能力、参数预检和真实 PNG artifact。
+    ///
+    /// 输入：测试进程继承的独立原生 X11/XTEST fixture 与精确环境门。
+    /// 输出：可观察 backend 可用时广告 observe/screenshot，仅 XTEST 可用时广告 interact；本 fixture 中三者均出现，截图具有 PNG 魔数且可由 Session store 复核。
+    /// 不变量：默认门禁显式标为 ignored 而不伪装通过；手动执行时缺少任一环境/backend 条件必须失败；不执行鼠标或键盘动作。
+    /// 失败：探测、定义、参数、捕获、持久化或内容绑定不一致时测试失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "requires explicit double gate and isolated native X11/XTEST desktop fixture"]
+    async fn enabled_desktop_computer_captures_durable_png() -> Result<(), crate::error::AgentError>
+    {
+        let workspace = tempdir()?;
+        let state = tempdir()?;
+        let sessions = SessionStore::new(state.path(), 1024).await?;
+        sessions.create_session("s1", workspace.path()).await?;
+        sessions
+            .append_record(
+                "s1",
+                "run.accepted",
+                json!({
+                    "runId":"run-live","inputMessageId":"message-live",
+                    "provider":{"id":"faux","modelId":"faux-v1"}
+                }),
+            )
+            .await?;
+        let registry = ToolRegistry::new(
+            WorkspaceGuard::new(workspace.path())?,
+            ToolPolicy::allow_all_for_host(),
+            sessions.clone(),
+        );
+        let names = registry
+            .definitions()
+            .into_iter()
+            .map(|definition| definition.name)
+            .collect::<Vec<_>>();
+        assert!(names.iter().any(|name| name == "computer.observe"));
+        assert!(names.iter().any(|name| name == "computer.screenshot"));
+        assert!(names.iter().any(|name| name == "computer.interact"));
+        assert_eq!(
+            registry.preflight("computer.interact", &json!({"action":"move","x":10,"y":10}),)?,
+            crate::domain::ToolEffect::ComputerInteract
+        );
+        let output = registry
+            .execute_authorized_for_call(
+                "s1",
+                Some("run-live"),
+                "call-live",
+                "computer.screenshot",
+                &json!({}),
+                CancellationToken::new(),
+            )
+            .await?;
+        let artifact = output.artifact.as_ref().ok_or_else(|| {
+            crate::error::AgentError::new(ErrorCode::InternalError, "screenshot artifact missing")
+        })?;
+        assert_eq!(
+            artifact.extensions["org.agentprotocol.computer"]["runId"],
+            "run-live"
+        );
+        let bytes = sessions
+            .read_verified_image_artifact("s1", artifact, 32 * 1024 * 1024)
+            .await?;
+        assert!(bytes.starts_with(&[137, 80, 78, 71, 13, 10, 26, 10]));
         Ok(())
     }
 }

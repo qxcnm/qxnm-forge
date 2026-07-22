@@ -49,7 +49,7 @@ public abstract record MessageContent
     public string? Text { get; }
 
     /// <summary>
-    /// 功能：取得 image_ref 的 artifact 引用；非引用块为 null。
+    /// 功能：取得 image_ref 或 artifact_ref 的 artifact 引用；非引用块为 null。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -111,6 +111,27 @@ public sealed record ImageReferenceContent : MessageContent
         string? alt = null,
         JsonElement? extensions = null)
         : base("image_ref", null, artifact, alt, extensions)
+    {
+    }
+}
+
+/// <summary>
+/// 功能：表示不内联字节或主机路径的 portable artifact_ref 内容块。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+public sealed record ArtifactReferenceContent : MessageContent
+{
+    /// <summary>
+    /// 功能：创建只携带 durable artifact 元数据的 artifact_ref。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="artifact">同一 Session 内已经 durable 的 artifact 引用。</param>
+    /// <param name="extensions">可选扩展对象。</param>
+    /// <remarks>不变量：本对象从不包含 base64、URL 或 host path。</remarks>
+    public ArtifactReferenceContent(ArtifactReference artifact, JsonElement? extensions = null)
+        : base("artifact_ref", null, artifact, null, extensions)
     {
     }
 }

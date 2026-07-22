@@ -210,6 +210,37 @@ public sealed class OpenRouterImagesTests
     }
 
     /// <summary>
+    /// 功能：确认 Unix artifact 不受调用者 umask 放宽并始终只允许 owner 读写。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>异步测试 Task。</returns>
+    [Fact]
+    public async Task ArtifactStoreUsesOwnerOnlyUnixMode()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var temporary = new TemporaryDirectory();
+        var session = Directory.CreateDirectory(System.IO.Path.Combine(temporary.Path, "session")).FullName;
+        Directory.CreateDirectory(System.IO.Path.Combine(session, "artifacts"));
+        var reference = await SessionArtifactStore.PublishImageAsync(
+            session,
+            "image/png",
+            Png,
+            1024,
+            CancellationToken.None);
+
+        var mode = File.GetUnixFileMode(System.IO.Path.Combine(
+            session,
+            "artifacts",
+            reference.ArtifactId));
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, mode);
+    }
+
+    /// <summary>
     /// 功能：确认 leaf symlink 即使目标字节/hash 正确也不能作为输入 artifact 打开。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com

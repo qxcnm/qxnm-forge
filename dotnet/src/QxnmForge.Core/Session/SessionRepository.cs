@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using QxnmForge.Agent;
 using QxnmForge.Domain;
 
@@ -378,6 +379,73 @@ public sealed class SessionRepository : IAsyncDisposable
         await runtime.Journal.AppendAsync(
             "artifact.created",
             new { Artifact = artifact },
+            cancellationToken).ConfigureAwait(false);
+        return artifact;
+    }
+
+    /// <summary>
+    /// 功能：在指定 active run 内 durable 发布 computer 工具生成的 PNG artifact。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionId">工具调用所属 opaque Session ID。</param>
+    /// <param name="runId">必须仍为该 Session 唯一 active run 的 ID。</param>
+    /// <param name="bytes">已在内存完成编码且不超过 32 MiB 的 PNG。</param>
+    /// <param name="cancellationToken">发布与 journal flush 取消信号。</param>
+    /// <returns>文件和 artifact.created 均 durable 后的不含路径引用。</returns>
+    /// <remarks>不变量：与 lifecycle/run 状态共享 StateGate；只接受未请求取消且未终止的当前 active run，不能向其他 Session 注入 artifact。</remarks>
+    /// <exception cref="SessionMutationException">run 已结束、被替换或 Session 生命周期变更。</exception>
+    /// <exception cref="ArtifactValidationException">PNG 大小或魔数非法。</exception>
+    internal async Task<ArtifactReference> PublishToolScreenshotAsync(
+        string sessionId,
+        string runId,
+        ReadOnlyMemory<byte> bytes,
+        CancellationToken cancellationToken = default)
+    {
+        using var runtimeUse = await AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: true,
+            cancellationToken).ConfigureAwait(false);
+        var runtime = runtimeUse.Runtime;
+        if (runtime.ActiveRun is null ||
+            !string.Equals(runtime.ActiveRun.RunId, runId, StringComparison.Ordinal) ||
+            runtime.ActiveRun.CancellationRequested ||
+            runtime.ActiveRun.TerminalStatus is not null)
+        {
+            throw new SessionMutationException(-32004, true, "session_run_changed");
+        }
+
+        var publishedArtifact = await SessionArtifactStore.PublishImageAsync(
+            runtime.Journal.DirectoryPath,
+            "image/png",
+            bytes,
+            32 * 1024 * 1024,
+            cancellationToken).ConfigureAwait(false);
+        var computerMetadata = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["source"] = "desktop_capture",
+            ["runId"] = runId,
+            ["sensitivity"] = "desktop_sensitive",
+            ["retention"] = "session_lifecycle",
+        };
+        var artifact = publishedArtifact with
+        {
+            Extensions = JsonSerializer.SerializeToElement(
+                new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["org.agentprotocol.computer"] = computerMetadata,
+                }),
+        };
+        await runtime.Journal.AppendAsync(
+            "artifact.created",
+            new
+            {
+                Artifact = artifact,
+                Extensions = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["org.agentprotocol.computer"] = computerMetadata,
+                },
+            },
             cancellationToken).ConfigureAwait(false);
         return artifact;
     }

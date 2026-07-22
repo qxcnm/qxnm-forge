@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::agent_profile::AgentProfileRunSnapshot;
 use crate::domain::{
     ArtifactRef, ContentBlock, EventEnvelope, FinishReason, Message, ProviderEvent, Role,
-    ToolEffect, ToolOutput, Usage,
+    ToolEffect, ToolOutput, Usage, artifact_content_type,
 };
 use crate::error::{AgentError, ErrorCode};
 use crate::policy::PolicyDecision;
@@ -1550,6 +1550,7 @@ impl Agent {
                         self.tools
                             .execute_authorized_for_call(
                                 &request.session_id,
+                                Some(&request.run_id),
                                 &call.call_id,
                                 &call.name,
                                 &call.arguments,
@@ -1693,6 +1694,7 @@ impl Agent {
                                         self.tools
                                             .execute_authorized_for_call(
                                                 &request.session_id,
+                                                Some(&request.run_id),
                                                 &call.call_id,
                                                 &call.name,
                                                 &call.arguments,
@@ -2631,6 +2633,11 @@ fn approval_request(
         ToolEffect::Write => ("medium", "工具将修改工作区内容。"),
         ToolEffect::Process | ToolEffect::Shell => ("high", "工具将启动本机进程。"),
         ToolEffect::Terminal => ("high", "工具将打开持续终端任务。"),
+        ToolEffect::ComputerObserve => (
+            "high",
+            "工具将读取完整可见桌面并在 Session 生命周期内持久化敏感截图。",
+        ),
+        ToolEffect::ComputerInteract => ("critical", "工具将控制当前桌面的鼠标或键盘。"),
         ToolEffect::Read => ("low", "工具将读取工作区资源。"),
     };
     let resources = approval_resources(call, effect);
@@ -2658,6 +2665,17 @@ fn approval_request(
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 fn approval_resources(call: &CompleteToolCall, effect: ToolEffect) -> Vec<Value> {
+    if effect == ToolEffect::ComputerObserve {
+        return vec![json!({"kind":"other","value":"desktop:screen"})];
+    }
+    if effect == ToolEffect::ComputerInteract {
+        let action = call
+            .arguments
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return vec![json!({"kind":"other","value":format!("desktop:{action}")})];
+    }
     if let Some(path) = call.arguments.get("path").and_then(Value::as_str) {
         return vec![json!({"kind":"path","value":path})];
     }
@@ -2921,7 +2939,7 @@ fn portable_tool_result(output: &ToolOutput, is_error: bool) -> Value {
         content.push(json!({"type":"text","text":text}));
     }
     if let Some(artifact) = &output.artifact {
-        content.push(json!({"type":"artifact_ref","artifact":artifact}));
+        content.push(json!({"type":artifact_content_type(artifact),"artifact":artifact}));
     }
     if content.is_empty() {
         content.push(json!({"type":"text","text":""}));
@@ -3266,14 +3284,17 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        Agent, CompleteToolCall, DEFAULT_APPROVAL_TIMEOUT, QueueKind, RunRequest,
-        approval_timeout_from_text, operation_hash, validate_complete_tool_batch,
+        Agent, CompleteToolCall, DEFAULT_APPROVAL_TIMEOUT, QueueKind, RunRequest, approval_request,
+        approval_timeout_from_text, operation_hash, portable_tool_result,
+        validate_complete_tool_batch,
     };
     use crate::agent_profile::{
         AgentProfileBehavior, AgentProfileModel, AgentProfileRunSnapshot, DangerousActionMode,
         ResponseStyle,
     };
-    use crate::domain::{EventEnvelope, FinishReason, ProviderEvent};
+    use crate::domain::{
+        ArtifactRef, EventEnvelope, FinishReason, ProviderEvent, ToolEffect, ToolOutput,
+    };
     use crate::error::{AgentError, ErrorCode};
     use crate::policy::{ToolPolicy, WorkspaceGuard};
     use crate::protocol::{
@@ -3298,6 +3319,102 @@ mod tests {
             "9f0e665711f1eeb35858845b61f10f2b703237a18290df088d4c9e41207e539d"
         );
         Ok(())
+    }
+
+    /// 功能：验证 computer 审批风险与资源精确绑定完整屏幕或单个动作。
+    ///
+    /// 输入：observe 及 move/click/scroll/key 四个 synthetic 完整工具调用。
+    /// 输出：observe=high/desktop:screen，interact=critical/desktop:<action>，选择仅 allow_once/deny。
+    /// 不变量：测试不执行工具、不访问 display，也不从先前决定推导持续授权。
+    /// 失败：风险、资源或选择集合漂移时断言失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn computer_approvals_are_per_action_and_never_cached() {
+        let observe = CompleteToolCall {
+            call_id: "call-observe".to_owned(),
+            name: "computer.screenshot".to_owned(),
+            arguments: json!({}),
+        };
+        let observe_approval = approval_request(
+            "approval-observe",
+            &observe,
+            ToolEffect::ComputerObserve,
+            &"a".repeat(64),
+            Duration::from_secs(30),
+        );
+        assert_eq!(observe_approval["risk"], "high");
+        assert_eq!(
+            observe_approval["resources"],
+            json!([{"kind":"other","value":"desktop:screen"}])
+        );
+        assert_eq!(observe_approval["choices"], json!(["allow_once", "deny"]));
+
+        for action in ["move", "click", "scroll", "key"] {
+            let call = CompleteToolCall {
+                call_id: format!("call-{action}"),
+                name: "computer.interact".to_owned(),
+                arguments: json!({"action":action}),
+            };
+            let approval = approval_request(
+                &format!("approval-{action}"),
+                &call,
+                ToolEffect::ComputerInteract,
+                &"b".repeat(64),
+                Duration::from_secs(30),
+            );
+            assert_eq!(approval["risk"], "critical");
+            assert_eq!(
+                approval["resources"],
+                json!([{"kind":"other","value":format!("desktop:{action}")}])
+            );
+            assert_eq!(approval["choices"], json!(["allow_once", "deny"]));
+        }
+    }
+
+    /// 功能：验证 portable ToolResult 对 image MIME 使用 image_ref，普通 artifact 保持 artifact_ref。
+    ///
+    /// 输入：同一 synthetic ArtifactRef 分别使用 image/png 与 text/plain。
+    /// 输出：图像 content 类型为 image_ref，非图像为 artifact_ref。
+    /// 不变量：不内联 bytes、base64 或主机路径，artifact 引用字段原样保留。
+    /// 失败：MIME 路由或 portable 内容形状漂移时断言失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn portable_tool_result_uses_image_ref_for_image_mime() {
+        let mut artifact = ArtifactRef {
+            artifact_id: "artifact-image".to_owned(),
+            media_type: "image/png".to_owned(),
+            byte_length: 8,
+            sha256: "a".repeat(64),
+            display_name: None,
+            extensions: BTreeMap::new(),
+        };
+        let image = portable_tool_result(
+            &ToolOutput {
+                text: Some("desktop captured".to_owned()),
+                artifact: Some(artifact.clone()),
+                termination_reason: None,
+                execution: None,
+                metadata: BTreeMap::new(),
+            },
+            false,
+        );
+        assert_eq!(image["content"][1]["type"], "image_ref");
+        assert_eq!(image["content"][1]["artifact"], json!(artifact));
+
+        artifact.media_type = "text/plain".to_owned();
+        let ordinary = portable_tool_result(
+            &ToolOutput {
+                text: None,
+                artifact: Some(artifact),
+                termination_reason: None,
+                execution: None,
+                metadata: BTreeMap::new(),
+            },
+            false,
+        );
+        assert_eq!(ordinary["content"][0]["type"], "artifact_ref");
     }
 
     /// 功能：验证客户端输入图片返回前已同时发布文件与 artifact.created，journal 不包含原始字节或路径。

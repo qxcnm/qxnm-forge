@@ -17,7 +17,7 @@ public static class RestrictedJsonSchemaValidator
     private static readonly TimeSpan PatternTimeout = TimeSpan.FromMilliseconds(100);
 
     /// <summary>
-    /// 功能：验证工具 inputSchema 本身只使用允许关键字、有限容器与锚定非回溯正则。
+    /// 功能：验证工具 inputSchema 本身只使用允许关键字、有限容器、根级对象联合与锚定非回溯正则。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -81,11 +81,6 @@ public static class RestrictedJsonSchemaValidator
         if (schema.TryGetProperty("oneOf", out var alternatives))
         {
             ValidateTaggedUnionSchema(schema, alternatives, depth, ref nodes);
-            if (requireObjectRoot)
-            {
-                throw new ArgumentException("tool schema root must be an object schema");
-            }
-
             return;
         }
 

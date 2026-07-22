@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/domain/computer.schema.json",
+  "title": "qxnm-forge experimental desktop computer contracts",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>. The schemas describe portable arguments and metadata only; they do not authorize desktop access.",
+  "$defs": {
+    "captureLimits": {
+      "type": "object",
+      "required": ["maxWidth", "maxHeight", "maxPixels", "maxRawBytes", "maxPngBytes"],
+      "properties": {
+        "maxWidth": { "const": 16384 },
+        "maxHeight": { "const": 16384 },
+        "maxPixels": { "const": 16777216 },
+        "maxRawBytes": { "const": 67108864 },
+        "maxPngBytes": { "const": 33554432 }
+      },
+      "additionalProperties": false
+    },
+    "captureMeasurement": {
+      "type": "object",
+      "required": ["width", "height", "pixelCount", "rawByteLength", "pngByteLength", "pointerX", "pointerY"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1, "maximum": 16384 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 16384 },
+        "pixelCount": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+        "rawByteLength": { "type": "integer", "minimum": 4, "maximum": 67108864 },
+        "pngByteLength": { "type": "integer", "minimum": 1, "maximum": 33554432 },
+        "pointerX": { "type": "integer", "minimum": 0, "maximum": 16383 },
+        "pointerY": { "type": "integer", "minimum": 0, "maximum": 16383 }
+      },
+      "additionalProperties": false
+    },
+    "observeArguments": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "coordinate": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16383
+    },
+    "moveArguments": {
+      "type": "object",
+      "required": ["action", "x", "y"],
+      "properties": {
+        "action": { "const": "move" },
+        "x": { "$ref": "#/$defs/coordinate" },
+        "y": { "$ref": "#/$defs/coordinate" }
+      },
+      "additionalProperties": false
+    },
+    "clickArguments": {
+      "type": "object",
+      "required": ["action", "x", "y", "button", "clicks"],
+      "properties": {
+        "action": { "const": "click" },
+        "x": { "$ref": "#/$defs/coordinate" },
+        "y": { "$ref": "#/$defs/coordinate" },
+        "button": { "enum": ["left", "middle", "right"] },
+        "clicks": { "type": "integer", "minimum": 1, "maximum": 3 }
+      },
+      "additionalProperties": false
+    },
+    "scrollArguments": {
+      "type": "object",
+      "required": ["action", "deltaX", "deltaY"],
+      "properties": {
+        "action": { "const": "scroll" },
+        "deltaX": { "type": "integer", "minimum": -20, "maximum": 20 },
+        "deltaY": { "type": "integer", "minimum": -20, "maximum": 20 }
+      },
+      "additionalProperties": false
+    },
+    "namedKey": {
+      "enum": [
+        "enter",
+        "tab",
+        "escape",
+        "backspace",
+        "delete",
+        "home",
+        "end",
+        "page_up",
+        "page_down",
+        "left",
+        "right",
+        "up",
+        "down",
+        "space"
+      ]
+    },
+    "modifier": {
+      "enum": ["shift", "control", "alt", "meta"]
+    },
+    "keyArguments": {
+      "type": "object",
+      "required": ["action", "key", "modifiers"],
+      "properties": {
+        "action": { "const": "key" },
+        "key": { "$ref": "#/$defs/namedKey" },
+        "modifiers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/modifier" },
+          "minItems": 0,
+          "maxItems": 4,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "interactArguments": {
+      "x-discriminator": "action",
+      "oneOf": [
+        { "$ref": "#/$defs/moveArguments" },
+        { "$ref": "#/$defs/clickArguments" },
+        { "$ref": "#/$defs/scrollArguments" },
+        { "$ref": "#/$defs/keyArguments" }
+      ]
+    },
+    "computerExtensionValue": {
+      "type": "object",
+      "required": ["source", "runId", "sensitivity", "retention"],
+      "properties": {
+        "source": { "const": "desktop_capture" },
+        "runId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "sensitivity": { "const": "desktop_sensitive" },
+        "retention": { "const": "session_lifecycle" }
+      },
+      "additionalProperties": false
+    },
+    "computerExtensions": {
+      "type": "object",
+      "required": ["org.agentprotocol.computer"],
+      "properties": {
+        "org.agentprotocol.computer": { "$ref": "#/$defs/computerExtensionValue" }
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9]+(?:[.-][a-z0-9-]+)+$"
+      },
+      "additionalProperties": true
+    },
+    "captureArtifactReference": {
+      "allOf": [
+        { "$ref": "artifact.schema.json#/$defs/artifactReference" },
+        {
+          "type": "object",
+          "required": ["mediaType", "byteLength", "extensions"],
+          "properties": {
+            "mediaType": { "const": "image/png" },
+            "byteLength": { "type": "integer", "minimum": 1, "maximum": 33554432 },
+            "extensions": { "$ref": "#/$defs/computerExtensions" }
+          }
+        }
+      ]
+    },
+    "captureImageReference": {
+      "type": "object",
+      "required": ["type", "artifact"],
+      "properties": {
+        "type": { "const": "image_ref" },
+        "artifact": { "$ref": "#/$defs/captureArtifactReference" },
+        "alt": { "type": "string", "maxLength": 4096 },
+        "extensions": { "$ref": "../common.schema.json#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "captureResult": {
+      "type": "object",
+      "required": ["content", "isError"],
+      "properties": {
+        "content": {
+          "type": "array",
+          "prefixItems": [
+            { "$ref": "content.schema.json#/$defs/text" },
+            { "$ref": "#/$defs/captureImageReference" }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "isError": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "artifactCreatedData": {
+      "type": "object",
+      "required": ["artifact", "extensions"],
+      "properties": {
+        "artifact": { "$ref": "#/$defs/captureArtifactReference" },
+        "extensions": { "$ref": "#/$defs/computerExtensions" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -92,6 +92,23 @@ pub struct ArtifactRef {
     pub extensions: BTreeMap<String, Value>,
 }
 
+/// 功能：按 artifact MIME 选择 portable content block 的稳定类型。
+///
+/// 输入：已构造的 portable artifact reference。
+/// 输出：`image/*` 返回 `image_ref`，其余 MIME 返回 `artifact_ref`。
+/// 不变量：仅检查标准 MIME 前缀，不读取 artifact bytes、扩展或宿主路径。
+/// 失败：本方法不返回错误；未知 MIME 保守保持普通 artifact 引用。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+#[must_use]
+pub(crate) fn artifact_content_type(artifact: &ArtifactRef) -> &'static str {
+    if artifact.media_type.starts_with("image/") {
+        "image_ref"
+    } else {
+        "artifact_ref"
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolOutput {
@@ -124,6 +141,8 @@ pub enum ToolEffect {
     Process,
     Shell,
     Terminal,
+    ComputerObserve,
+    ComputerInteract,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

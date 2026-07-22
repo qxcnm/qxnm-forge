@@ -17,6 +17,8 @@ public enum ToolAction
     TerminalOpen,
     NetworkAccess,
     CredentialAccess,
+    ComputerObserve,
+    ComputerInteract,
 }
 
 /// <summary>
@@ -59,13 +61,20 @@ public static class DefaultToolPolicy
     /// <param name="insideWorkspace">所有受影响资源是否都位于已验证工作区内。</param>
     /// <param name="explicitPolicyPresent">是否存在独立用户/管理员策略；本方法不会自行授予该策略权限。</param>
     /// <returns>allow、ask 或 deny。</returns>
-    /// <remarks>不变量：工作区外始终 deny；无显式策略的 headless 危险操作始终 deny。</remarks>
+    /// <remarks>不变量：computer 在 interactive 始终 ask、headless 始终 deny；其他工作区外操作始终 deny。</remarks>
     public static PolicyDecision Evaluate(
         OperationMode mode,
         ToolAction action,
         bool insideWorkspace,
         bool explicitPolicyPresent = false)
     {
+        if (action is ToolAction.ComputerObserve or ToolAction.ComputerInteract)
+        {
+            return mode == OperationMode.Interactive
+                ? PolicyDecision.Ask
+                : PolicyDecision.Deny;
+        }
+
         if (!insideWorkspace)
         {
             return PolicyDecision.Deny;

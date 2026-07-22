@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
@@ -9,11 +10,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::task;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::domain::{ArtifactRef, validate_image_signature};
 use crate::error::{AgentError, ErrorCode};
 use crate::protocol::parse_strict_value;
+
+const COMPUTER_EXTENSION_NAMESPACE: &str = "org.agentprotocol.computer";
+const MAX_COMPUTER_PNG_BYTES: usize = 33_554_432;
 
 pub mod legacy_session_v3_import;
 mod writer_lease;
@@ -1263,6 +1268,54 @@ impl SessionStore {
         Ok(artifact)
     }
 
+    /// 功能：把 active Agent run 捕获的敏感桌面 PNG 原子发布并追加带双重扩展的 `artifact.created`。
+    ///
+    /// 输入：Session ID、来自 Agent 调用链的可信 run ID、完整 PNG 字节与同一 run 的取消令牌。
+    /// 输出：携带封闭 `org.agentprotocol.computer` 扩展的 portable image artifact reference。
+    /// 不变量：复制前后检查 token；可取消地等待 append lock；锁内把 durable cancellation_requested/terminal 与 token 一并视为非 active，再验证候选、发布并追加；该锁是取消记录与 artifact.created 的持久化线性化点。
+    /// 失败：取消、run 非 active、PNG 魔数/大小、路径、发布、journal 校验或同步失败时失败关闭；已发布未引用文件不回滚。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub async fn store_computer_screenshot_artifact(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        bytes: &[u8],
+        cancellation: &CancellationToken,
+    ) -> Result<ArtifactRef, AgentError> {
+        ensure_computer_screenshot_not_cancelled(cancellation)?;
+        validate_id(session_id, "session")?;
+        validate_id(run_id, "run")?;
+        validate_image_signature("image/png", bytes)?;
+        if bytes.is_empty() || bytes.len() > MAX_COMPUTER_PNG_BYTES {
+            return Err(invalid_image_artifact_error());
+        }
+        ensure_computer_screenshot_not_cancelled(cancellation)?;
+        let directory = self.session_dir(session_id)?;
+        let session_id = session_id.to_owned();
+        let run_id = run_id.to_owned();
+        let publish_bytes = bytes.to_vec();
+        ensure_computer_screenshot_not_cancelled(cancellation)?;
+        let cancellation = cancellation.clone();
+        task::spawn_blocking(move || {
+            store_computer_screenshot_artifact_sync(
+                &directory,
+                &session_id,
+                &run_id,
+                &publish_bytes,
+                &cancellation,
+                || {},
+            )
+        })
+        .await
+        .map_err(|_| {
+            AgentError::new(
+                ErrorCode::InternalError,
+                "computer image artifact publication worker failed",
+            )
+        })?
+    }
+
     /// 功能：从当前 selected Session chain 安全读取并复核一个输入图像 artifact。
     ///
     /// 输入：Session ID、portable artifact reference 和本次允许读取的最大字节数。
@@ -1303,6 +1356,130 @@ impl SessionStore {
         validate_id(session_id, "session")?;
         Ok(self.root.join("sessions").join(session_id))
     }
+}
+
+/// 功能：在阻塞 worker 内把敏感桌面 PNG 发布与 `artifact.created` 线性化到 Session append lock。
+///
+/// 输入：固定 Session 目录/身份、已复制 PNG、同 run 取消令牌及仅供测试观察锁竞争的回调。
+/// 输出：文件与记录均 durable 后的敏感 image artifact reference。
+/// 不变量：锁内先复核 token 和 durable run 生命周期，再构造并验证候选记录；发布前、发布后及 append 前继续复核 token；取消记录无法越过同一锁后仍先于 artifact.created。
+/// 失败：锁等待取消、run cancellation_requested/terminal、候选无效、发布或追加失败均返回原结构化错误；已发布未引用文件不回滚。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn store_computer_screenshot_artifact_sync(
+    directory: &Path,
+    session_id: &str,
+    run_id: &str,
+    publish_bytes: &[u8],
+    cancellation: &CancellationToken,
+    mut on_lock_contention: impl FnMut(),
+) -> Result<ArtifactRef, AgentError> {
+    ensure_computer_screenshot_not_cancelled(cancellation)?;
+    let lock = open_append_lock(directory)?;
+    lock_exclusive_cancellable(&lock, cancellation, &mut on_lock_contention)?;
+    let result = (|| {
+        ensure_computer_screenshot_not_cancelled(cancellation)?;
+        let path = directory.join("journal.jsonl");
+        let journal = read_journal(&path)?;
+        validate_journal_semantics(&journal.records)?;
+        if !run_is_only_active(&journal.records, run_id)? {
+            return Err(inactive_computer_run_error());
+        }
+        ensure_computer_screenshot_not_cancelled(cancellation)?;
+
+        let sha256 = format!("{:x}", Sha256::digest(publish_bytes));
+        ensure_computer_screenshot_not_cancelled(cancellation)?;
+        let artifact_id = format!("artifact-{}", Uuid::new_v4());
+        let extension = serde_json::json!({
+            "source":"desktop_capture",
+            "runId":run_id,
+            "sensitivity":"desktop_sensitive",
+            "retention":"session_lifecycle"
+        });
+        let mut extensions = BTreeMap::new();
+        extensions.insert(COMPUTER_EXTENSION_NAMESPACE.to_owned(), extension.clone());
+        let mut record_extensions = BTreeMap::new();
+        record_extensions.insert(COMPUTER_EXTENSION_NAMESPACE.to_owned(), extension);
+        let artifact = ArtifactRef {
+            artifact_id: artifact_id.clone(),
+            media_type: "image/png".to_owned(),
+            byte_length: u64::try_from(publish_bytes.len())
+                .map_err(|_| invalid_image_artifact_error())?,
+            sha256,
+            display_name: None,
+            extensions,
+        };
+        let seq = next_record_sequence(&journal.records)?;
+        let parent_id = journal
+            .records
+            .last()
+            .map(|record| record.record_id.clone());
+        let record = JournalRecord::new(
+            session_id.to_owned(),
+            seq,
+            parent_id,
+            "artifact.created",
+            serde_json::json!({
+                "artifact":artifact,
+                "extensions":record_extensions
+            }),
+        );
+        let mut candidate = journal.records;
+        candidate.push(record.clone());
+        validate_journal_semantics(&candidate)?;
+
+        ensure_computer_screenshot_not_cancelled(cancellation)?;
+        publish_artifact_no_replace(&directory.join("artifacts"), &artifact_id, publish_bytes)?;
+        ensure_computer_screenshot_not_cancelled(cancellation)?;
+        append_unlocked(&path, &record)?;
+        Ok(artifact)
+    })();
+    let unlock = FileExt::unlock(&lock);
+    result.and_then(|artifact| unlock.map(|()| artifact).map_err(AgentError::from))
+}
+
+/// 功能：可取消地获取 Session append lock，供敏感截图等待期间及时失败关闭。
+///
+/// 输入：append lock 文件、同 run 取消令牌与锁竞争观察回调。
+/// 输出：当前线程持有独占锁时成功。
+/// 不变量：每次 WouldBlock 后先通知观察者并复核 token，再短暂退避；非竞争 I/O 错误不重试。
+/// 失败：token 取消返回 Cancelled，其他锁错误保留 I/O 映射。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn lock_exclusive_cancellable(
+    lock: &File,
+    cancellation: &CancellationToken,
+    on_contention: &mut impl FnMut(),
+) -> Result<(), AgentError> {
+    loop {
+        ensure_computer_screenshot_not_cancelled(cancellation)?;
+        match lock.try_lock_exclusive() {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                on_contention();
+                ensure_computer_screenshot_not_cancelled(cancellation)?;
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+/// 功能：在截图复制、锁等待与持久化边界统一检查协作取消。
+///
+/// 输入：同一 Agent run 的 CancellationToken。
+/// 输出：未取消时成功。
+/// 不变量：错误不携带 PNG、run ID、Session ID 或宿主路径。
+/// 失败：已取消时返回稳定 Cancelled。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn ensure_computer_screenshot_not_cancelled(
+    cancellation: &CancellationToken,
+) -> Result<(), AgentError> {
+    if cancellation.is_cancelled() {
+        return Err(inactive_computer_run_error());
+    }
+    Ok(())
 }
 
 /// 功能：验证输入图像 artifact reference 的 MIME、长度与 SHA-256 基础形状。
@@ -1376,11 +1553,7 @@ fn read_verified_image_artifact_sync(
         .ok_or_else(invalid_image_artifact_error)?;
     let durable: ArtifactRef = serde_json::from_value(durable_reference.clone())
         .map_err(|_| invalid_image_artifact_error())?;
-    if durable.artifact_id != artifact.artifact_id
-        || durable.media_type != artifact.media_type
-        || durable.byte_length != artifact.byte_length
-        || durable.sha256 != artifact.sha256
-    {
+    if &durable != artifact {
         return Err(invalid_image_artifact_error());
     }
 
@@ -1435,11 +1608,15 @@ fn publish_artifact_no_replace(
     validate_real_directory(directory)?;
     let target = directory.join(artifact_id);
     let temporary = directory.join(format!(".{artifact_id}.{}.tmp", Uuid::new_v4()));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temporary)
-        .map_err(|_| artifact_io_error())?;
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary).map_err(|_| artifact_io_error())?;
     let write_result = (|| {
         file.write_all(bytes).map_err(|_| artifact_io_error())?;
         file.flush().map_err(|_| artifact_io_error())?;
@@ -1664,6 +1841,55 @@ fn required_record_string<'a>(
                 format!("{} data.{field} must be a string", record.kind),
             )
         })
+}
+
+/// 功能：判断指定 run 是否是 Session journal 中唯一尚未终止的 active run。
+///
+/// 输入：已完成结构验证的全部 records 与可信 run ID。
+/// 输出：仅当 accepted 减去 terminal/cancellation_requested 后恰好只含目标 run 时为 true。
+/// 不变量：durable cancellation_requested 立即使 run 不可发布敏感截图；不接受来自 artifact/tool 参数的 run 身份；所有生命周期字段使用公共 record 读取边界。
+/// 失败：相关生命周期记录缺少字符串 runId 时返回 journal_corrupt。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn run_is_only_active(records: &[JournalRecord], run_id: &str) -> Result<bool, AgentError> {
+    let mut accepted = BTreeSet::new();
+    let mut terminal = BTreeSet::new();
+    let mut cancellation_requested = BTreeSet::new();
+    for record in records {
+        match record.kind.as_str() {
+            "run.accepted" => {
+                accepted.insert(required_record_string(record, "runId")?.to_owned());
+            }
+            "run.terminal" => {
+                terminal.insert(required_record_string(record, "runId")?.to_owned());
+            }
+            "run.cancellation_requested" => {
+                cancellation_requested.insert(required_record_string(record, "runId")?.to_owned());
+            }
+            _ => {}
+        }
+    }
+    let active = accepted
+        .difference(&terminal)
+        .filter(|candidate| !cancellation_requested.contains(*candidate))
+        .collect::<Vec<_>>();
+    Ok(active.len() == 1 && active[0].as_str() == run_id)
+}
+
+/// 功能：创建截图发布边界发现 run 已非 active 时的稳定失败关闭错误。
+///
+/// 输入：无；调用方已经在持久化线性化点确认目标 run 非唯一 active。
+/// 输出：固定 code、message 与 kind 的结构化取消错误。
+/// 不变量：不包含 Session 路径、截图内容、run ID 或底层锁诊断。
+/// 失败：本函数始终构造错误值，本身不返回失败。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn inactive_computer_run_error() -> AgentError {
+    AgentError::new(
+        ErrorCode::Cancelled,
+        "desktop screenshot run is no longer active",
+    )
+    .with_details(serde_json::json!({"kind":"cancelled"}))
 }
 
 /// 功能：限制持久化 ID 为 Schema `opaqueId` 的安全 ASCII 子集。
@@ -3074,12 +3300,19 @@ mod tests {
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::path::{Path, PathBuf};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
+    use fs2::FileExt;
     use serde_json::json;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
+    use tokio_util::sync::CancellationToken;
 
-    use super::{ContextCompactionInput, JournalRecord, SessionStore, publish_artifact_no_replace};
+    use super::{
+        ContextCompactionInput, JournalRecord, SessionStore, open_append_lock,
+        publish_artifact_no_replace, store_computer_screenshot_artifact_sync,
+    };
     use crate::error::ErrorCode;
 
     /// 功能：把只读静态 JSONL fixture 安装到临时 SessionStore 目录而不改写内容。
@@ -3508,6 +3741,242 @@ mod tests {
                 .await
                 .is_err()
         );
+        Ok(())
+    }
+
+    /// 功能：验证 desktop screenshot 只绑定唯一 active run，并在引用与 journal data 写入相同敏感扩展。
+    ///
+    /// 输入：本地 synthetic PNG、active/terminal run 生命周期和被剥离扩展的引用。
+    /// 输出：active 时成功，扩展严格四字段且 reader 强绑定；无 active 或已 terminal 时零发布并拒绝。
+    /// 不变量：fixture 不包含真实桌面像素、backend、display ID、主机路径或 Provider 调用。
+    /// 失败：run 竞态、扩展、journal、文件发布或 durable reference 复核漂移时测试失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn computer_screenshot_artifact_is_active_run_bound_and_sensitive()
+    -> Result<(), crate::error::AgentError> {
+        let directory = tempdir()?;
+        let store = SessionStore::new(directory.path(), 4).await?;
+        store.create_session("s-computer", directory.path()).await?;
+        let png = b"\x89PNG\r\n\x1a\nsynthetic-computer";
+        let cancellation = CancellationToken::new();
+        let artifacts_directory = directory.path().join("sessions/s-computer/artifacts");
+        let inactive = store
+            .store_computer_screenshot_artifact("s-computer", "run-computer", png, &cancellation)
+            .await
+            .expect_err("screenshot without an active run must fail");
+        assert_eq!(inactive.code, ErrorCode::Cancelled);
+        assert_eq!(fs::read_dir(&artifacts_directory)?.count(), 0);
+
+        store
+            .append_record(
+                "s-computer",
+                "run.accepted",
+                json!({
+                    "runId":"run-computer","inputMessageId":"message-computer",
+                    "provider":{"id":"faux","modelId":"faux-v1"}
+                }),
+            )
+            .await?;
+        let artifact = store
+            .store_computer_screenshot_artifact("s-computer", "run-computer", png, &cancellation)
+            .await?;
+        let expected_extension = json!({
+            "source":"desktop_capture",
+            "runId":"run-computer",
+            "sensitivity":"desktop_sensitive",
+            "retention":"session_lifecycle"
+        });
+        assert_eq!(artifact.media_type, "image/png");
+        assert_eq!(artifact.extensions.len(), 1);
+        assert_eq!(
+            artifact.extensions["org.agentprotocol.computer"],
+            expected_extension
+        );
+        let records = store.load("s-computer").await?;
+        let created = records
+            .iter()
+            .find(|record| record.kind == "artifact.created")
+            .expect("artifact.created must be durable");
+        assert_eq!(
+            created.data["extensions"]["org.agentprotocol.computer"],
+            expected_extension
+        );
+        assert_eq!(created.data["artifact"], json!(artifact));
+        assert_eq!(
+            store
+                .read_verified_image_artifact("s-computer", &artifact, 1024)
+                .await?,
+            png
+        );
+        let mut stripped = artifact.clone();
+        stripped.extensions.clear();
+        assert!(
+            store
+                .read_verified_image_artifact("s-computer", &stripped, 1024)
+                .await
+                .is_err()
+        );
+        let journal =
+            fs::read_to_string(directory.path().join("sessions/s-computer/journal.jsonl"))?;
+        assert!(!journal.contains("displayId"));
+        assert!(!journal.contains("backend"));
+        assert!(!journal.contains("synthetic-computer"));
+
+        store
+            .append_record(
+                "s-computer",
+                "run.cancellation_requested",
+                json!({"runId":"run-computer"}),
+            )
+            .await?;
+        let durable_cancel = store
+            .store_computer_screenshot_artifact("s-computer", "run-computer", png, &cancellation)
+            .await
+            .expect_err("durable cancellation must prevent screenshot publication");
+        assert_eq!(durable_cancel.code, ErrorCode::Cancelled);
+        assert_eq!(fs::read_dir(&artifacts_directory)?.count(), 1);
+        assert_eq!(
+            store
+                .load("s-computer")
+                .await?
+                .iter()
+                .filter(|record| record.kind == "artifact.created")
+                .count(),
+            1
+        );
+
+        store
+            .append_record(
+                "s-computer",
+                "run.terminal",
+                json!({"runId":"run-computer","status":"cancelled"}),
+            )
+            .await?;
+        assert!(
+            store
+                .store_computer_screenshot_artifact(
+                    "s-computer",
+                    "run-computer",
+                    png,
+                    &cancellation,
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(fs::read_dir(&artifacts_directory)?.count(), 1);
+        Ok(())
+    }
+
+    /// 功能：验证截图 worker 在 append lock 竞争期间收到取消后不会发布文件或记录。
+    ///
+    /// 输入：已持有的真实 append lock、active synthetic run、PNG fixture 与共享取消令牌。
+    /// 输出：worker 确认进入锁竞争后取消并返回 Cancelled，artifact 目录和 artifact.created 均保持为空。
+    /// 不变量：测试以回调确认竞争而不依赖 sleep 猜测；主线程在 worker 返回前始终持锁。
+    /// 失败：锁竞争信号超时、worker panic、取消未生效或任何 artifact 被发布时测试失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn computer_screenshot_cancellation_while_waiting_for_append_lock_publishes_nothing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let store = SessionStore::new(directory.path(), 4).await?;
+        store
+            .create_session("s-computer-lock-cancel", directory.path())
+            .await?;
+        store
+            .append_record(
+                "s-computer-lock-cancel",
+                "run.accepted",
+                json!({
+                    "runId":"run-computer-lock-cancel",
+                    "inputMessageId":"message-computer-lock-cancel",
+                    "provider":{"id":"faux","modelId":"faux-v1"}
+                }),
+            )
+            .await?;
+
+        let session_directory = directory.path().join("sessions/s-computer-lock-cancel");
+        let append_lock = open_append_lock(&session_directory)?;
+        append_lock.lock_exclusive()?;
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let worker_directory = session_directory.clone();
+        let (contention_sender, contention_receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut contention_sender = Some(contention_sender);
+            store_computer_screenshot_artifact_sync(
+                &worker_directory,
+                "s-computer-lock-cancel",
+                "run-computer-lock-cancel",
+                b"\x89PNG\r\n\x1a\nsynthetic-lock-cancel",
+                &worker_cancellation,
+                || {
+                    if let Some(sender) = contention_sender.take() {
+                        let _ = sender.send(());
+                    }
+                },
+            )
+        });
+
+        contention_receiver.recv_timeout(Duration::from_secs(2))?;
+        cancellation.cancel();
+        let result = worker.join().expect("screenshot worker must not panic");
+        assert_eq!(
+            result.expect_err("cancelled worker must fail").code,
+            ErrorCode::Cancelled
+        );
+        FileExt::unlock(&append_lock)?;
+
+        assert_eq!(
+            fs::read_dir(session_directory.join("artifacts"))?.count(),
+            0
+        );
+        assert_eq!(
+            store
+                .load("s-computer-lock-cancel")
+                .await?
+                .iter()
+                .filter(|record| record.kind == "artifact.created")
+                .count(),
+            0
+        );
+        Ok(())
+    }
+
+    /// 功能：验证通用 artifact 发布在 Unix 上不受宽松 umask 影响并保持 owner-only 权限。
+    ///
+    /// 输入：临时 Session 与本地 synthetic 普通 artifact。
+    /// 输出：最终 artifact inode 的权限位精确为 `0600`。
+    /// 不变量：通过通用 store_artifact 路径覆盖 screenshot/image 共用的发布原语；不修改进程 umask。
+    /// 失败：Session I/O、metadata 读取或权限位不安全时测试失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn published_artifact_permissions_are_owner_only()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempdir()?;
+        let store = SessionStore::new(directory.path(), 4).await?;
+        store
+            .create_session("s-artifact-permissions", directory.path())
+            .await?;
+        let artifact = store
+            .store_artifact(
+                "s-artifact-permissions",
+                b"synthetic-sensitive-artifact",
+                "application/octet-stream",
+            )
+            .await?;
+        let metadata = fs::metadata(
+            directory
+                .path()
+                .join("sessions/s-artifact-permissions/artifacts")
+                .join(artifact.artifact_id),
+        )?;
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
         Ok(())
     }
 

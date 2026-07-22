@@ -397,8 +397,9 @@ export const translations = {
         computerUnavailableBefore: "当前连接未广告任何",
         computerUnavailableAfter: "工具，Computer Use 不可启用，也不会生成虚构工具请求。",
         computerPartialBefore: "当前连接只广告了部分",
-        computerPartialAfter: "工具，Computer Use 需要全部声明能力才可启用。",
-        computerApprovalUnavailable: "当前连接缺少交互审批方法或 durable 审批事件。Computer Use 不可启用，也不会把未受审批保护的桌面操作标为就绪。",
+        computerPartialAfter: "工具；即使补齐，Computer Use 在视觉闭环完成前仍不可启用。",
+        computerApprovalUnavailable: "当前连接缺少交互审批方法或 durable 审批事件。即使补齐，Computer Use 在视觉闭环完成前仍不可启用，也不会把未受审批保护的桌面操作标为就绪。",
+        computerExperimentalUnavailable: "Computer Use 当前仅为实验性能力。即使桌面工具和审批能力均已广告，application service 尚无经过边界验证的截图 artifact 读取/渲染，且没有同一路由的 conformant tools + image_input Provider 视觉闭环，因此不能启用或标为后端就绪。能力列表仍只展示后端实际广告的交集。",
         enableInDetails: "在详情中启用 {{name}} 插件",
         category: {
           design: "设计",
@@ -414,6 +415,7 @@ export const translations = {
           backendNotInstalled: "后端未安装",
           approvalUnavailable: "审批能力未接入",
           capabilityUnavailable: "能力未接入",
+          experimentalNotReady: "实验性未就绪",
           enabledReady: "已启用，能力就绪",
           enabledUnavailable: "已启用，当前后端不生效",
           installedDisabled: "已安装，当前停用",
@@ -425,8 +427,8 @@ export const translations = {
             tags: { interface: "界面", experience: "体验", react: "React" },
           },
           "computer-use": {
-            summary: "在宿主策略允许时观察屏幕并操作桌面。",
-            description: "为需要图形界面的任务提供屏幕观察、截图与交互能力。敏感操作必须由后端广告并继续服从审批与宿主权限。",
+            summary: "实验性桌面观察与交互；视觉闭环尚未就绪。",
+            description: "展示后端已广告的屏幕观察、截图与交互能力。当前缺少有界 artifact 读取/渲染和同路由 tools + image_input Provider 视觉闭环，安装只展示能力交集，不会启用运行。",
             tags: { desktop: "桌面", automation: "自动化", screen: "屏幕" },
           },
           "openai-docs": {
@@ -970,8 +972,9 @@ export const translations = {
         computerUnavailableBefore: "This connection does not advertise any",
         computerUnavailableAfter: "tools. Computer Use cannot be enabled and will not create fabricated tool requests.",
         computerPartialBefore: "This connection advertises only some",
-        computerPartialAfter: "tools. Computer Use requires every declared capability before it can be enabled.",
-        computerApprovalUnavailable: "This connection is missing the interactive approval method or durable approval events. Computer Use cannot be enabled and will not report unapproved desktop control as ready.",
+        computerPartialAfter: "tools. Even if the remaining capabilities are added, Computer Use stays disabled until the visual loop is complete.",
+        computerApprovalUnavailable: "This connection is missing the interactive approval method or durable approval events. Even if they are added, Computer Use stays disabled until the visual loop is complete and will not report unapproved desktop control as ready.",
+        computerExperimentalUnavailable: "Computer Use is experimental and not ready. Even when every desktop tool and approval capability is advertised, the application service has no boundary-validated screenshot artifact reader or renderer and no conformant Provider route with both tools and image_input. It therefore cannot be enabled or reported as backend ready. The capability list still shows only the intersection actually advertised by the backend.",
         enableInDetails: "Enable {{name}} plugin in details",
         category: {
           design: "Design",
@@ -987,6 +990,7 @@ export const translations = {
           backendNotInstalled: "Backend not installed",
           approvalUnavailable: "Approval unavailable",
           capabilityUnavailable: "Capability unavailable",
+          experimentalNotReady: "Experimental—not ready",
           enabledReady: "Enabled and ready",
           enabledUnavailable: "Enabled but unavailable on this backend",
           installedDisabled: "Installed and disabled",
@@ -998,8 +1002,8 @@ export const translations = {
             tags: { interface: "Interface", experience: "UX", react: "React" },
           },
           "computer-use": {
-            summary: "Observe the screen and operate the desktop when host policy allows.",
-            description: "Provide screen observation, screenshots, and interaction for tasks that need a graphical interface. Sensitive actions must be advertised by the backend and remain subject to approval and host permissions.",
+            summary: "Experimental desktop observation and interaction; the visual loop is not ready.",
+            description: "Show the screen observation, screenshot, and interaction capabilities advertised by the backend. Bounded artifact reading and rendering plus a same-route tools and image_input Provider loop are still missing, so installation only exposes the capability intersection and cannot enable execution.",
             tags: { desktop: "Desktop", automation: "Automation", screen: "Screen" },
           },
           "openai-docs": {

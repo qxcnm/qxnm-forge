@@ -43,6 +43,10 @@ walkdir = "2"
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["signal", "process", "fs", "term"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+png = "0.17"
+x11rb = { version = "0.13", features = ["xtest"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 

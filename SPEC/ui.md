@@ -115,11 +115,21 @@ JSON-RPC envelope 与事件基础不变量校验后，仅用于失效对应 Sess
 插件市场是固定、有界目录、设备本地偏好与 capability 投影，不是 WebView 插件 runtime。
 `agent-client.plugin-marketplace-preferences.v1` 只允许当前构建 catalog 内的 ID、安装状态和
 启用状态；“安装”不得下载、解析或执行远程 JS/HTML，也不得写入工具授权。插件能力始终是其
-声明需求与 `initialize.capabilities` 的交集。只有后端实际包含当前目录声明的全部
-`computer.*` 工具，同时广告 `approval/respond` 方法以及 `approval.requested`、
-`approval.resolved` durable 事件时，Computer Use 才能启用；工具、方法或事件任一缺失都必须
-展示实际缺口，不得标为就绪。展示、安装或启用插件卡片
-都不能追加工具 ID。远程目录、可执行插件包、签名、更新、隔离和工具注册留待后续 ADR。
+声明需求与 `initialize.capabilities` 的交集。
+
+ADR 0032 的 desktop computer 是默认关闭的 experimental/implemented Community 能力。WebView
+不得设置、提升或伪造 `AGENT_CLIENT_DESKTOP_COMPUTER` 与
+`AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER`；只有受信任 host/operator 配置与 daemon
+原生 X11 探测可以决定是否广告工具。Wayland/XWayland、任一单门或未知平台必须显示不可用。
+
+Computer Use 只有在后端实际包含三个 `computer.*` 工具、广告 `approval/respond` 与
+`approval.requested|approval.resolved` durable 事件、application service 提供经过边界验证和
+大小限制的 artifact 读取、UI 能渲染 durable `image_ref`，并且所选精确 Provider route 同时以
+`conformant` 状态支持 `tools + image_input` 时才能标为就绪。工具、审批、artifact 或
+Provider route 任一缺失都必须展示实际缺口，不能用插件安装状态补足。当前没有同时满足
+`tools + image_input` 的 conformant route，也没有 artifact 读取/渲染闭环，因此 UI 必须明确
+显示实验性未就绪，不能把尺寸/指针文本冒充截图。展示、安装或启用插件卡片都不能追加工具 ID。
+远程目录、可执行插件包、签名、更新、隔离和工具注册留待后续 ADR。
 
 ## 高定制化
 

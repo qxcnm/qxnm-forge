@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.agentprotocol.local/spec/0.1/schemas/computer-cases.schema.json",
+  "title": "qxnm-forge synthetic desktop computer contract cases",
+  "$comment": "Author: 高宏顺 <18272669457@163.com>. Cases are static schema evidence and MUST NOT be executed against a real desktop.",
+  "type": "object",
+  "required": ["schemaVersion", "platformGate", "limits", "cases", "capture"],
+  "properties": {
+    "schemaVersion": { "const": "0.1" },
+    "platformGate": { "$ref": "#/$defs/platformGate" },
+    "limits": { "$ref": "domain/computer.schema.json#/$defs/captureLimits" },
+    "cases": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/observeCase" },
+          { "$ref": "#/$defs/interactCase" }
+        ]
+      },
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "capture": { "$ref": "#/$defs/captureCase" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "platformEnvironment": {
+      "type": "object",
+      "properties": {
+        "AGENT_CLIENT_DESKTOP_COMPUTER": { "type": "string", "maxLength": 64 },
+        "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": { "type": "string", "maxLength": 64 },
+        "XDG_SESSION_TYPE": { "type": "string", "maxLength": 64 },
+        "WAYLAND_DISPLAY": { "type": "string", "maxLength": 256 },
+        "DISPLAY": { "type": "string", "maxLength": 64 }
+      },
+      "additionalProperties": false
+    },
+    "platformGateCase": {
+      "type": "object",
+      "required": ["name", "platform", "environment", "advertise"],
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "platform": { "enum": ["linux", "windows", "macos", "unknown"] },
+        "environment": { "$ref": "#/$defs/platformEnvironment" },
+        "advertise": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "platformGate": {
+      "type": "object",
+      "required": ["requiredExactGates", "sessionType", "waylandDisplay", "localDisplay", "cases"],
+      "properties": {
+        "requiredExactGates": {
+          "type": "object",
+          "required": ["AGENT_CLIENT_DESKTOP_COMPUTER", "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER"],
+          "properties": {
+            "AGENT_CLIENT_DESKTOP_COMPUTER": { "const": "1" },
+            "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": { "const": "1" }
+          },
+          "additionalProperties": false
+        },
+        "sessionType": {
+          "type": "object",
+          "required": ["environment", "normalization", "requiredValue"],
+          "properties": {
+            "environment": { "const": "XDG_SESSION_TYPE" },
+            "normalization": { "const": "trim_ascii_lowercase" },
+            "requiredValue": { "const": "x11" }
+          },
+          "additionalProperties": false
+        },
+        "waylandDisplay": {
+          "type": "object",
+          "required": ["environment", "allowedStates"],
+          "properties": {
+            "environment": { "const": "WAYLAND_DISPLAY" },
+            "allowedStates": { "const": ["missing", "empty"] }
+          },
+          "additionalProperties": false
+        },
+        "localDisplay": {
+          "type": "object",
+          "required": ["environment", "allowedSyntax", "connectionNormalization", "maxLength", "maxDisplayNumber", "maxScreenNumber"],
+          "properties": {
+            "environment": { "const": "DISPLAY" },
+            "allowedSyntax": { "const": [":N[.S]", "unix/:N[.S]"] },
+            "connectionNormalization": { "const": "unix/:N[.S]" },
+            "maxLength": { "const": 64 },
+            "maxDisplayNumber": { "const": 65535 },
+            "maxScreenNumber": { "const": 65535 }
+          },
+          "additionalProperties": false
+        },
+        "cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/platformGateCase" },
+          "minItems": 26,
+          "maxItems": 26
+        }
+      },
+      "additionalProperties": false
+    },
+    "caseName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "maxLength": 128
+    },
+    "observeApproval": {
+      "type": "object",
+      "required": ["risk", "resource", "choices"],
+      "properties": {
+        "risk": { "const": "high" },
+        "resource": {
+          "type": "object",
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "other" },
+            "value": { "const": "desktop:screen" }
+          },
+          "additionalProperties": false
+        },
+        "choices": { "const": ["allow_once", "deny"] }
+      },
+      "additionalProperties": false
+    },
+    "interactApproval": {
+      "type": "object",
+      "required": ["risk", "resource", "choices"],
+      "properties": {
+        "risk": { "const": "critical" },
+        "resource": {
+          "type": "object",
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "other" },
+            "value": { "enum": ["desktop:move", "desktop:click", "desktop:scroll", "desktop:key"] }
+          },
+          "additionalProperties": false
+        },
+        "choices": { "const": ["allow_once", "deny"] }
+      },
+      "additionalProperties": false
+    },
+    "observeCase": {
+      "type": "object",
+      "required": ["name", "tool", "arguments", "permissionClass", "idempotent", "approval"],
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "tool": { "enum": ["computer.observe", "computer.screenshot"] },
+        "arguments": { "$ref": "domain/computer.schema.json#/$defs/observeArguments" },
+        "permissionClass": { "const": "outside_workspace" },
+        "idempotent": { "const": false },
+        "approval": { "$ref": "#/$defs/observeApproval" }
+      },
+      "additionalProperties": false
+    },
+    "interactCase": {
+      "type": "object",
+      "required": ["name", "tool", "arguments", "permissionClass", "idempotent", "approval"],
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "tool": { "const": "computer.interact" },
+        "arguments": { "$ref": "domain/computer.schema.json#/$defs/interactArguments" },
+        "permissionClass": { "const": "outside_workspace" },
+        "idempotent": { "const": false },
+        "approval": { "$ref": "#/$defs/interactApproval" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "arguments": { "properties": { "action": { "const": "move" } }, "required": ["action"] } } },
+          "then": { "properties": { "approval": { "properties": { "resource": { "properties": { "value": { "const": "desktop:move" } } } } } } }
+        },
+        {
+          "if": { "properties": { "arguments": { "properties": { "action": { "const": "click" } }, "required": ["action"] } } },
+          "then": { "properties": { "approval": { "properties": { "resource": { "properties": { "value": { "const": "desktop:click" } } } } } } }
+        },
+        {
+          "if": { "properties": { "arguments": { "properties": { "action": { "const": "scroll" } }, "required": ["action"] } } },
+          "then": { "properties": { "approval": { "properties": { "resource": { "properties": { "value": { "const": "desktop:scroll" } } } } } } }
+        },
+        {
+          "if": { "properties": { "arguments": { "properties": { "action": { "const": "key" } }, "required": ["action"] } } },
+          "then": { "properties": { "approval": { "properties": { "resource": { "properties": { "value": { "const": "desktop:key" } } } } } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "captureCase": {
+      "type": "object",
+      "required": ["measurement", "result", "artifactCreatedData"],
+      "properties": {
+        "measurement": { "$ref": "domain/computer.schema.json#/$defs/captureMeasurement" },
+        "result": { "$ref": "domain/computer.schema.json#/$defs/captureResult" },
+        "artifactCreatedData": { "$ref": "domain/computer.schema.json#/$defs/artifactCreatedData" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

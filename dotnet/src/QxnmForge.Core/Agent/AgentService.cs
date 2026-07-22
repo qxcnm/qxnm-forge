@@ -1210,7 +1210,10 @@ public sealed class AgentService
             : DefaultToolPolicy.Evaluate(
                 run.InteractiveApprovals ? OperationMode.Interactive : OperationMode.Headless,
                 prepared.Definition.Action,
-                insideWorkspace: true);
+                insideWorkspace: !string.Equals(
+                    prepared.Definition.PermissionClass,
+                    "outside_workspace",
+                    StringComparison.Ordinal));
         var intentStatus = forceCancelled
             ? "denied"
             : preparationFailure is not null
@@ -1365,7 +1368,11 @@ public sealed class AgentService
         var cancelledDuringExecution = false;
         try
         {
-            result = await tools.ExecuteAsync(prepared!, cancellationToken).ConfigureAwait(false);
+            result = await tools.ExecuteAsync(
+                prepared!,
+                run.Runtime.Journal.SessionId,
+                run.RunId,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1465,7 +1472,7 @@ public sealed class AgentService
             prepared.Arguments.Clone(),
             prepared.OperationHash,
             GetApprovalRisk(prepared.Definition.Action),
-            "该操作会修改工作区或启动本地进程，需要明确批准。",
+            GetApprovalReason(prepared.Definition.Action),
             prepared.Resources,
             ["allow_once", "deny"],
             DateTimeOffset.UtcNow.Add(approvalTimeout));
@@ -1763,8 +1770,29 @@ public sealed class AgentService
         return action switch
         {
             ToolAction.FileWrite or ToolAction.FileEdit => "high",
-            ToolAction.ProcessExec or ToolAction.ShellExec or ToolAction.TerminalOpen => "critical",
+            ToolAction.ProcessExec or ToolAction.ShellExec or ToolAction.TerminalOpen or
+                ToolAction.ComputerInteract => "critical",
+            ToolAction.ComputerObserve => "high",
             _ => "medium",
+        };
+    }
+
+    /// <summary>
+    /// 功能：为审批卡生成与真实副作用类别一致的稳定中文原因。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="action">已注册工具操作类别。</param>
+    /// <returns>不含模型参数、路径或桌面内容的说明。</returns>
+    private static string GetApprovalReason(ToolAction action)
+    {
+        return action switch
+        {
+            ToolAction.ComputerObserve => "该操作会读取完整可见桌面并将敏感截图持久化到当前 Session 生命周期，需要明确批准。",
+            ToolAction.ComputerInteract => "该操作会控制当前桌面的鼠标或键盘，需要明确批准。",
+            ToolAction.ProcessExec or ToolAction.ShellExec or ToolAction.TerminalOpen =>
+                "该操作会启动本地进程，需要明确批准。",
+            _ => "该操作会修改工作区内容，需要明确批准。",
         };
     }
 

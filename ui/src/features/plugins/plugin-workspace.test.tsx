@@ -221,37 +221,61 @@ describe("PluginWorkspace", () => {
   });
 
   /**
-   * 验证 capability 丢失后仍允许用户收紧已启用偏好，但不可重新启用。
+   * 验证 Computer 全部广告齐全时仍显示真实交集，并因视觉闭环缺口保持实验性未就绪。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  it("allows disabling an enabled plugin after backend capability loss", () => {
-    const { rerender } = renderPluginWorkspace([
+  it("keeps fully advertised Computer Use experimental and disabled", () => {
+    renderPluginWorkspace([
       ...WORKSPACE_TOOL_IDS,
       ...COMPUTER_TOOL_IDS,
     ]);
-    fireEvent.click(screen.getByRole("button", { name: "安装 Computer Use" }));
-    let computerSwitch = screen.getByRole("switch", {
-      name: "启用 Computer Use 插件",
-    });
-    fireEvent.click(computerSwitch);
-    expect(computerSwitch).toBeChecked();
 
-    rerender(
-      <PluginWorkspace
-        supportedToolIds={WORKSPACE_TOOL_IDS}
-        supportedMethodIds={APPROVAL_METHOD_IDS}
-        supportedEventTypes={APPROVAL_EVENT_TYPES}
-        loading={false}
-        onOpenAgentTools={vi.fn()}
-        onOpenMobileSidebar={vi.fn()}
-      />,
-    );
-    computerSwitch = screen.getByRole("switch", {
+    expect(screen.getByText("实验性未就绪")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "安装 Computer Use" }));
+    const computerSwitch = screen.getByRole("switch", {
       name: "启用 Computer Use 插件",
     });
+    expect(computerSwitch).toBeDisabled();
+    expect(computerSwitch).not.toBeChecked();
+    expect(usePluginMarketplaceStore.getState().plugins["computer-use"]).toEqual({
+      installed: true,
+      enabled: false,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "查看 Computer Use 详情" }));
+    expect(screen.getByText("computer.observe")).toBeInTheDocument();
+    expect(screen.getByText("computer.screenshot")).toBeInTheDocument();
+    expect(screen.getByText("computer.interact")).toBeInTheDocument();
+    expect(screen.getByText("approval/respond")).toBeInTheDocument();
+    expect(screen.getByText("approval.requested")).toBeInTheDocument();
+    expect(screen.getByText("approval.resolved")).toBeInTheDocument();
+    expect(
+      screen.getByText(/尚无经过边界验证的截图 artifact 读取\/渲染/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/tools \+ image_input Provider 视觉闭环/),
+    ).toHaveLength(2);
+  });
+
+  /**
+   * 验证历史已启用偏好只能被用户收紧，实验性冻结状态下不可重新启用。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("allows disabling a legacy enabled Computer preference", () => {
+    usePluginMarketplaceStore.getState().installPlugin("computer-use");
+    usePluginMarketplaceStore.getState().setPluginEnabled("computer-use", true);
+    renderPluginWorkspace([...WORKSPACE_TOOL_IDS, ...COMPUTER_TOOL_IDS]);
+
+    const computerSwitch = screen.getByRole("switch", {
+      name: "启用 Computer Use 插件",
+    });
+    expect(computerSwitch).toBeChecked();
     expect(computerSwitch).not.toBeDisabled();
+    expect(screen.getByText("已启用，当前后端不生效")).toBeInTheDocument();
     fireEvent.click(computerSwitch);
     expect(computerSwitch).not.toBeChecked();
     expect(computerSwitch).toBeDisabled();
@@ -300,6 +324,31 @@ describe("PluginWorkspace", () => {
     );
     expect(screen.getByText("Backend capabilities")).toBeInTheDocument();
     expect(screen.getByText("Read files")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/[\u4e00-\u9fff]/u);
+  });
+
+  /**
+   * 验证 English 模式明确解释广告齐全的 Computer Use 仍缺少 artifact 与 Provider 视觉闭环。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("explains the fully advertised Computer Use gap in English", async () => {
+    await i18n.changeLanguage("en-US");
+    renderPluginWorkspace([...WORKSPACE_TOOL_IDS, ...COMPUTER_TOOL_IDS]);
+
+    expect(screen.getByText("Experimental—not ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Install Computer Use" }));
+    expect(
+      screen.getByRole("switch", { name: "Enable Computer Use plugin" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "View Computer Use details" }),
+    );
+    expect(
+      screen.getByText(/no boundary-validated screenshot artifact reader or renderer/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/both tools and image_input/)).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/[\u4e00-\u9fff]/u);
   });
 });

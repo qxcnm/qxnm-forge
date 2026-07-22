@@ -1,0 +1,519 @@
+{
+  "schemaVersion": "0.1",
+  "platformGate": {
+    "requiredExactGates": {
+      "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+      "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1"
+    },
+    "sessionType": {
+      "environment": "XDG_SESSION_TYPE",
+      "normalization": "trim_ascii_lowercase",
+      "requiredValue": "x11"
+    },
+    "waylandDisplay": {
+      "environment": "WAYLAND_DISPLAY",
+      "allowedStates": [
+        "missing",
+        "empty"
+      ]
+    },
+    "localDisplay": {
+      "environment": "DISPLAY",
+      "allowedSyntax": [
+        ":N[.S]",
+        "unix/:N[.S]"
+      ],
+      "connectionNormalization": "unix/:N[.S]",
+      "maxLength": 64,
+      "maxDisplayNumber": 65535,
+      "maxScreenNumber": 65535
+    },
+    "cases": [
+      {
+        "name": "native_x11_wayland_missing",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0"
+        },
+        "advertise": true
+      },
+      {
+        "name": "native_x11_normalized_wayland_empty",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": " X11 ",
+          "WAYLAND_DISPLAY": "",
+          "DISPLAY": "unix/:65535.65535"
+        },
+        "advertise": true
+      },
+      {
+        "name": "desktop_gate_missing",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "experimental_gate_missing",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "desktop_gate_not_exact",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": " 1 ",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "experimental_gate_not_exact",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "true",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "session_type_missing",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "session_type_empty",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "  ",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "session_type_non_ascii_whitespace",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "\u00a0x11\u00a0",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "wayland_session",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "wayland",
+          "WAYLAND_DISPLAY": "wayland-0",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "xwayland_detected",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "WAYLAND_DISPLAY": "wayland-0",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "wayland_display_whitespace",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "WAYLAND_DISPLAY": " ",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "unknown_session_type",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "unknown",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "windows_platform",
+        "platform": "windows",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "macos_platform",
+        "platform": "macos",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "unknown_platform",
+        "platform": "unknown",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_missing",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11"
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_empty",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ""
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_remote_hostname",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": "host.example:0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_ssh_forwarded",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": "localhost:10.0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_legacy_unix_hostname",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": "unix:0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_number_out_of_range",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":65536"
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_screen_out_of_range",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0.65536"
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_whitespace",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": " :0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_multiple_dots",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":0.0.0"
+        },
+        "advertise": false
+      },
+      {
+        "name": "display_non_ascii_digits",
+        "platform": "linux",
+        "environment": {
+          "AGENT_CLIENT_DESKTOP_COMPUTER": "1",
+          "AGENT_CLIENT_EXPERIMENTAL_DESKTOP_COMPUTER": "1",
+          "XDG_SESSION_TYPE": "x11",
+          "DISPLAY": ":０"
+        },
+        "advertise": false
+      }
+    ]
+  },
+  "limits": {
+    "maxWidth": 16384,
+    "maxHeight": 16384,
+    "maxPixels": 16777216,
+    "maxRawBytes": 67108864,
+    "maxPngBytes": 33554432
+  },
+  "cases": [
+    {
+      "name": "observe_empty_arguments",
+      "tool": "computer.observe",
+      "arguments": {},
+      "permissionClass": "outside_workspace",
+      "idempotent": false,
+      "approval": {
+        "risk": "high",
+        "resource": {
+          "kind": "other",
+          "value": "desktop:screen"
+        },
+        "choices": [
+          "allow_once",
+          "deny"
+        ]
+      }
+    },
+    {
+      "name": "screenshot_empty_arguments",
+      "tool": "computer.screenshot",
+      "arguments": {},
+      "permissionClass": "outside_workspace",
+      "idempotent": false,
+      "approval": {
+        "risk": "high",
+        "resource": {
+          "kind": "other",
+          "value": "desktop:screen"
+        },
+        "choices": [
+          "allow_once",
+          "deny"
+        ]
+      }
+    },
+    {
+      "name": "move_bounded_coordinates",
+      "tool": "computer.interact",
+      "arguments": {
+        "action": "move",
+        "x": 100,
+        "y": 200
+      },
+      "permissionClass": "outside_workspace",
+      "idempotent": false,
+      "approval": {
+        "risk": "critical",
+        "resource": {
+          "kind": "other",
+          "value": "desktop:move"
+        },
+        "choices": [
+          "allow_once",
+          "deny"
+        ]
+      }
+    },
+    {
+      "name": "click_single_left_button",
+      "tool": "computer.interact",
+      "arguments": {
+        "action": "click",
+        "x": 120,
+        "y": 240,
+        "button": "left",
+        "clicks": 1
+      },
+      "permissionClass": "outside_workspace",
+      "idempotent": false,
+      "approval": {
+        "risk": "critical",
+        "resource": {
+          "kind": "other",
+          "value": "desktop:click"
+        },
+        "choices": [
+          "allow_once",
+          "deny"
+        ]
+      }
+    },
+    {
+      "name": "scroll_single_vertical_step",
+      "tool": "computer.interact",
+      "arguments": {
+        "action": "scroll",
+        "deltaX": 0,
+        "deltaY": -1
+      },
+      "permissionClass": "outside_workspace",
+      "idempotent": false,
+      "approval": {
+        "risk": "critical",
+        "resource": {
+          "kind": "other",
+          "value": "desktop:scroll"
+        },
+        "choices": [
+          "allow_once",
+          "deny"
+        ]
+      }
+    },
+    {
+      "name": "key_escape_without_modifiers",
+      "tool": "computer.interact",
+      "arguments": {
+        "action": "key",
+        "key": "escape",
+        "modifiers": []
+      },
+      "permissionClass": "outside_workspace",
+      "idempotent": false,
+      "approval": {
+        "risk": "critical",
+        "resource": {
+          "kind": "other",
+          "value": "desktop:key"
+        },
+        "choices": [
+          "allow_once",
+          "deny"
+        ]
+      }
+    }
+  ],
+  "capture": {
+    "measurement": {
+      "width": 4096,
+      "height": 2160,
+      "pixelCount": 8847360,
+      "rawByteLength": 35389440,
+      "pngByteLength": 4096,
+      "pointerX": 100,
+      "pointerY": 200
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "synthetic desktop capture metadata only"
+        },
+        {
+          "type": "image_ref",
+          "artifact": {
+            "artifactId": "artifact-computer-synthetic-1",
+            "mediaType": "image/png",
+            "byteLength": 4096,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "displayName": "synthetic desktop capture",
+            "extensions": {
+              "org.agentprotocol.computer": {
+                "source": "desktop_capture",
+                "runId": "run-computer-synthetic-1",
+                "sensitivity": "desktop_sensitive",
+                "retention": "session_lifecycle"
+              }
+            }
+          },
+          "alt": "synthetic desktop capture"
+        }
+      ],
+      "isError": false
+    },
+    "artifactCreatedData": {
+      "artifact": {
+        "artifactId": "artifact-computer-synthetic-1",
+        "mediaType": "image/png",
+        "byteLength": 4096,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "displayName": "synthetic desktop capture",
+        "extensions": {
+          "org.agentprotocol.computer": {
+            "source": "desktop_capture",
+            "runId": "run-computer-synthetic-1",
+            "sensitivity": "desktop_sensitive",
+            "retention": "session_lifecycle"
+          }
+        }
+      },
+      "extensions": {
+        "org.agentprotocol.computer": {
+          "source": "desktop_capture",
+          "runId": "run-computer-synthetic-1",
+          "sensitivity": "desktop_sensitive",
+          "retention": "session_lifecycle"
+        }
+      }
+    }
+  }
+}

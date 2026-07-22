@@ -31,6 +31,8 @@ requirement containing one of those key words.
 - [ui.md](ui.md) — 未来 TypeScript + React 客户端与 application service 的权限边界。
 - [agent-profile.schema.json](schemas/agent-profile.schema.json) — 品牌中立 Profile 输入、实体、
   revision 引用与 durable run snapshot。
+- [computer.schema.json](schemas/domain/computer.schema.json) — ADR 0032 的实验性桌面工具参数、
+  捕获限制、敏感 artifact extension 与 portable `image_ref` 合同。
 - [architecture.md](architecture.md) — component boundaries and native API
   requirements.
 - [protocol.md](protocol.md) — JSON-RPC 2.0 message semantics over UTF-8 NDJSON.
@@ -93,6 +95,13 @@ Provider 设置边界由 [ADR 0029](adr/0029-custom-provider-connections.md) 与
 这些非敏感配置建议不构成已配置、可执行或远端验证声明；只有重启后真实出现在 `models/list` 的
 完整路由才能用于 `run/start`。
 
+实验性桌面工具由 [ADR 0032](adr/0032-experimental-desktop-computer.md) 约束。它是 Open/Pro
+共同的 Community 行为，默认不广告，只有两个精确环境门、明确原生 X11、本地 Unix `DISPLAY`
+allowlist 和真实 backend 探测同时满足后才可进入实验路径。当前没有同一条
+`tools + image_input` conformant Provider route，也没有 Provider
+`image_ref` 续接或 UI artifact 读取/渲染闭环；相关 foundation claim 因此只能是
+`implemented`，不能作为公开 Computer Use 支持声明。
+
 ## Conformance contract
 
 An implementation may advertise a public feature only at status `conformant`
@@ -118,6 +127,13 @@ Agent Profile 静态 contract 由
 `CONFORMANCE/tests/test_spec_schemas.py` 验证；动态 CRUD/migration/run-binding runner 未通过前，
 相关能力最多为 `implemented`。
 
+Desktop computer 静态 contract 由
+`CONFORMANCE/fixtures/computer/computer-cases.json`、`computer-cases.schema.json` 与同一 Schema
+测试验证；fixture 冻结双门、native X11、Wayland/XWayland、本地/远程 `DISPLAY` 与未知平台的
+纯合成广告真值表，不探测 display、不执行动作、不读取屏幕且不包含真实 PNG。双实现真实
+daemon、X11/XTEST、取消、
+Provider 视觉续接和 UI renderer 的共同动态门禁未通过前，相关能力最多为 `implemented`。
+
 ## Source documentation rule
 
 Every newly added source-code method or function in either active
@@ -142,3 +158,6 @@ v0.2 保留 protocol/session v0.1，新增 application database 与 Agent Profil
 并允许 React/Tauri faux 交互预览。生产 UI transport、认证 HTTP/WebSocket、远程 event replay
 仍未由本规范声明完成。所有 UI 都必须消费 application service，MUST NOT 直接执行工具、
 持有 secret、打开 SQLite 或修改 Session journal。
+
+ADR 0032 的 native X11 desktop computer 只是默认关闭、仅接受保守本地 `DISPLAY` 语法的
+experimental/implemented Community 切面，不扩大 v0.2 的公开跨平台或端到端视觉支持范围。

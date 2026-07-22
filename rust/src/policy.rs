@@ -63,8 +63,8 @@ impl ToolPolicy {
     /// 功能：创建由可信宿主明确授权全部危险操作的策略。
     ///
     /// 输入：无；授权必须来自宿主配置，不能来自模型参数。
-    /// 输出：允许所有已知工具效果的策略。
-    /// 不变量：调用此构造器本身就是宿主的显式授权边界。
+    /// 输出：允许普通危险工具效果、但仍保留 computer 逐次审批边界的策略。
+    /// 不变量：调用此构造器本身就是宿主的显式授权边界；它不能缓存或跳过桌面截图/交互审批。
     /// 失败：本方法不返回错误。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -80,7 +80,7 @@ impl ToolPolicy {
     ///
     /// 输入：规范化的工具副作用等级。
     /// 输出：封闭的策略决定枚举。
-    /// 不变量：只读效果默认允许；危险效果只有宿主明确授权时才直接允许。
+    /// 不变量：只读效果默认允许；普通危险效果只有宿主明确授权时才直接允许；computer 始终留给逐次审批层且在本层拒绝。
     /// 失败：本方法不返回错误；未知效果无法绕过封闭枚举进入本方法。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -88,6 +88,7 @@ impl ToolPolicy {
     pub const fn decide(&self, effect: ToolEffect) -> PolicyDecision {
         match effect {
             ToolEffect::Read => PolicyDecision::Allow,
+            ToolEffect::ComputerObserve | ToolEffect::ComputerInteract => PolicyDecision::Deny,
             ToolEffect::Write | ToolEffect::Process | ToolEffect::Shell | ToolEffect::Terminal => {
                 if self.allow_dangerous {
                     PolicyDecision::Allow
@@ -367,6 +368,28 @@ mod tests {
         assert_eq!(policy.decide(ToolEffect::Read), PolicyDecision::Allow);
         assert_eq!(policy.decide(ToolEffect::Write), PolicyDecision::Deny);
         assert_eq!(policy.decide(ToolEffect::Shell), PolicyDecision::Deny);
+    }
+
+    /// 功能：验证宿主 allow-all 也不能把 computer 工具提升为无需逐次审批的 Allow。
+    ///
+    /// 输入：allow_all_for_host 策略与观察/交互效果。
+    /// 输出：两者在基础策略层均固定 Deny，供 ToolRegistry 按交互审批能力升级为单次 RequireApproval。
+    /// 不变量：普通写入仍保持可信宿主显式 Allow，避免改变既有危险工具语义。
+    /// 失败：computer 被缓存授权或普通宿主授权回归时断言失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn host_allow_all_never_bypasses_computer_approval() {
+        let policy = ToolPolicy::allow_all_for_host();
+        assert_eq!(policy.decide(ToolEffect::Write), PolicyDecision::Allow);
+        assert_eq!(
+            policy.decide(ToolEffect::ComputerObserve),
+            PolicyDecision::Deny
+        );
+        assert_eq!(
+            policy.decide(ToolEffect::ComputerInteract),
+            PolicyDecision::Deny
+        );
     }
 
     /// 功能：验证包含父目录分量的写入路径会被工作区守卫拒绝。

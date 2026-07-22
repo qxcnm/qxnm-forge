@@ -266,7 +266,8 @@ internal static class Program
             using var toolRegistry = new ToolRegistry(
                 options.Workspace,
                 options.Conformance,
-                environmentConformance);
+                environmentConformance,
+                repository);
             var applicationDatabase = await ApplicationDatabaseFactory.OpenFactoryAsync(
                 DatabaseConfiguration.ForStateRoot(stateRoot),
                 cancellationToken).ConfigureAwait(false);
@@ -346,7 +347,11 @@ internal static class Program
         }
 
         await using var repository = new SessionRepository(sessionsRoot, options.Workspace);
-        using var toolRegistry = new ToolRegistry(options.Workspace);
+        using var toolRegistry = new ToolRegistry(
+            options.Workspace,
+            cliConformance: false,
+            environmentConformance: false,
+            repository);
         await using var providerRegistry = ProviderRegistryFactory.CreateFromEnvironment(
             stateRoot: stateRoot,
             workspace: options.Workspace);

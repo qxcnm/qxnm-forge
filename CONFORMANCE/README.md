@@ -121,11 +121,41 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
 字段负例。该静态门禁不冒充 native CRUD/migration/run-binding 黑盒通过；能力在共同动态
 runner 完成前最多登记为 `implemented`。
 
+ADR 0032 desktop computer 的静态门禁可单独运行：
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
+  CONFORMANCE.tests.test_spec_schemas.SpecSchemaTests.test_desktop_computer_contract_fixture_and_security_negatives -v
+```
+
+它验证双门精确值、`XDG_SESSION_TYPE` ASCII trim/lowercase、`WAYLAND_DISPLAY` missing/empty、
+本地 `DISPLAY` allowlist、远程/SSH-forwarded `DISPLAY` 拒绝及 Wayland/XWayland/未知平台
+纯合成真值表，及空 observe/screenshot、`move|click|scroll|key` tagged
+arguments、high/critical 逐次审批、`desktop:*` resource、捕获限制、`image_ref`、
+`org.agentprotocol.computer` 与现行 `artifact.created` schema 兼容，并构造 text 动作、越界、
+宿主标识和未知核心 `runId` 负例。fixture 只含合成环境/元数据和 artifact reference；测试不连接
+X11、不注入输入、不读取或保存真实 PNG，也不启动 Provider。
+
+该静态门禁不能证明真实 daemon 在 display 探测前执行了广告算法，也不能证明 X11/XTEST、强取消、
+输入释放、远程 display 实际拒绝、Provider 视觉续接或 UI artifact 渲染。当前没有单一
+conformant Provider route 同时支持
+`tools + image_input`，模型看不到 screenshot 像素；相关能力只能登记为 `implemented`，不得称为
+`conformant`、`live-verified` 或公开产品支持。
+
+Rust 当前 x11rb 0.13 transport 还会在适配层长度校验前按服务端 reply header 分配 packet；
+Unix-only allowlist 不能把恶意本地 X server 下的 64 MiB 上限称为 hard cap。该残余风险同样是
+后续动态状态提升的阻断项。
+.NET 当前进程内 Xlib 的致命 XIO 断连也缺少可恢复/进程隔离证据；临时普通协议错误 handler
+不能替代该门禁。
+
 ## Fixture layout
 
 - `fixtures/faux/`: deterministic provider scenarios, with no network access.
 - `fixtures/golden/`: requests and normalized observable daemon traces.
 - `fixtures/agent-profile/`：Agent Profile v0.2 的封闭 DTO、CRUD/run wire、错误与生产广告预期。
+- `fixtures/computer/`：ADR 0032 的静态平台/环境广告真值表、本地/远程合成 `DISPLAY`、
+  安全合成参数、限制、审批与敏感 artifact extension；fixture 永不作为真实 display 探测或
+  桌面动作 runner 输入。
 - `fixtures/provider/`: three independent machine suites for nine native
   Provider API families.
 - `fixtures/provider-identity/`：35 Provider / 45 route 的 manifest-driven

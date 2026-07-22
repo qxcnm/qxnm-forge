@@ -123,7 +123,7 @@ internal static partial class SessionArtifactStore
     /// <param name="maximumBytes">协商的单 artifact 上限。</param>
     /// <param name="cancellationToken">临时写入和发布前取消信号。</param>
     /// <returns>只含 ID、MIME、长度和 SHA-256 的 portable 引用。</returns>
-    /// <remarks>不变量：目标永不覆盖；返回前文件和目录已在支持的平台 durable，journal append 由调用方随后执行。</remarks>
+    /// <remarks>不变量：目标永不覆盖；Unix 临时文件与 Move 后目标固定为 owner-only 0600；返回前文件和目录已在支持的平台 durable，journal append 由调用方随后执行。</remarks>
     /// <exception cref="ArtifactValidationException">MIME、空数据、大小或魔数无效。</exception>
     /// <exception cref="IOException">临时写入、flush、无覆盖发布或目录 flush 失败。</exception>
     /// <exception cref="OperationCanceledException">发布前调用方取消。</exception>
@@ -149,14 +149,30 @@ internal static partial class SessionArtifactStore
         var published = false;
         try
         {
-            await using (var stream = new FileStream(
-                             temporary,
-                             FileMode.CreateNew,
-                             FileAccess.Write,
-                             FileShare.None,
-                             bufferSize: 16_384,
-                             FileOptions.Asynchronous | FileOptions.SequentialScan | FileOptions.WriteThrough))
+            var options = new FileStreamOptions
             {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                BufferSize = 16_384,
+                Options = FileOptions.Asynchronous |
+                    FileOptions.SequentialScan |
+                    FileOptions.WriteThrough,
+            };
+            if (!OperatingSystem.IsWindows())
+            {
+                options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            }
+
+            await using (var stream = new FileStream(temporary, options))
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    File.SetUnixFileMode(
+                        temporary,
+                        UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+
                 await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
                 stream.Flush(flushToDisk: true);

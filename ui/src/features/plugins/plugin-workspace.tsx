@@ -153,6 +153,14 @@ function getCapabilityLabel(
   if (loading) {
     return t("marketplace.status.detecting");
   }
+  if (
+    plugin.readinessPolicy === "experimental_unavailable" &&
+    capability.missingToolIds.length === 0 &&
+    capability.missingMethodIds.length === 0 &&
+    capability.missingEventTypes.length === 0
+  ) {
+    return t("marketplace.status.experimentalNotReady");
+  }
   if (capability.available && capability.missingToolIds.length === 0) {
     return t("marketplace.status.backendReady");
   }
@@ -203,7 +211,7 @@ function PluginIcon({ pluginId, size = "normal" }: { readonly pluginId: string; 
 /**
  * 展示单个市场目录项及其设备本地安装、启用操作。
  *
- * 不变量：启用开关只在 capability 交集可用时可操作。
+ * 不变量：启用开关只在 capability 交集和目录 readiness policy 均允许时可操作。
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
@@ -483,7 +491,12 @@ function PluginDetails({
                 </p>
                 {!capability.available && plugin.pluginId === "computer-use" ? (
                   <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-5 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-                    {capability.missingMethodIds.length > 0 ||
+                    {plugin.readinessPolicy === "experimental_unavailable" &&
+                    capability.missingToolIds.length === 0 &&
+                    capability.missingMethodIds.length === 0 &&
+                    capability.missingEventTypes.length === 0
+                      ? t("marketplace.computerExperimentalUnavailable")
+                      : capability.missingMethodIds.length > 0 ||
                     capability.missingEventTypes.length > 0
                       ? t("marketplace.computerApprovalUnavailable")
                       : (
@@ -549,7 +562,7 @@ function PluginDetails({
  * 展示可搜索、筛选和设备本地管理的插件市场。
  *
  * 输入：当前 application service 的真实工具、方法与事件广告；输出：市场与本地偏好视图。
- * 不变量：页面不会补全 initialize 未广告的能力，且不会执行插件代码。
+ * 不变量：页面不会补全 initialize 未广告的能力、越过 readiness policy 或执行插件代码。
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */

@@ -6,11 +6,12 @@ using System.Text.RegularExpressions;
 using QxnmForge.Domain;
 using QxnmForge.Executor;
 using QxnmForge.Provider;
+using QxnmForge.Session;
 
 namespace QxnmForge.Tools;
 
 /// <summary>
-/// 功能：注册、验证、预检并原生执行六个 v0.1 内置工具。
+/// 功能：注册、验证、预检并原生执行当前宿主真实可用的内置工具。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
@@ -24,6 +25,8 @@ public sealed class ToolRegistry : IDisposable
     private readonly WorkspaceBoundary boundary;
     private readonly Dictionary<string, ToolDefinition> definitions;
     private readonly HardSandboxBackend? hardSandbox;
+    private readonly SessionRepository? sessions;
+    private readonly DesktopComputerCapability? desktopComputer;
     private readonly PortableError? pathBoundaryConfigurationError;
     private readonly SemaphoreSlim writeGate = new(1, 1);
     private PortableError? hardSandboxError;
@@ -37,7 +40,7 @@ public sealed class ToolRegistry : IDisposable
     /// <param name="workspace">必须存在的工作区根目录。</param>
     /// <exception cref="ArgumentException">workspace 或内置 schema 无效。</exception>
     public ToolRegistry(string workspace)
-        : this(workspace, cliConformance: false, environmentConformance: false)
+        : this(workspace, cliConformance: false, environmentConformance: false, sessions: null)
     {
     }
 
@@ -53,7 +56,29 @@ public sealed class ToolRegistry : IDisposable
     /// <exception cref="ArgumentException">workspace 或内置 schema 无效。</exception>
     /// <exception cref="IOException">Linux workspace root 无法冻结为安全目录句柄。</exception>
     public ToolRegistry(string workspace, bool cliConformance, bool environmentConformance)
+        : this(workspace, cliConformance, environmentConformance, sessions: null)
     {
+    }
+
+    /// <summary>
+    /// 功能：为 daemon 创建工具注册表，并把 computer screenshot 绑定到同一 Session repository。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="workspace">必须存在的工作区根目录。</param>
+    /// <param name="cliConformance">argv 是否显式启用 conformance。</param>
+    /// <param name="environmentConformance">QXNM_FORGE_CONFORMANCE 是否精确为 1。</param>
+    /// <param name="sessions">daemon 的 Session repository；缺失时不广告需要 artifact 的 computer 工具。</param>
+    /// <remarks>不变量：computer 工具还要求受信任桌面宿主环境门和真实 X11/XTEST 探测；repository 本身不扩大权限。</remarks>
+    /// <exception cref="ArgumentException">workspace 或内置 schema 无效。</exception>
+    /// <exception cref="IOException">Linux workspace root 无法冻结为安全目录句柄。</exception>
+    public ToolRegistry(
+        string workspace,
+        bool cliConformance,
+        bool environmentConformance,
+        SessionRepository? sessions)
+    {
+        this.sessions = sessions;
         var pathBoundaryBarrier = PathBoundaryConformanceBarrier.CreateFromEnvironment(
             cliConformance,
             environmentConformance,
@@ -64,7 +89,9 @@ public sealed class ToolRegistry : IDisposable
             cliConformance,
             environmentConformance,
             out hardSandboxError);
-        definitions = CreateDefinitions().ToDictionary(static item => item.Name, StringComparer.Ordinal);
+        desktopComputer = sessions is null ? null : DesktopComputer.Detect();
+        definitions = CreateDefinitions(desktopComputer)
+            .ToDictionary(static item => item.Name, StringComparer.Ordinal);
         foreach (var definition in definitions.Values)
         {
             RestrictedJsonSchemaValidator.ValidateSchema(definition.InputSchema);
@@ -173,7 +200,7 @@ public sealed class ToolRegistry : IDisposable
     /// <param name="toolCallId">可选 Provider 工具调用 ID；仅供执行期测试 barrier 精确匹配。</param>
     /// <param name="allowedToolIds">可选 run-local allowlist；null 表示完整 registry。</param>
     /// <returns>审批与执行共同绑定的不可变计划。</returns>
-    /// <remarks>不变量：本方法无工具副作用；未配置/未自检 sandbox 在 approval 前失败，不会创建文件或启动进程。</remarks>
+    /// <remarks>不变量：本方法无工具副作用；sandbox 与 computer backend/current geometry 均在 approval 前失败关闭，不创建文件、不读像素、不注入输入。</remarks>
     /// <exception cref="ToolOperationException">未知工具、参数无效、sandbox 不可用、路径越界或 executable 不可解析。</exception>
     public PreparedToolCall Prepare(
         string name,
@@ -242,6 +269,18 @@ public sealed class ToolRegistry : IDisposable
                     resources.Add(new ApprovalResource("executable", resolvedExecutable));
                     resources.Add(new ApprovalResource("path", ToPortableRelativePath(resolvedPath)));
                     break;
+                case "computer.observe":
+                case "computer.screenshot":
+                    DesktopComputer.PreflightObserve();
+                    resources.Add(new ApprovalResource("other", "desktop:screen"));
+                    break;
+                case "computer.interact":
+                    var action = DesktopComputer.ParseAction(normalizedArguments);
+                    DesktopComputer.PreflightInteract(action);
+                    resources.Add(new ApprovalResource(
+                        "other",
+                        "desktop:" + action.Kind.ToString().ToLowerInvariant()));
+                    break;
             }
 
             if (normalizedArguments.TryGetProperty("sandbox", out var sandbox))
@@ -268,6 +307,10 @@ public sealed class ToolRegistry : IDisposable
         catch (ToolOperationException)
         {
             throw;
+        }
+        catch (DesktopComputerException)
+        {
+            throw CreateFailure("computer_unavailable", "internal_error", -32603, name);
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or FileNotFoundException or DirectoryNotFoundException)
         {
@@ -303,6 +346,62 @@ public sealed class ToolRegistry : IDisposable
         PreparedToolCall prepared,
         CancellationToken cancellationToken = default)
     {
+        return await ExecuteCoreAsync(
+            prepared,
+            sessionId: null,
+            runId: null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：在当前 active run 身份下执行含 screenshot 在内的已授权工具。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="prepared">不可变预检结果。</param>
+    /// <param name="sessionId">当前工具所属 Session；computer 工具必需。</param>
+    /// <param name="runId">必须仍为 Session active run 的 ID；computer 工具必需。</param>
+    /// <param name="cancellationToken">run 取消信号。</param>
+    /// <returns>可 durable 进入下一 Provider turn 的结果。</returns>
+    /// <remarks>不变量：sessionId/runId 只绑定当前 repository active run，不能把 artifact 发布到其他 Session。</remarks>
+    /// <exception cref="ArgumentException">Session 或 run ID 为空。</exception>
+    /// <exception cref="OperationCanceledException">等待或工具执行期间取消。</exception>
+    /// <exception cref="ToolOperationException">后端、Session 身份或执行失败。</exception>
+    public async Task<PortableToolResult> ExecuteAsync(
+        PreparedToolCall prepared,
+        string sessionId,
+        string runId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(sessionId) || string.IsNullOrEmpty(runId))
+        {
+            throw new ArgumentException("session and run identifiers must be nonempty");
+        }
+
+        return await ExecuteCoreAsync(
+            prepared,
+            sessionId,
+            runId,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：集中分派带可选 active-run 身份的已授权工具调用。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="prepared">不可变预检结果。</param>
+    /// <param name="sessionId">可选当前 Session ID。</param>
+    /// <param name="runId">可选当前 active run ID。</param>
+    /// <param name="cancellationToken">执行取消信号。</param>
+    /// <returns>portable 工具结果。</returns>
+    /// <remarks>不变量：需要 artifact 的工具在身份缺失时 fail closed。</remarks>
+    private async Task<PortableToolResult> ExecuteCoreAsync(
+        PreparedToolCall prepared,
+        string? sessionId,
+        string? runId,
+        CancellationToken cancellationToken)
+    {
         ObjectDisposedException.ThrowIf(disposed, this);
         boundary.ValidateLinuxBarrierToolCall(prepared.ToolCallId, prepared.Definition.Name);
         var result = prepared.Definition.Name switch
@@ -313,6 +412,21 @@ public sealed class ToolRegistry : IDisposable
             "search.text" => await SearchTextAsync(prepared, cancellationToken).ConfigureAwait(false),
             "process.exec" => await ExecuteProcessAsync(prepared, cancellationToken).ConfigureAwait(false),
             "shell.exec" => await ExecuteShellAsync(prepared, cancellationToken).ConfigureAwait(false),
+            "computer.observe" => await CaptureDesktopAsync(
+                prepared,
+                sessionId,
+                runId,
+                "observed",
+                cancellationToken).ConfigureAwait(false),
+            "computer.screenshot" => await CaptureDesktopAsync(
+                prepared,
+                sessionId,
+                runId,
+                "captured",
+                cancellationToken).ConfigureAwait(false),
+            "computer.interact" => await InteractWithDesktopAsync(
+                prepared,
+                cancellationToken).ConfigureAwait(false),
             _ => throw CreateFailure("tool_not_found", "validation_error", -32601, prepared.Definition.Name),
         };
         boundary.EnsureLinuxBarrierSatisfied(prepared.ToolCallId);
@@ -370,8 +484,9 @@ public sealed class ToolRegistry : IDisposable
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
+    /// <param name="desktopComputer">启动期冻结的可选桌面能力。</param>
     /// <returns>不含重复名称且不夸大当前平台 containment 的定义列表。</returns>
-    private static List<ToolDefinition> CreateDefinitions()
+    internal static List<ToolDefinition> CreateDefinitions(DesktopComputerCapability? desktopComputer)
     {
         List<ToolDefinition> result =
         [
@@ -384,29 +499,63 @@ public sealed class ToolRegistry : IDisposable
             Define("search.text", "在工作区 UTF-8 文本文件中搜索正则表达式", ToolAction.SearchText, "workspace_read", true,
                 """{"type":"object","properties":{"pattern":{"type":"string","minLength":1,"maxLength":4096},"path":{"type":"string","minLength":1,"maxLength":4096}},"required":["pattern"],"additionalProperties":false}"""),
         ];
-        if (!ProcessExecutor.IsConformantPlatformAvailable())
+        if (ProcessExecutor.IsConformantPlatformAvailable())
         {
-            return result;
+            result.Add(Define(
+                "process.exec",
+                "以 executable 与 argv 运行进程，不经过 shell",
+                ToolAction.ProcessExec,
+                "process",
+                false,
+                """
+                {"type":"object","properties":{"executable":{"type":"string","minLength":1,"maxLength":4096},"args":{"type":"array","items":{"type":"string","maxLength":4096},"maxItems":256},"cwd":{"type":"string","minLength":1,"maxLength":4096},"stdin":{"x-discriminator":"type","oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"none"}},"required":["type"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string","maxLength":1048576}},"required":["type","text"],"additionalProperties":false}]},"timeoutMs":{"type":"integer","minimum":1,"maximum":600000},"outputLimitBytes":{"type":"integer","minimum":1,"maximum":16777216},"sandbox":{"type":"object","properties":{"profile":{"type":"string","const":"linux-bwrap-v1"},"workspaceAccess":{"type":"string","enum":["read_only","read_write"]},"network":{"type":"string","const":"isolated"}},"required":["profile","workspaceAccess","network"],"additionalProperties":false}},"required":["executable","args"],"additionalProperties":false}
+                """));
+            result.Add(Define(
+                "shell.exec",
+                "通过显式选择的非交互 shell 运行脚本",
+                ToolAction.ShellExec,
+                "shell",
+                false,
+                """
+                {"type":"object","properties":{"shell":{"type":"string","enum":["bash","sh","pwsh","powershell","cmd"]},"script":{"type":"string","maxLength":1048576},"cwd":{"type":"string","minLength":1,"maxLength":4096},"stdin":{"x-discriminator":"type","oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"none"}},"required":["type"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string","maxLength":1048576}},"required":["type","text"],"additionalProperties":false}]},"timeoutMs":{"type":"integer","minimum":1,"maximum":600000},"outputLimitBytes":{"type":"integer","minimum":1,"maximum":16777216},"sandbox":{"type":"object","properties":{"profile":{"type":"string","const":"linux-bwrap-v1"},"workspaceAccess":{"type":"string","enum":["read_only","read_write"]},"network":{"type":"string","const":"isolated"}},"required":["profile","workspaceAccess","network"],"additionalProperties":false}},"required":["shell","script"],"additionalProperties":false}
+                """));
         }
 
-        result.Add(Define(
-            "process.exec",
-            "以 executable 与 argv 运行进程，不经过 shell",
-            ToolAction.ProcessExec,
-            "process",
-            false,
-            """
-            {"type":"object","properties":{"executable":{"type":"string","minLength":1,"maxLength":4096},"args":{"type":"array","items":{"type":"string","maxLength":4096},"maxItems":256},"cwd":{"type":"string","minLength":1,"maxLength":4096},"stdin":{"x-discriminator":"type","oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"none"}},"required":["type"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string","maxLength":1048576}},"required":["type","text"],"additionalProperties":false}]},"timeoutMs":{"type":"integer","minimum":1,"maximum":600000},"outputLimitBytes":{"type":"integer","minimum":1,"maximum":16777216},"sandbox":{"type":"object","properties":{"profile":{"type":"string","const":"linux-bwrap-v1"},"workspaceAccess":{"type":"string","enum":["read_only","read_write"]},"network":{"type":"string","const":"isolated"}},"required":["profile","workspaceAccess","network"],"additionalProperties":false}},"required":["executable","args"],"additionalProperties":false}
-            """));
-        result.Add(Define(
-            "shell.exec",
-            "通过显式选择的非交互 shell 运行脚本",
-            ToolAction.ShellExec,
-            "shell",
-            false,
-            """
-            {"type":"object","properties":{"shell":{"type":"string","enum":["bash","sh","pwsh","powershell","cmd"]},"script":{"type":"string","maxLength":1048576},"cwd":{"type":"string","minLength":1,"maxLength":4096},"stdin":{"x-discriminator":"type","oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"none"}},"required":["type"],"additionalProperties":false},{"type":"object","properties":{"type":{"type":"string","const":"text"},"text":{"type":"string","maxLength":1048576}},"required":["type","text"],"additionalProperties":false}]},"timeoutMs":{"type":"integer","minimum":1,"maximum":600000},"outputLimitBytes":{"type":"integer","minimum":1,"maximum":16777216},"sandbox":{"type":"object","properties":{"profile":{"type":"string","const":"linux-bwrap-v1"},"workspaceAccess":{"type":"string","enum":["read_only","read_write"]},"network":{"type":"string","const":"isolated"}},"required":["profile","workspaceAccess","network"],"additionalProperties":false}},"required":["shell","script"],"additionalProperties":false}
-            """));
+        if (desktopComputer is not null)
+        {
+            result.Add(Define(
+                "computer.observe",
+                "观察当前桌面，返回显示几何、指针位置和 PNG artifact",
+                ToolAction.ComputerObserve,
+                "outside_workspace",
+                false,
+                """{"type":"object","properties":{},"required":[],"additionalProperties":false}"""));
+            result.Add(Define(
+                "computer.screenshot",
+                "截取当前桌面并返回 durable PNG artifact",
+                ToolAction.ComputerObserve,
+                "outside_workspace",
+                false,
+                """{"type":"object","properties":{},"required":[],"additionalProperties":false}"""));
+            if (desktopComputer.InteractionAvailable)
+            {
+                result.Add(Define(
+                "computer.interact",
+                    "在逐次审批后执行鼠标移动、点击、滚动或有限命名按键",
+                    ToolAction.ComputerInteract,
+                    "outside_workspace",
+                    false,
+                    """
+                    {"x-discriminator":"action","oneOf":[
+                      {"type":"object","properties":{"action":{"type":"string","const":"move"},"x":{"type":"integer","minimum":0,"maximum":16383},"y":{"type":"integer","minimum":0,"maximum":16383}},"required":["action","x","y"],"additionalProperties":false},
+                      {"type":"object","properties":{"action":{"type":"string","const":"click"},"x":{"type":"integer","minimum":0,"maximum":16383},"y":{"type":"integer","minimum":0,"maximum":16383},"button":{"type":"string","enum":["left","middle","right"]},"clicks":{"type":"integer","minimum":1,"maximum":3}},"required":["action","x","y","button","clicks"],"additionalProperties":false},
+                      {"type":"object","properties":{"action":{"type":"string","const":"scroll"},"deltaX":{"type":"integer","minimum":-20,"maximum":20},"deltaY":{"type":"integer","minimum":-20,"maximum":20}},"required":["action","deltaX","deltaY"],"additionalProperties":false},
+                      {"type":"object","properties":{"action":{"type":"string","const":"key"},"key":{"type":"string","enum":["enter","tab","escape","backspace","delete","home","end","page_up","page_down","left","right","up","down","space"]},"modifiers":{"type":"array","items":{"type":"string","enum":["shift","control","alt","meta"]},"maxItems":4,"uniqueItems":true}},"required":["action","key","modifiers"],"additionalProperties":false}
+                    ]}
+                    """));
+            }
+        }
+
         return result;
     }
 
@@ -439,6 +588,110 @@ public sealed class ToolRegistry : IDisposable
             permissionClass,
             idempotent,
             DefaultOutputLimit);
+    }
+
+    /// <summary>
+    /// 功能：捕获桌面、绑定当前 active run durable 发布 PNG，并返回 image_ref 工具结果。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="prepared">computer.observe 或 computer.screenshot 计划。</param>
+    /// <param name="sessionId">当前工具所属 Session。</param>
+    /// <param name="runId">必须仍为 active run 的 ID。</param>
+    /// <param name="action">稳定动作描述。</param>
+    /// <param name="cancellationToken">捕获后发布取消信号。</param>
+    /// <returns>尺寸文本和 durable PNG image_ref。</returns>
+    /// <exception cref="ToolOperationException">backend、Session 身份或 artifact 发布失败。</exception>
+    private async Task<PortableToolResult> CaptureDesktopAsync(
+        PreparedToolCall prepared,
+        string? sessionId,
+        string? runId,
+        string action,
+        CancellationToken cancellationToken)
+    {
+        if (desktopComputer is null || sessions is null || sessionId is null || runId is null)
+        {
+            throw CreateFailure("computer_unavailable", "internal_error", -32603, prepared.Definition.Name);
+        }
+
+        DesktopCapture capture;
+        try
+        {
+            capture = await Task.Run(
+                () => DesktopComputer.Capture(cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (DesktopComputerException)
+        {
+            throw CreateFailure("computer_unavailable", "internal_error", -32603, prepared.Definition.Name);
+        }
+
+        ArtifactReference artifact;
+        try
+        {
+            artifact = await sessions.PublishToolScreenshotAsync(
+                sessionId,
+                runId,
+                capture.Png,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is SessionMutationException or ArtifactValidationException or IOException or UnauthorizedAccessException)
+        {
+            throw CreateFailure("computer_artifact_failed", "internal_error", -32603, prepared.Definition.Name);
+        }
+
+        var text = string.Create(
+            CultureInfo.InvariantCulture,
+            $"desktop {action}: {capture.Width}x{capture.Height}, pointer=({capture.PointerX}, {capture.PointerY})");
+        return new PortableToolResult(
+            [new TextContent(text), new ImageReferenceContent(artifact, "current desktop screenshot")],
+            false);
+    }
+
+    /// <summary>
+    /// 功能：重新解析并在阻塞 XTEST backend 中执行一次已授权交互。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="prepared">computer.interact 不可变计划。</param>
+    /// <param name="cancellationToken">执行前取消信号。</param>
+    /// <returns>有界成功文本。</returns>
+    /// <exception cref="ToolOperationException">参数或 backend 失败。</exception>
+    private async Task<PortableToolResult> InteractWithDesktopAsync(
+        PreparedToolCall prepared,
+        CancellationToken cancellationToken)
+    {
+        if (desktopComputer?.InteractionAvailable != true)
+        {
+            throw CreateFailure("computer_unavailable", "internal_error", -32603, prepared.Definition.Name);
+        }
+
+        var action = DesktopComputer.ParseAction(prepared.Arguments);
+        try
+        {
+            await Task.Run(
+                () => DesktopComputer.Interact(action, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (DesktopComputerException)
+        {
+            throw CreateFailure("computer_unavailable", "internal_error", -32603, prepared.Definition.Name);
+        }
+
+        return Success("desktop interaction completed");
     }
 
     /// <summary>

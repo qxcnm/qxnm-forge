@@ -108,7 +108,7 @@ public sealed record PortableExecutionResult(
 /// <param name="Error">可选结构化工具错误；不得包含 host 异常、路径外内容或命令输出。</param>
 /// <param name="Execution">子进程成功启动后必有的结构化执行结果。</param>
 public sealed record PortableToolResult(
-    IReadOnlyList<TextContent> Content,
+    IReadOnlyList<MessageContent> Content,
     bool IsError,
     string? TerminationReason = null,
     PortableError? Error = null,

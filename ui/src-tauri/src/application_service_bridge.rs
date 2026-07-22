@@ -381,6 +381,7 @@ async fn spawn_connection(
     command
         .args(daemon_arguments(backend, &workspace, &state_root))
         .current_dir(&workspace)
+        .env("AGENT_CLIENT_DESKTOP_COMPUTER", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
