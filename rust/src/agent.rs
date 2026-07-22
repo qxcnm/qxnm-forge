@@ -1234,14 +1234,8 @@ impl Agent {
             )
             .await?;
             let provider = self.provider_for(request)?;
-            let provider_request = ProviderRequest {
-                session_id: Some(request.session_id.clone()),
-                run_id: Some(request.run_id.clone()),
-                model: request.model.clone(),
-                system_instructions: system_instructions.clone(),
-                messages: messages.clone(),
-                tools: self
-                    .tools
+            let tools = if provider.supports_tools() {
+                self.tools
                     .definitions()
                     .into_iter()
                     .filter(|definition| {
@@ -1250,7 +1244,17 @@ impl Agent {
                             .as_ref()
                             .is_none_or(|profile| profile.permits_tool(&definition.name))
                     })
-                    .collect(),
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let provider_request = ProviderRequest {
+                session_id: Some(request.session_id.clone()),
+                run_id: Some(request.run_id.clone()),
+                model: request.model.clone(),
+                system_instructions: system_instructions.clone(),
+                messages: messages.clone(),
+                tools,
                 max_output_tokens: None,
             };
             let mut attempt = 1_u32;

@@ -627,6 +627,7 @@ public sealed class CustomProviderConnectionTests
         Assert.Equal(["text"], model.Capabilities.Input);
         Assert.False(model.Capabilities.Tools);
         var provider = Assert.Single(registry.Providers, static item => item.Id == "ready");
+        Assert.False(provider.SupportsTools);
         Assert.Equal(
             "https://example.invalid/v1/chat/completions",
             CreateRequestEndpoint(provider, "model-a").AbsoluteUri);

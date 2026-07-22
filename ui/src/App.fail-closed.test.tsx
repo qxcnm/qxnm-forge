@@ -268,6 +268,140 @@ const FIRST_APPROVAL_RESOLVED_SNAPSHOT: SessionSnapshot = {
   ],
 };
 
+const LIVE_CHAT_SESSION: SessionSummary = {
+  sessionId: "live-chat-session",
+  title: "真实聊天闭环",
+  project: "测试工作区",
+  updatedAt: "2026-07-22T06:00:00Z",
+  archived: false,
+};
+
+const EMPTY_LIVE_CHAT_SNAPSHOT: SessionSnapshot = {
+  sessionId: LIVE_CHAT_SESSION.sessionId,
+  latestSeq: 0,
+  activeRunId: null,
+  messages: [],
+  events: [],
+};
+
+const STREAMING_LIVE_CHAT_SNAPSHOT: SessionSnapshot = {
+  sessionId: LIVE_CHAT_SESSION.sessionId,
+  latestSeq: 3,
+  activeRunId: "live-run",
+  messages: [
+    {
+      messageId: "live-user",
+      role: "user",
+      content: [{ type: "text", text: "验证真实回复" }],
+      time: "2026-07-22T06:00:01Z",
+    },
+  ],
+  events: [
+    {
+      sessionId: LIVE_CHAT_SESSION.sessionId,
+      runId: "live-run",
+      seq: 1,
+      time: "2026-07-22T06:00:01Z",
+      type: "run.started",
+      data: {},
+    },
+    {
+      sessionId: LIVE_CHAT_SESSION.sessionId,
+      runId: "live-run",
+      turnId: "live-turn",
+      seq: 2,
+      time: "2026-07-22T06:00:02Z",
+      type: "message.started",
+      data: { messageId: "live-assistant", role: "assistant" },
+    },
+    {
+      sessionId: LIVE_CHAT_SESSION.sessionId,
+      runId: "live-run",
+      turnId: "live-turn",
+      seq: 3,
+      time: "2026-07-22T06:00:03Z",
+      type: "message.delta",
+      data: {
+        messageId: "live-assistant",
+        delta: { type: "text", text: "真实流式回复" },
+      },
+    },
+  ],
+};
+
+const COMPLETED_LIVE_CHAT_SNAPSHOT: SessionSnapshot = {
+  ...STREAMING_LIVE_CHAT_SNAPSHOT,
+  latestSeq: 5,
+  activeRunId: null,
+  messages: [
+    ...STREAMING_LIVE_CHAT_SNAPSHOT.messages,
+    {
+      messageId: "live-assistant",
+      role: "assistant",
+      content: [{ type: "text", text: "真实流式回复已完成" }],
+      provider: { id: "faux", modelId: "faux-v1", apiFamily: "faux" },
+      finishReason: "stop",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      time: "2026-07-22T06:00:04Z",
+    },
+  ],
+  events: [
+    ...STREAMING_LIVE_CHAT_SNAPSHOT.events,
+    {
+      sessionId: LIVE_CHAT_SESSION.sessionId,
+      runId: "live-run",
+      turnId: "live-turn",
+      seq: 4,
+      time: "2026-07-22T06:00:04Z",
+      type: "message.completed",
+      data: { messageId: "live-assistant", finishReason: "stop" },
+    },
+    {
+      sessionId: LIVE_CHAT_SESSION.sessionId,
+      runId: "live-run",
+      seq: 5,
+      time: "2026-07-22T06:00:05Z",
+      type: "run.completed",
+      data: {
+        status: "completed",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      },
+    },
+  ],
+};
+
+const FAILED_LIVE_CHAT_SNAPSHOT: SessionSnapshot = {
+  sessionId: LIVE_CHAT_SESSION.sessionId,
+  latestSeq: 1,
+  activeRunId: null,
+  messages: [
+    {
+      messageId: "failed-user",
+      role: "user",
+      content: [{ type: "text", text: "触发失败" }],
+      time: "2026-07-22T06:01:00Z",
+    },
+  ],
+  events: [
+    {
+      sessionId: LIVE_CHAT_SESSION.sessionId,
+      runId: "failed-run",
+      seq: 1,
+      time: "2026-07-22T06:01:01Z",
+      type: "run.failed",
+      data: {
+        status: "failed",
+        error: {
+          code: -32005,
+          message: "provider HTTP request failed with status 400",
+          retryable: false,
+          details: { kind: "provider_error", httpStatus: 400 },
+        },
+      },
+    },
+  ],
+};
+
 describe("App fail-closed boundaries", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -286,6 +420,112 @@ describe("App fail-closed boundaries", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  /**
+   * 验证正式 application service 从事件增量显示流式文本，并在终态切换为 durable assistant 消息。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rebuilds live and completed assistant messages without an acceptance placeholder", async () => {
+    let started = false;
+    let postStartReads = 0;
+    const getSession = vi.fn<ApplicationServiceClient["getSession"]>(() => {
+      if (!started) {
+        return Promise.resolve(EMPTY_LIVE_CHAT_SNAPSHOT);
+      }
+      postStartReads += 1;
+      return Promise.resolve(
+        postStartReads === 1
+          ? STREAMING_LIVE_CHAT_SNAPSHOT
+          : COMPLETED_LIVE_CHAT_SNAPSHOT,
+      );
+    });
+    const service = createTestService({
+      mode: "application-service",
+      initialize: vi.fn().mockResolvedValue({
+        ...INITIALIZE_RESULT,
+        capabilities: {
+          ...INITIALIZE_RESULT.capabilities,
+          eventTypes: [
+            "run.started",
+            "message.started",
+            "message.delta",
+            "message.completed",
+            "run.completed",
+            "run.failed",
+          ],
+        },
+      }),
+      listModels: vi.fn().mockResolvedValue([MODEL]),
+      listProfiles: vi.fn().mockResolvedValue([]),
+      listSessions: vi.fn().mockResolvedValue([LIVE_CHAT_SESSION]),
+      getSession,
+      startRun: vi.fn().mockImplementation(() => {
+        started = true;
+        return Promise.resolve({ runId: "live-run" });
+      }),
+    });
+    useWorkspaceUiStore.setState({ activeSessionId: LIVE_CHAT_SESSION.sessionId });
+    renderTestApp(service);
+
+    await waitFor(() => expect(screen.getByLabelText("发送任务")).toBeDisabled());
+    fireEvent.change(screen.getByLabelText("任务消息"), {
+      target: { value: "验证真实回复" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送任务")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送任务"));
+
+    expect(await screen.findByText("真实流式回复")).toBeInTheDocument();
+    expect(screen.queryByText(/capability 画像接受/)).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("真实流式回复已完成", {}, { timeout: 2_000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("真实流式回复")).not.toBeInTheDocument();
+  });
+
+  /**
+   * 验证正式运行的 durable run.failed 会显示脱敏错误与 HTTP 状态，而不是停留在接受占位。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("renders durable provider failures in the conversation", async () => {
+    let snapshot = EMPTY_LIVE_CHAT_SNAPSHOT;
+    const service = createTestService({
+      mode: "application-service",
+      initialize: vi.fn().mockResolvedValue({
+        ...INITIALIZE_RESULT,
+        capabilities: {
+          ...INITIALIZE_RESULT.capabilities,
+          eventTypes: ["run.failed"],
+        },
+      }),
+      listModels: vi.fn().mockResolvedValue([MODEL]),
+      listProfiles: vi.fn().mockResolvedValue([]),
+      listSessions: vi.fn().mockResolvedValue([LIVE_CHAT_SESSION]),
+      getSession: vi.fn().mockImplementation(() => Promise.resolve(snapshot)),
+      startRun: vi.fn().mockImplementation(() => {
+        snapshot = FAILED_LIVE_CHAT_SNAPSHOT;
+        return Promise.resolve({ runId: "failed-run" });
+      }),
+    });
+    useWorkspaceUiStore.setState({ activeSessionId: LIVE_CHAT_SESSION.sessionId });
+    renderTestApp(service);
+
+    fireEvent.change(await screen.findByLabelText("任务消息"), {
+      target: { value: "触发失败" },
+    });
+    await waitFor(() => expect(screen.getByLabelText("发送任务")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送任务"));
+
+    expect(
+      await screen.findByText(
+        "运行失败：provider HTTP request failed with status 400（HTTP 400）",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/capability 画像接受/)).not.toBeInTheDocument();
   });
 
   /**

@@ -1113,6 +1113,7 @@ impl CustomProviderRuntimeSnapshot {
                 provider_id: connection.provider_id.clone(),
                 api_family: connection.api_family.clone(),
                 model_ids: connection.model_ids.iter().cloned().collect(),
+                supports_tools: connection.supports_tools,
                 credentials: self.credentials.clone(),
                 inner,
             };
@@ -1154,6 +1155,7 @@ struct CustomConnectionProvider {
     provider_id: String,
     api_family: String,
     model_ids: BTreeSet<String>,
+    supports_tools: bool,
     credentials: ProviderCredentialStore,
     inner: Arc<dyn Provider>,
 }
@@ -1179,6 +1181,13 @@ impl Provider for CustomConnectionProvider {
     /// 邮箱：18272669457@163.com
     fn supports_model(&self, model_id: &str) -> bool {
         self.model_ids.contains(model_id)
+    }
+
+    /// 功能：返回连接启动快照中的显式 function tool 能力声明。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn supports_tools(&self) -> bool {
+        self.supports_tools
     }
 
     /// 功能：在 durable Session 副作用前重新检查 stored credential presence。
@@ -2322,6 +2331,7 @@ mod tests {
         assert_eq!(provider.api_family(), Some("openai-completions"));
         assert!(provider.supports_model("model-a"));
         assert!(!provider.supports_model("unknown"));
+        assert!(!provider.supports_tools());
         Ok(())
     }
 

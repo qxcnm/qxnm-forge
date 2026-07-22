@@ -70,7 +70,8 @@ revision 变化或 CredentialStore 不可用时不得修改连接。错误、日
 
 模型只广告有实现证据的 text input/output 与 streaming。`supportsTools` 默认 false；用户显式
 开启后，模型 descriptor 的 `tools` 为 true，并使用已经通过共同 adapter 测试的 Chat/Responses
-function-tool 映射与续轮实现。`reasoning` 仍固定为 false。未开启时不得仅因接口兼容而推断工具能力。
+function-tool 映射与续轮实现。未开启时 Agent 发给 Provider 的工具集合必须为空，不得仅因 family
+adapter 支持工具而扩大请求；`reasoning` 仍固定为 false。
 
 界面的“New API”只是导入 preset：`_type:"newapi_channel_conn"` 可映射到上述普通 DTO，
 不会进入 wire-format 分支或新增私有 adapter。提供商 Logo 只引用受信任的本地 asset ID；

@@ -162,44 +162,164 @@ function isApprovalExpired(approval: PendingApproval): boolean {
  * 邮箱：18272669457@163.com
  */
 function projectSessionSnapshotMessages(snapshot: SessionSnapshot): readonly SubmittedMessage[] {
-  return snapshot.messages.map((message) => {
+  const projectedMessages: Array<{
+    readonly message: SubmittedMessage;
+    readonly timestamp: number;
+    readonly order: number;
+  }> = snapshot.messages.map((message, index) => {
     const text = message.content
       .filter((content) => content.type === "text")
       .map((content) => content.text)
       .join("\n\n")
       .trim();
+    let projection: SubmittedMessage;
     if (message.role === "user") {
-      return {
+      projection = {
         id: message.messageId,
         role: "user" as const,
         content: text || i18n.t("app.attachmentSent"),
       };
-    }
-    if (message.role === "tool") {
-      return {
+    } else if (message.role === "tool") {
+      projection = {
         id: message.messageId,
         role: "status" as const,
         content: text
           ? i18n.t("app.toolResult", { name: message.toolName, text })
           : i18n.t("app.toolCompleted", { name: message.toolName }),
       };
+    } else {
+      const toolNames = message.content
+        .filter((content) => content.type === "tool_call")
+        .map((content) => content.name);
+      projection = {
+        id: message.messageId,
+        role: "assistant" as const,
+        content:
+          text ||
+          message.error?.message ||
+          (toolNames.length > 0
+            ? i18n.t("app.requestedTools", {
+                names: toolNames.join(i18n.resolvedLanguage === "en-US" ? ", " : "、"),
+              })
+            : i18n.t("app.runCompleted")),
+      };
     }
-    const toolNames = message.content
-      .filter((content) => content.type === "tool_call")
-      .map((content) => content.name);
+    const timestamp = Date.parse(message.time);
     return {
-      id: message.messageId,
-      role: "assistant" as const,
-      content:
-        text ||
-        message.error?.message ||
-        (toolNames.length > 0
-          ? i18n.t("app.requestedTools", {
-              names: toolNames.join(i18n.resolvedLanguage === "en-US" ? ", " : "、"),
-            })
-          : i18n.t("app.runCompleted")),
+      message: projection,
+      timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+      order: index,
     };
   });
+
+  const durableMessageIds = new Set(
+    snapshot.messages.map((message) => message.messageId),
+  );
+  const streamedAssistants = new Map<
+    string,
+    { content: string; timestamp: number; order: number }
+  >();
+  for (const event of snapshot.events) {
+    const eventTimestamp = Date.parse(event.time);
+    const timestamp = Number.isFinite(eventTimestamp) ? eventTimestamp : 0;
+    if (event.type === "message.started" || event.type === "message.delta") {
+      const messageId = event.data.messageId;
+      if (typeof messageId !== "string" || durableMessageIds.has(messageId)) {
+        continue;
+      }
+      if (event.type === "message.started") {
+        if (event.data.role === "assistant" && !streamedAssistants.has(messageId)) {
+          streamedAssistants.set(messageId, { content: "", timestamp, order: event.seq });
+        }
+        continue;
+      }
+      const delta = event.data.delta;
+      if (typeof delta !== "object" || delta === null || Array.isArray(delta)) {
+        continue;
+      }
+      const deltaRecord = delta as Readonly<Record<string, unknown>>;
+      if (deltaRecord.type !== "text" || typeof deltaRecord.text !== "string") {
+        continue;
+      }
+      const current = streamedAssistants.get(messageId) ?? {
+        content: "",
+        timestamp,
+        order: event.seq,
+      };
+      streamedAssistants.set(messageId, {
+        ...current,
+        content: `${current.content}${deltaRecord.text}`,
+      });
+      continue;
+    }
+
+    if (
+      event.type !== "run.failed" &&
+      event.type !== "run.cancelled" &&
+      event.type !== "run.interrupted"
+    ) {
+      continue;
+    }
+    let translation: NonNullable<SubmittedMessage["translation"]>;
+    if (event.type === "run.cancelled") {
+      translation = {
+        key: "app.runCancelled",
+        values: {
+          reason: typeof event.data.reason === "string" ? `：${event.data.reason}` : "",
+        },
+      };
+    } else {
+      const error =
+        typeof event.data.error === "object" &&
+        event.data.error !== null &&
+        !Array.isArray(event.data.error)
+          ? (event.data.error as Readonly<Record<string, unknown>>)
+          : undefined;
+      const details =
+        typeof error?.details === "object" &&
+        error.details !== null &&
+        !Array.isArray(error.details)
+          ? (error.details as Readonly<Record<string, unknown>>)
+          : undefined;
+      const httpStatus =
+        typeof details?.httpStatus === "number" ? `（HTTP ${details.httpStatus}）` : "";
+      translation = {
+        key: event.type === "run.failed" ? "app.runFailed" : "app.runInterrupted",
+        values: {
+          message:
+            typeof error?.message === "string"
+              ? error.message
+              : i18n.t("app.unknownRunError"),
+          httpStatus,
+        },
+      };
+    }
+    projectedMessages.push({
+      message: {
+        id: `${event.runId}:${event.type}:${event.seq}`,
+        role: "status",
+        content: "",
+        translation,
+      },
+      timestamp,
+      order: snapshot.messages.length + event.seq,
+    });
+  }
+
+  for (const [messageId, streamed] of streamedAssistants) {
+    if (streamed.content.length === 0) {
+      continue;
+    }
+    projectedMessages.push({
+      message: { id: messageId, role: "assistant", content: streamed.content },
+      timestamp: streamed.timestamp,
+      order: snapshot.messages.length + streamed.order,
+    });
+  }
+
+  return projectedMessages
+    .sort((left, right) => left.timestamp - right.timestamp || left.order - right.order)
+    .map((projection) => projection.message);
 }
 
 /**
@@ -486,37 +606,31 @@ export default function App({
   const runMutation = useMutation({
     mutationFn: (request: RunMutationRequest) => request.client.startRun(request.input),
     onSuccess: async (result, request) => {
-      const translation: NonNullable<SubmittedMessage["translation"]> = request.agentProfileName
-        ? request.client.mode === "application-service"
+      if (request.client.mode === "faux-preview") {
+        const translation: NonNullable<SubmittedMessage["translation"]> = request.agentProfileName
           ? {
-              key: "app.runAcceptedProfile",
-              values: {
-                backend: request.backendLabel,
-                profile: request.agentProfileName,
-              },
-            }
-          : {
               key: "app.runAcceptedPreviewProfile",
               values: {
                 backend: request.backendLabel,
                 profile: request.agentProfileName,
               },
             }
-        : request.supportsFollowUp
-          ? {
-              key: "app.runAcceptedFollowUp",
-              values: { backend: request.backendLabel },
-            }
-          : {
-              key: "app.runAccepted",
-              values: { backend: request.backendLabel },
-            };
-      appendSessionMessage(request.backend, request.input.sessionId, {
-        id: result.runId,
-        role: "status",
-        content: "",
-        translation,
-      });
+          : request.supportsFollowUp
+            ? {
+                key: "app.runAcceptedFollowUp",
+                values: { backend: request.backendLabel },
+              }
+            : {
+                key: "app.runAccepted",
+                values: { backend: request.backendLabel },
+              };
+        appendSessionMessage(request.backend, request.input.sessionId, {
+          id: result.runId,
+          role: "status",
+          content: "",
+          translation,
+        });
+      }
       if (request.client.mode === "application-service") {
         serviceOwnedSessionKeys.current.add(
           getSessionScopeKey(request.backend, request.input.sessionId),

@@ -437,6 +437,14 @@ public abstract class HttpSseProviderBase : IProvider, IDisposable
     }
 
     /// <summary>
+    /// 功能：取得此 HTTP Provider route 是否接受 function tool 定义。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <remarks>原生 family 默认支持；自定义连接必须按启动快照中的显式声明覆盖。</remarks>
+    public virtual bool SupportsTools => true;
+
+    /// <summary>
     /// 功能：执行有总时限的 HTTP attempts，并把 retry 决策作为规范化信号返回 Agent。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com

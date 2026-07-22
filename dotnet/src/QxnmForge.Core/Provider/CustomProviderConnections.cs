@@ -1917,6 +1917,7 @@ public sealed class CustomProviderConnectionService
 internal sealed class CustomOpenAiCompletionsProvider : OpenAiChatProvider
 {
     private readonly Uri baseEndpoint;
+    private readonly bool supportsTools;
 
     /// <summary>
     /// 功能：创建只在请求最终边界读取 stored credential 的自定义 adapter。
@@ -1939,7 +1940,15 @@ internal sealed class CustomOpenAiCompletionsProvider : OpenAiChatProvider
             options)
     {
         baseEndpoint = new Uri(connection.BaseUrl, UriKind.Absolute);
+        supportsTools = connection.SupportsTools;
     }
+
+    /// <summary>
+    /// 功能：取得连接启动快照中的显式 function tool 能力声明。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public override bool SupportsTools => supportsTools;
 
     /// <summary>
     /// 功能：在用户固定 API base 后同源追加 `/chat/completions`。
@@ -1962,6 +1971,7 @@ internal sealed class CustomOpenAiCompletionsProvider : OpenAiChatProvider
 internal sealed class CustomOpenAiResponsesProvider : OpenAiResponsesProvider
 {
     private readonly Uri baseEndpoint;
+    private readonly bool supportsTools;
 
     /// <summary>
     /// 功能：创建只在最终请求边界读取独立 Responses credential 的自定义 adapter。
@@ -1984,7 +1994,15 @@ internal sealed class CustomOpenAiResponsesProvider : OpenAiResponsesProvider
             options)
     {
         baseEndpoint = new Uri(connection.BaseUrl, UriKind.Absolute);
+        supportsTools = connection.SupportsTools;
     }
+
+    /// <summary>
+    /// 功能：取得连接启动快照中的显式 function tool 能力声明。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public override bool SupportsTools => supportsTools;
 
     /// <summary>
     /// 功能：在用户固定 API base 后同源追加 `/responses`。

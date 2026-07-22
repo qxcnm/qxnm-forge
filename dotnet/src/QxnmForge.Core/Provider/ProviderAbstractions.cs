@@ -184,6 +184,14 @@ public interface IProvider
     bool IsAvailable() => true;
 
     /// <summary>
+    /// 功能：取得本 Provider route 是否接受 function tool 定义。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <remarks>返回 false 时 Agent 必须发送空工具集合；默认保持已有原生 Provider 行为。</remarks>
+    bool SupportsTools => true;
+
+    /// <summary>
     /// 功能：原生执行一次 Provider 请求并产生文本、工具、用量或重试信号。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com

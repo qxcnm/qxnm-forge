@@ -158,6 +158,18 @@ pub trait Provider: Send + Sync {
         true
     }
 
+    /// 功能：声明本 Provider route 是否接受 function tool 定义。
+    ///
+    /// 输入：当前 Provider 实例。
+    /// 输出：可以把 Agent 有效工具映射进请求时为 true；自定义连接按显式 `supportsTools` 收窄。
+    /// 不变量：false 时 Agent 必须发送空工具集合，不能仅因 family adapter 支持工具而扩大能力。
+    /// 失败：本方法不执行 I/O 且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
     /// 功能：在创建 Session 前判断当前 route 的运行时依赖是否仍可用。
     ///
     /// 输入：当前 Provider 实例；不得传入或返回 credential 值。

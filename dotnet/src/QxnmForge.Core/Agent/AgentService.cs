@@ -929,7 +929,9 @@ public sealed class AgentService
             var providerRequest = new ProviderRequest(
                 run.Provider,
                 contextMessages.Select(static message => message.Clone()).ToArray(),
-                tools.ProviderDefinitions(run.AgentProfile?.Snapshot.EffectiveToolIds),
+                run.ProviderAdapter.SupportsTools
+                    ? tools.ProviderDefinitions(run.AgentProfile?.Snapshot.EffectiveToolIds)
+                    : [],
                 fauxScenario)
             {
                 ResolvedImages = resolvedImages,

@@ -66,6 +66,37 @@ public sealed class AgentServiceTests
     }
 
     /// <summary>
+    /// 功能：确认不支持工具的 Provider route 收到空工具集合，即使宿主 registry 已注册工具。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>异步测试 Task。</returns>
+    [Fact]
+    public async Task ProviderWithoutToolCapabilityReceivesNoToolDefinitions()
+    {
+        using var temporary = new TemporaryDirectory();
+        var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+        await using var repository = new SessionRepository(
+            Path.Combine(temporary.Path, "sessions"),
+            workspace);
+        using var tools = new ToolRegistry(workspace);
+        Assert.NotEmpty(tools.ProviderDefinitions());
+        var provider = new ToolCapabilityProvider();
+        await using var providers = new ProviderRegistry([provider]);
+        var service = new AgentService(repository, providers, tools);
+        var run = await service.AcceptAsync(
+            "session-no-provider-tools",
+            new InputMessage("user", [new TextContent("plain text")]),
+            new ProviderSelection(provider.Id, "plain-model"),
+            CancellationToken.None);
+
+        _ = await CollectAsync(service.RunAsync(run, CancellationToken.None));
+
+        Assert.NotNull(provider.ObservedRequest);
+        Assert.Empty(provider.ObservedRequest.Tools);
+    }
+
+    /// <summary>
     /// 功能：确认 delay await 边界接收取消并只产生 run.cancelled 终态。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -628,6 +659,68 @@ public sealed class AgentServiceTests
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
+    private sealed class ToolCapabilityProvider : IProvider
+    {
+        /// <summary>
+        /// 功能：取得不支持工具的测试 Provider ID。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        public string Id => "tool-capability-provider";
+
+        /// <summary>
+        /// 功能：取得测试 Provider 的固定模型列表。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        public IReadOnlyList<string> Models { get; } = ["plain-model"];
+
+        /// <summary>
+        /// 功能：显式拒绝 function tool 定义。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        public bool SupportsTools => false;
+
+        /// <summary>
+        /// 功能：保存 Agent 最终交给测试 Provider 的请求。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        internal ProviderRequest? ObservedRequest { get; private set; }
+
+        /// <summary>
+        /// 功能：只接受固定测试模型。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        /// <param name="modelId">待验证模型。</param>
+        /// <returns>恰为 plain-model 时返回 true。</returns>
+        public bool SupportsModel(string modelId)
+        {
+            return modelId == "plain-model";
+        }
+
+        /// <summary>
+        /// 功能：捕获请求并返回一条确定性文本与用量信号。
+        /// 作者：高宏顺
+        /// 邮箱：18272669457@163.com
+        /// </summary>
+        /// <param name="request">待检查的 Provider 请求。</param>
+        /// <param name="cancellationToken">测试取消信号。</param>
+        /// <returns>不联网的确定性异步信号流。</returns>
+        public async IAsyncEnumerable<ProviderSignal> StreamAsync(
+            ProviderRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            ObservedRequest = request;
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return new ProviderTextSignal("plain response");
+            yield return new ProviderUsageSignal(new Usage(1, 1, 2));
+        }
+    }
+
     private sealed class FailingProvider : IProvider
     {
         private readonly ProviderOperationException failure;
