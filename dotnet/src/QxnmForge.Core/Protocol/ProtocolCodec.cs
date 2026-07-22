@@ -50,6 +50,7 @@ public sealed class ProtocolRequestException : Exception
 /// </summary>
 public static class ProtocolCodec
 {
+    private const int MaximumInputImageBytes = 524_288;
     private const long MaxSafeInteger = 9_007_199_254_740_991;
 
     private static readonly SearchValues<char> MediaTypeCharacters =
@@ -185,6 +186,48 @@ public static class ProtocolCodec
     {
         EnsureOnlyProperties(parameters, "sessionId", "scenario");
         return (RequireOpaqueId(parameters, "sessionId"), RequireProperty(parameters, "scenario").Clone());
+    }
+
+    /// <summary>
+    /// 功能：严格解析并解码 artifacts/create 的同 Session 图片输入。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">只含 sessionId、mediaType 与 canonical dataBase64 的对象。</param>
+    /// <returns>opaque Session ID、受支持 MIME 与最多 512 KiB 的已验签名字节。</returns>
+    /// <remarks>不变量：Base64 正文、解码字节和摘要不进入错误、日志或返回 DTO。</remarks>
+    /// <exception cref="ProtocolRequestException">字段、Base64、大小、MIME 或魔数无效。</exception>
+    public static (string SessionId, string MediaType, byte[] Bytes) ParseArtifactCreate(
+        JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "sessionId", "mediaType", "dataBase64");
+        var sessionId = RequireOpaqueId(parameters, "sessionId");
+        var mediaType = RequireString(parameters, "mediaType");
+        var encoded = RequireString(parameters, "dataBase64");
+        if (encoded.Length > 699_052 || encoded.Any(char.IsWhiteSpace))
+        {
+            throw InvalidParams("artifact image data is invalid", "dataBase64");
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(encoded);
+        }
+        catch (FormatException)
+        {
+            throw InvalidParams("artifact image data is invalid", "dataBase64");
+        }
+
+        if (bytes.Length is < 1 or > MaximumInputImageBytes ||
+            !string.Equals(Convert.ToBase64String(bytes), encoded, StringComparison.Ordinal) ||
+            !ImageArtifactValidation.IsSupportedMediaType(mediaType) ||
+            !ImageArtifactValidation.HasMatchingSignature(mediaType, bytes))
+        {
+            throw InvalidParams("artifact image data is invalid", "dataBase64");
+        }
+
+        return (sessionId, mediaType, bytes);
     }
 
     /// <summary>
@@ -522,15 +565,16 @@ public static class ProtocolCodec
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="parameters">方法 params。</param>
-    /// <returns>Provider ID 与只应传入 CredentialStore 的明文 credential。</returns>
+    /// <returns>Provider ID、封闭 credential 用途与只应传入 CredentialStore 的明文 credential。</returns>
     /// <remarks>不变量：解析器不持久化、记录或复制 credential 到任何 DTO 之外。</remarks>
     /// <exception cref="ProtocolRequestException">字段缺失、未知、类型错误或空 credential。</exception>
-    public static (string ProviderId, string Credential) ParseProviderCredentialsSet(
+    public static (string ProviderId, string CredentialKind, string Credential) ParseProviderCredentialsSet(
         JsonElement parameters)
     {
-        EnsureOnlyProperties(parameters, "providerId", "credential");
+        EnsureOnlyProperties(parameters, "providerId", "credentialKind", "credential");
         return (
             RequireString(parameters, "providerId"),
+            RequireString(parameters, "credentialKind"),
             RequireString(parameters, "credential"));
     }
 
@@ -540,12 +584,15 @@ public static class ProtocolCodec
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="parameters">方法 params。</param>
-    /// <returns>待清理 credential 的 Provider ID。</returns>
+    /// <returns>待清理 credential 的 Provider ID 与封闭用途。</returns>
     /// <exception cref="ProtocolRequestException">字段缺失、未知或类型错误。</exception>
-    public static string ParseProviderCredentialsRemove(JsonElement parameters)
+    public static (string ProviderId, string CredentialKind) ParseProviderCredentialsRemove(
+        JsonElement parameters)
     {
-        EnsureOnlyProperties(parameters, "providerId");
-        return RequireString(parameters, "providerId");
+        EnsureOnlyProperties(parameters, "providerId", "credentialKind");
+        return (
+            RequireString(parameters, "providerId"),
+            RequireString(parameters, "credentialKind"));
     }
 
     /// <summary>
@@ -799,7 +846,9 @@ public static class ProtocolCodec
             "providerId",
             "apiFamily",
             "baseUrl",
+            "modelsUrl",
             "modelIds",
+            "supportsTools",
             "logoAssetId",
             "enabled");
         var modelIdsElement = RequireProperty(element, "modelIds");
@@ -840,7 +889,9 @@ public static class ProtocolCodec
             RequireString(element, "providerId"),
             RequireString(element, "apiFamily"),
             RequireString(element, "baseUrl"),
+            RequireString(element, "modelsUrl"),
             modelIds,
+            RequireBoolean(element, "supportsTools"),
             logoAssetId,
             RequireBoolean(element, "enabled"));
     }

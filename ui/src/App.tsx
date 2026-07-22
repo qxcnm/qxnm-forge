@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { AppHeader } from "@/components/app-header";
-import { Composer } from "@/components/composer";
+import { Composer, type ComposerAttachment } from "@/components/composer";
 import { Conversation, type SubmittedMessage } from "@/components/conversation";
 import { ReviewSheet } from "@/components/review-sheet";
 import {
@@ -242,6 +242,8 @@ export default function App({
   const reduceMotion = useWorkspaceUiStore((state) => state.reduceMotion);
 
   const [draft, setDraft] = useState("");
+  const [composerAttachments, setComposerAttachments] = useState<readonly ComposerAttachment[]>([]);
+  const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [selectedModelRouteKey, setSelectedModelRouteKey] = useState("");
   const [messagesBySession, setMessagesBySession] = useState<SessionMessages>(new Map());
   const [previewSessions, setPreviewSessions] = useState<readonly SessionSummary[]>([]);
@@ -292,6 +294,8 @@ export default function App({
     }
     previousBackend.current = backend;
     setDraft("");
+    setComposerAttachments([]);
+    setComposerSubmissionError(null);
     setSelectedModelRouteKey("");
     setActiveAgentProfileId(null);
     setPreviewSessions([]);
@@ -957,11 +961,12 @@ export default function App({
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const prompt = draft.trim();
+    const pendingAttachments = composerAttachments;
     const sessionScopeKey = getSessionScopeKey(backend, activeSession.sessionId);
     if (
-      prompt.length === 0 ||
+      (prompt.length === 0 && pendingAttachments.length === 0) ||
       !selectedModel ||
       modelLoadState !== "ready" ||
       !serviceMethods.includes("models/list") ||
@@ -972,42 +977,87 @@ export default function App({
     ) {
       return;
     }
+    if (
+      pendingAttachments.some((attachment) => attachment.kind === "image") &&
+      !serviceMethods.includes("artifacts/create")
+    ) {
+      setComposerSubmissionError(t("composer.attachmentUploadUnsupported"));
+      return;
+    }
 
     const submissionId = crypto.randomUUID();
     activeRunSubmissions.current.set(sessionScopeKey, submissionId);
     setBusySessionKeys((currentSessionKeys) => new Set(currentSessionKeys).add(sessionScopeKey));
-    appendSessionMessage(backend, activeSession.sessionId, {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: prompt,
-    });
-    setDraft("");
-    runMutation.mutate({
-      client: applicationService,
-      backend,
-      backendLabel: backend === "rust" ? "Rust" : ".NET",
-      agentProfileName: activeAgentProfile?.displayName,
-      supportsFollowUp: serviceMethods.includes("run/followUp"),
-      supportsSessionGet: serviceMethods.includes("session/get"),
-      submissionId,
-      input: {
-        sessionId: activeSession.sessionId,
-        prompt,
-        model: {
-          providerId: selectedModel.providerId,
-          modelId: selectedModel.modelId,
-          apiFamily: selectedModel.apiFamily,
+    setComposerSubmissionError(null);
+    try {
+      const runAttachments: NonNullable<RunStartInput["attachments"]>[number][] = [];
+      for (const attachment of pendingAttachments) {
+        if (attachment.kind === "text") {
+          runAttachments.push({
+            type: "text",
+            text: `[File: ${attachment.name}]\n${attachment.text}`,
+          });
+        } else {
+          const created = await applicationService.createArtifact({
+            sessionId: activeSession.sessionId,
+            mediaType: attachment.mediaType,
+            dataBase64: attachment.dataBase64,
+          });
+          runAttachments.push({
+            type: "image_ref",
+            artifact: created.artifact,
+            alt: attachment.name,
+          });
+        }
+      }
+      const attachmentLabels = pendingAttachments.map((attachment) =>
+        attachment.kind === "image"
+          ? `[Image: ${attachment.name}]`
+          : `[File: ${attachment.name}]`,
+      );
+      appendSessionMessage(backend, activeSession.sessionId, {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: [prompt, ...attachmentLabels].filter(Boolean).join("\n"),
+      });
+      setDraft("");
+      setComposerAttachments([]);
+      runMutation.mutate({
+        client: applicationService,
+        backend,
+        backendLabel: backend === "rust" ? "Rust" : ".NET",
+        agentProfileName: activeAgentProfile?.displayName,
+        supportsFollowUp: serviceMethods.includes("run/followUp"),
+        supportsSessionGet: serviceMethods.includes("session/get"),
+        submissionId,
+        input: {
+          sessionId: activeSession.sessionId,
+          prompt,
+          attachments: runAttachments,
+          model: {
+            providerId: selectedModel.providerId,
+            modelId: selectedModel.modelId,
+            apiFamily: selectedModel.apiFamily,
+          },
+          ...(activeAgentProfile
+            ? {
+                agentProfile: {
+                  profileId: activeAgentProfile.profileId,
+                  revision: activeAgentProfile.revision,
+                },
+              }
+            : {}),
         },
-        ...(activeAgentProfile
-          ? {
-              agentProfile: {
-                profileId: activeAgentProfile.profileId,
-                revision: activeAgentProfile.revision,
-              },
-            }
-          : {}),
-      },
-    });
+      });
+    } catch {
+      activeRunSubmissions.current.delete(sessionScopeKey);
+      setBusySessionKeys((currentSessionKeys) => {
+        const nextSessionKeys = new Set(currentSessionKeys);
+        nextSessionKeys.delete(sessionScopeKey);
+        return nextSessionKeys;
+      });
+      setComposerSubmissionError(t("composer.attachmentUploadFailed"));
+    }
   };
 
   /**
@@ -1527,6 +1577,8 @@ export default function App({
             />
             <Composer
               value={draft}
+              attachments={composerAttachments}
+              submissionError={composerSubmissionError}
               selectedModelRouteKey={resolvedModelRouteKey}
               models={models}
               modelLoadState={modelLoadState}
@@ -1535,11 +1587,18 @@ export default function App({
               runtimeEnvironment={runtimeEnvironmentQuery.data}
               submitMode={composerSubmitMode}
               busy={activeSessionBusy}
-              onValueChange={setDraft}
+              onValueChange={(value) => {
+                setDraft(value);
+                setComposerSubmissionError(null);
+              }}
               onModelChange={handleComposerModelChange}
               onRetryModels={handleRetryModels}
               onAgentChange={handleAgentChange}
-              onSubmit={handleSubmit}
+              onAttachmentsChange={(attachments) => {
+                setComposerAttachments(attachments);
+                setComposerSubmissionError(null);
+              }}
+              onSubmit={() => void handleSubmit()}
             />
           </>
         )}

@@ -1,4 +1,4 @@
-//! PI Session v3 到 portable Session v0.1 的 clean-room 一次性导入器。
+//! 第三方 Session v3 到 portable Session v0.1 的 clean-room 一次性导入器。
 //!
 //! 作者：高宏顺 <18272669457@163.com>
 
@@ -25,6 +25,7 @@ use crate::protocol::parse_strict_value;
 const REFERENCE_COMMIT: &str = "3f9aa5d10b35223abf6146f960ff5cb5c68053ee";
 const IMPORT_NAMESPACE: &str = "org.agentprotocol.pi-v3";
 const REPORT_MEDIA_TYPE: &str = "application/vnd.qxnm-forge.pi-v3-import-report+json";
+// 冻结的 portable displayName；保留旧值以避免既有 journal 与 conformance fixture 迁移。
 const REPORT_DISPLAY_NAME: &str = "PI Session v3 import report";
 const MAX_SOURCE_BYTES: usize = 16_777_216;
 const MAX_LINE_BYTES: usize = 1_048_576;
@@ -85,12 +86,12 @@ const WARNING_ORDER: &[&str] = &[
     "unsupported_message_role",
 ];
 
-/// 一次 PI v3 导入所需的全部调用方授权参数。
+/// 一次 第三方 Session v3 导入所需的全部调用方授权参数。
 ///
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 #[derive(Debug, Clone)]
-pub struct PiV3ImportOptions {
+pub struct LegacySessionV3ImportOptions {
     pub source: PathBuf,
     pub workspace: PathBuf,
     pub state_root: PathBuf,
@@ -98,13 +99,13 @@ pub struct PiV3ImportOptions {
     pub conformance: bool,
 }
 
-/// PI v3 导入成功后允许输出的三个安全字段。
+/// 第三方 Session v3 导入成功后允许输出的三个安全字段。
 ///
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PiV3ImportOutcome {
+pub struct LegacySessionV3ImportOutcome {
     pub status: String,
     pub session_id: String,
     pub report_artifact_id: String,
@@ -181,18 +182,20 @@ impl SourceDocument {
     /// 邮箱：18272669457@163.com
     fn verify_unchanged(&self) -> Result<(), AgentError> {
         let path_metadata = std::fs::symlink_metadata(&self.path)
-            .map_err(|_| source_error("PI v3 source identity changed during import"))?;
+            .map_err(|_| source_error("第三方 Session v3 source identity changed during import"))?;
         let handle_metadata = self
             .file
             .metadata()
-            .map_err(|_| source_error("PI v3 source identity cannot be revalidated"))?;
+            .map_err(|_| source_error("第三方 Session v3 source identity cannot be revalidated"))?;
         if path_metadata.file_type().is_symlink()
             || !path_metadata.is_file()
             || !handle_metadata.is_file()
             || FileFingerprint::from_metadata(&path_metadata) != self.fingerprint
             || FileFingerprint::from_metadata(&handle_metadata) != self.fingerprint
         {
-            return Err(source_error("PI v3 source changed during import"));
+            return Err(source_error(
+                "第三方 Session v3 source changed during import",
+            ));
         }
         Ok(())
     }
@@ -387,25 +390,29 @@ impl IdFactory {
     }
 }
 
-/// 功能：异步执行严格、离线、一次性的 PI Session v3 导入。
+/// 功能：异步执行严格、离线、一次性的 第三方 Session v3 导入。
 ///
 /// 输入：只读 source、已存在 workspace、授权 state root、可选新 Session ID 与 conformance 开关。
 /// 输出：报告状态、新 Session ID 与 report artifact ID；所有 target 字节已验证并发布。
-/// 不变量：不执行 PI/Provider/工具，不修改 source，不覆盖/合并 target，发布前完整 flush。
+/// 不变量：不执行第三方 runtime/Provider/工具，不修改 source，不覆盖/合并 target，发布前完整 flush。
 /// 失败：source、tree、隐私、映射、目标冲突、验证或 I/O 失败时不留下可用 target。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
-pub async fn import_pi_v3(options: PiV3ImportOptions) -> Result<PiV3ImportOutcome, AgentError> {
-    task::spawn_blocking(move || import_pi_v3_blocking(options))
+pub async fn import_legacy_session_v3(
+    options: LegacySessionV3ImportOptions,
+) -> Result<LegacySessionV3ImportOutcome, AgentError> {
+    task::spawn_blocking(move || import_legacy_session_v3_blocking(options))
         .await
         .map_err(|error| AgentError::new(ErrorCode::InternalError, error.to_string()))?
 }
 
-/// 功能：在线程阻塞边界内完成 PI v3 导入的全部文件事务。
+/// 功能：在线程阻塞边界内完成 第三方 Session v3 导入的全部文件事务。
 ///
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
-fn import_pi_v3_blocking(options: PiV3ImportOptions) -> Result<PiV3ImportOutcome, AgentError> {
+fn import_legacy_session_v3_blocking(
+    options: LegacySessionV3ImportOptions,
+) -> Result<LegacySessionV3ImportOutcome, AgentError> {
     let workspace = options.workspace.canonicalize().map_err(|_| {
         AgentError::new(
             ErrorCode::InvalidParams,
@@ -447,7 +454,7 @@ fn import_pi_v3_blocking(options: PiV3ImportOptions) -> Result<PiV3ImportOutcome
     if options.conformance && !deterministic {
         return Err(AgentError::new(
             ErrorCode::InvalidParams,
-            "conformance IDs are restricted to the bundled synthetic PI v3 fixture",
+            "conformance IDs are restricted to the bundled synthetic 第三方 Session v3 fixture",
         ));
     }
     let ids = IdFactory { deterministic };
@@ -468,10 +475,12 @@ fn import_pi_v3_blocking(options: PiV3ImportOptions) -> Result<PiV3ImportOutcome
         .records
         .len()
         .checked_add(1)
-        .ok_or_else(|| source_error("PI v3 target record count exceeds limit"))?;
+        .ok_or_else(|| source_error("第三方 Session v3 target record count exceeds limit"))?;
     let report = conversion.build_report(expected_target_records as u64)?;
     if report.len() > MAX_REPORT_BYTES {
-        return Err(source_error("PI v3 import report exceeds limit"));
+        return Err(source_error(
+            "第三方 Session v3 import report exceeds limit",
+        ));
     }
     let report_sha256 = encode_lower_sha256(&report);
     conversion.append_report_record(
@@ -483,7 +492,7 @@ fn import_pi_v3_blocking(options: PiV3ImportOptions) -> Result<PiV3ImportOutcome
     )?;
     if conversion.records.len() != expected_target_records {
         return Err(internal_error(
-            "PI v3 target count changed during report binding",
+            "第三方 Session v3 target count changed during report binding",
         ));
     }
     let header = encode_header(
@@ -504,14 +513,14 @@ fn import_pi_v3_blocking(options: PiV3ImportOptions) -> Result<PiV3ImportOutcome
         &conversion.artifacts,
         &source,
     )?;
-    Ok(PiV3ImportOutcome {
+    Ok(LegacySessionV3ImportOutcome {
         status: "completed_with_warnings".to_owned(),
         session_id: requested_session_id,
         report_artifact_id,
     })
 }
 
-/// 功能：只读打开并严格解析 PI v3 source，同时保持句柄供发布前复核。
+/// 功能：只读打开并严格解析 第三方 Session v3 source，同时保持句柄供发布前复核。
 ///
 /// 输入：调用方选择的 source 路径。
 /// 输出：完整字节/hash、header、tree entries 和只读文件身份。
@@ -521,35 +530,37 @@ fn import_pi_v3_blocking(options: PiV3ImportOptions) -> Result<PiV3ImportOutcome
 /// 邮箱：18272669457@163.com
 fn load_source(path: &Path) -> Result<SourceDocument, AgentError> {
     let path_metadata = std::fs::symlink_metadata(path)
-        .map_err(|_| source_error("PI v3 source cannot be opened"))?;
+        .map_err(|_| source_error("第三方 Session v3 source cannot be opened"))?;
     if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
         return Err(source_error(
-            "PI v3 source must be a regular non-symlink file",
+            "第三方 Session v3 source must be a regular non-symlink file",
         ));
     }
     let mut file = OpenOptions::new()
         .read(true)
         .open(path)
-        .map_err(|_| source_error("PI v3 source cannot be opened read-only"))?;
+        .map_err(|_| source_error("第三方 Session v3 source cannot be opened read-only"))?;
     let handle_metadata = file
         .metadata()
-        .map_err(|_| source_error("PI v3 source metadata cannot be read"))?;
+        .map_err(|_| source_error("第三方 Session v3 source metadata cannot be read"))?;
     if !handle_metadata.is_file()
         || FileFingerprint::from_metadata(&path_metadata)
             != FileFingerprint::from_metadata(&handle_metadata)
     {
-        return Err(source_error("PI v3 source identity changed while opening"));
+        return Err(source_error(
+            "第三方 Session v3 source identity changed while opening",
+        ));
     }
     if handle_metadata.len() as usize > MAX_SOURCE_BYTES {
-        return Err(source_error("PI v3 source exceeds size limit"));
+        return Err(source_error("第三方 Session v3 source exceeds size limit"));
     }
     let mut raw = Vec::with_capacity(handle_metadata.len() as usize);
     Read::by_ref(&mut file)
         .take((MAX_SOURCE_BYTES + 1) as u64)
         .read_to_end(&mut raw)
-        .map_err(|_| source_error("PI v3 source cannot be read"))?;
+        .map_err(|_| source_error("第三方 Session v3 source cannot be read"))?;
     if raw.len() > MAX_SOURCE_BYTES {
-        return Err(source_error("PI v3 source exceeds size limit"));
+        return Err(source_error("第三方 Session v3 source exceeds size limit"));
     }
     let fingerprint = FileFingerprint::from_metadata(&handle_metadata);
     let (session_id, entries) = parse_source_bytes(&raw)?;
@@ -566,13 +577,15 @@ fn load_source(path: &Path) -> Result<SourceDocument, AgentError> {
     Ok(document)
 }
 
-/// 功能：严格解析 PI v3 JSONL 字节并验证 header 与 earlier-only 单根树。
+/// 功能：严格解析 第三方 Session v3 JSONL 字节并验证 header 与 earlier-only 单根树。
 ///
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 fn parse_source_bytes(raw: &[u8]) -> Result<(String, Vec<SourceEntry>), AgentError> {
     if raw.starts_with(&[0xef, 0xbb, 0xbf]) || !raw.ends_with(b"\n") || raw.contains(&b'\r') {
-        return Err(source_error("PI v3 source must be BOM-free LF JSONL"));
+        return Err(source_error(
+            "第三方 Session v3 source must be BOM-free LF JSONL",
+        ));
     }
     let body = &raw[..raw.len().saturating_sub(1)];
     let lines = body.split(|byte| *byte == b'\n').collect::<Vec<_>>();
@@ -582,25 +595,30 @@ fn parse_source_bytes(raw: &[u8]) -> Result<(String, Vec<SourceEntry>), AgentErr
             .iter()
             .any(|line| line.is_empty() || line.len() > MAX_LINE_BYTES)
     {
-        return Err(source_error("PI v3 source line count or size is invalid"));
+        return Err(source_error(
+            "第三方 Session v3 source line count or size is invalid",
+        ));
     }
     let mut values = Vec::with_capacity(lines.len());
     for line in &lines {
         let text = std::str::from_utf8(line)
-            .map_err(|_| source_error("PI v3 source is not strict UTF-8"))?;
-        let value = parse_strict_value(text)
-            .map_err(|_| source_error("PI v3 source contains invalid or duplicate-key JSON"))?;
+            .map_err(|_| source_error("第三方 Session v3 source is not strict UTF-8"))?;
+        let value = parse_strict_value(text).map_err(|_| {
+            source_error("第三方 Session v3 source contains invalid or duplicate-key JSON")
+        })?;
         validate_json_limits(&value)?;
         values.push(value);
     }
-    let header = require_object(&values[0], "PI v3 header")?;
+    let header = require_object(&values[0], "第三方 Session v3 header")?;
     require_exact_fields(
         header,
         &["type", "version", "id", "timestamp", "cwd", "parentSession"],
-        "PI v3 header",
+        "第三方 Session v3 header",
     )?;
     if string_field(header, "type")? != "session" || integer_field(header, "version")? != 3 {
-        return Err(source_error("PI v3 source header/version is invalid"));
+        return Err(source_error(
+            "第三方 Session v3 source header/version is invalid",
+        ));
     }
     let session_id = bounded_string_field(header, "id", 256)?;
     validate_utc(string_field(header, "timestamp")?)?;
@@ -609,26 +627,32 @@ fn parse_source_bytes(raw: &[u8]) -> Result<(String, Vec<SourceEntry>), AgentErr
             .get("parentSession")
             .is_some_and(|value| !value.is_string())
     {
-        return Err(source_error("PI v3 header path fields are invalid"));
+        return Err(source_error(
+            "第三方 Session v3 header path fields are invalid",
+        ));
     }
     let mut prior = BTreeMap::<String, Value>::new();
     let mut entries = Vec::with_capacity(values.len().saturating_sub(1));
     for (offset, value) in values.into_iter().skip(1).enumerate() {
         let line = offset + 2;
-        let object = require_object(&value, "PI v3 entry")?;
+        let object = require_object(&value, "第三方 Session v3 entry")?;
         if object.get("type").and_then(Value::as_str) == Some("session") {
-            return Err(source_error("PI v3 source contains a second header"));
+            return Err(source_error(
+                "第三方 Session v3 source contains a second header",
+            ));
         }
         let entry_id = bounded_string_field(object, "id", 256)?;
         if prior.contains_key(&entry_id) {
-            return Err(source_error("PI v3 source contains duplicate entry IDs"));
+            return Err(source_error(
+                "第三方 Session v3 source contains duplicate entry IDs",
+            ));
         }
         let parent_id = match object.get("parentId") {
             Some(Value::Null) => None,
             Some(Value::String(value)) if !value.is_empty() && value.len() <= 256 => {
                 Some(value.clone())
             }
-            _ => return Err(source_error("PI v3 entry parent is invalid")),
+            _ => return Err(source_error("第三方 Session v3 entry parent is invalid")),
         };
         if (line == 2 && parent_id.is_some())
             || (line > 2
@@ -637,7 +661,7 @@ fn parse_source_bytes(raw: &[u8]) -> Result<(String, Vec<SourceEntry>), AgentErr
                     .is_none_or(|parent| !prior.contains_key(parent)))
         {
             return Err(source_error(
-                "PI v3 parent must reference one earlier entry",
+                "第三方 Session v3 parent must reference one earlier entry",
             ));
         }
         let entry_type = bounded_string_field(object, "type", 128)?;
@@ -645,7 +669,7 @@ fn parse_source_bytes(raw: &[u8]) -> Result<(String, Vec<SourceEntry>), AgentErr
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
         {
-            return Err(source_error("PI v3 entry type is invalid"));
+            return Err(source_error("第三方 Session v3 entry type is invalid"));
         }
         let timestamp = string_field(object, "timestamp")?.to_owned();
         validate_utc(&timestamp)?;
@@ -664,12 +688,14 @@ fn parse_source_bytes(raw: &[u8]) -> Result<(String, Vec<SourceEntry>), AgentErr
         });
     }
     if entries.is_empty() {
-        return Err(source_error("PI v3 source must contain at least one entry"));
+        return Err(source_error(
+            "第三方 Session v3 source must contain at least one entry",
+        ));
     }
     Ok((session_id, entries))
 }
 
-/// 功能：验证已知 PI entry 只能携带冻结字段并满足必要类型/引用。
+/// 功能：验证已知 第三方格式 entry 只能携带冻结字段并满足必要类型/引用。
 ///
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -716,21 +742,27 @@ fn validate_known_entry(
         ],
         "label" => &["type", "id", "parentId", "timestamp", "targetId", "label"],
         "session_info" => &["type", "id", "parentId", "timestamp", "name"],
-        _ => return Err(internal_error("known PI entry routing is incomplete")),
+        _ => {
+            return Err(internal_error(
+                "known 第三方格式 entry routing is incomplete",
+            ));
+        }
     };
-    require_exact_fields(entry, allowed, "known PI v3 entry")?;
+    require_exact_fields(entry, allowed, "known 第三方 Session v3 entry")?;
     match entry_type {
         "message" => {
             let message = entry
                 .get("message")
                 .and_then(Value::as_object)
-                .ok_or_else(|| source_error("PI v3 message object is invalid"))?;
+                .ok_or_else(|| source_error("第三方 Session v3 message object is invalid"))?;
             let role = string_field(message, "role")?;
             if !matches!(
                 role,
                 "user" | "assistant" | "toolResult" | "bashExecution" | "custom"
             ) {
-                return Err(source_error("PI v3 message role is unsupported"));
+                return Err(source_error(
+                    "第三方 Session v3 message role is unsupported",
+                ));
             }
         }
         "model_change" => {
@@ -742,7 +774,7 @@ fn validate_known_entry(
                 string_field(entry, "thinkingLevel")?,
                 "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
             ) {
-                return Err(source_error("PI v3 thinking level is invalid"));
+                return Err(source_error("第三方 Session v3 thinking level is invalid"));
             }
         }
         "compaction" => {
@@ -751,14 +783,18 @@ fn validate_known_entry(
             if !prior.contains_key(&retained)
                 || !source_ancestor_contains(entry.get("parentId"), &retained, prior)?
             {
-                return Err(source_error("PI v3 compaction boundary is invalid"));
+                return Err(source_error(
+                    "第三方 Session v3 compaction boundary is invalid",
+                ));
             }
-            non_negative_integer(entry.get("tokensBefore"), "PI v3 tokensBefore")?;
+            non_negative_integer(entry.get("tokensBefore"), "第三方 Session v3 tokensBefore")?;
         }
         "branch_summary" => {
             let from_id = bounded_string_field(entry, "fromId", 256)?;
             if from_id != "root" && !prior.contains_key(&from_id) {
-                return Err(source_error("PI v3 branch summary source is invalid"));
+                return Err(source_error(
+                    "第三方 Session v3 branch summary source is invalid",
+                ));
             }
             bounded_string_field(entry, "summary", 1_048_576)?;
         }
@@ -767,7 +803,9 @@ fn validate_known_entry(
             if entry_type == "custom_message"
                 && !entry.get("display").is_some_and(Value::is_boolean)
             {
-                return Err(source_error("PI v3 custom message display is invalid"));
+                return Err(source_error(
+                    "第三方 Session v3 custom message display is invalid",
+                ));
             }
         }
         "label" => {
@@ -777,7 +815,7 @@ fn validate_known_entry(
                     .get("label")
                     .is_some_and(|value| !value.is_null() && !value.is_string())
             {
-                return Err(source_error("PI v3 label is invalid"));
+                return Err(source_error("第三方 Session v3 label is invalid"));
             }
         }
         "session_info"
@@ -785,14 +823,16 @@ fn validate_known_entry(
                 .get("name")
                 .is_some_and(|value| !value.is_null() && !value.is_string()) =>
         {
-            return Err(source_error("PI v3 session metadata is invalid"));
+            return Err(source_error(
+                "第三方 Session v3 session metadata is invalid",
+            ));
         }
         _ => {}
     }
     Ok(())
 }
 
-/// 功能：确认 retained source ID 位于当前 PI entry parent ancestry。
+/// 功能：确认 retained source ID 位于当前 第三方格式 entry parent ancestry。
 ///
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -808,12 +848,14 @@ fn source_ancestor_contains(
             return Ok(true);
         }
         if !seen.insert(entry_id.to_owned()) {
-            return Err(source_error("PI v3 source ancestry contains a cycle"));
+            return Err(source_error(
+                "第三方 Session v3 source ancestry contains a cycle",
+            ));
         }
         let entry = prior
             .get(entry_id)
             .and_then(Value::as_object)
-            .ok_or_else(|| source_error("PI v3 source ancestry is invalid"))?;
+            .ok_or_else(|| source_error("第三方 Session v3 source ancestry is invalid"))?;
         current = entry.get("parentId").and_then(Value::as_str);
     }
     Ok(false)
@@ -829,7 +871,9 @@ fn validate_json_limits(value: &Value) -> Result<(), AgentError> {
     while let Some((current, depth)) = stack.pop() {
         visited = visited.saturating_add(1);
         if visited > MAX_JSON_NODES || depth > MAX_JSON_DEPTH {
-            return Err(source_error("PI v3 JSON depth or node count exceeds limit"));
+            return Err(source_error(
+                "第三方 Session v3 JSON depth or node count exceeds limit",
+            ));
         }
         match current {
             Value::Array(values) => {
@@ -854,7 +898,9 @@ fn validate_utc(value: &str) -> Result<(), AgentError> {
             .ok()
             .is_none_or(|time| time.offset().local_minus_utc() != 0)
     {
-        return Err(source_error("PI v3 timestamp must be UTC RFC 3339"));
+        return Err(source_error(
+            "第三方 Session v3 timestamp must be UTC RFC 3339",
+        ));
     }
     Ok(())
 }
@@ -869,7 +915,7 @@ fn require_object<'a>(
 ) -> Result<&'a Map<String, Value>, AgentError> {
     value
         .as_object()
-        .ok_or_else(|| source_error("PI v3 value must be an object"))
+        .ok_or_else(|| source_error("第三方 Session v3 value must be an object"))
 }
 
 /// 功能：拒绝已知对象上的任何未冻结字段。
@@ -882,7 +928,9 @@ fn require_exact_fields(
     _context: &str,
 ) -> Result<(), AgentError> {
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
-        return Err(source_error("known PI v3 object contains unknown fields"));
+        return Err(source_error(
+            "known 第三方 Session v3 object contains unknown fields",
+        ));
     }
     Ok(())
 }
@@ -896,7 +944,7 @@ fn string_field<'a>(object: &'a Map<String, Value>, field: &str) -> Result<&'a s
         .get(field)
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| source_error("PI v3 required string field is invalid"))
+        .ok_or_else(|| source_error("第三方 Session v3 required string field is invalid"))
 }
 
 /// 功能：读取并限制必需字符串字段长度。
@@ -910,7 +958,7 @@ fn bounded_string_field(
 ) -> Result<String, AgentError> {
     let value = string_field(object, field)?;
     if value.len() > maximum {
-        return Err(source_error("PI v3 string field exceeds limit"));
+        return Err(source_error("第三方 Session v3 string field exceeds limit"));
     }
     Ok(value.to_owned())
 }
@@ -923,7 +971,7 @@ fn non_negative_integer(value: Option<&Value>, _context: &str) -> Result<u64, Ag
     value
         .and_then(Value::as_u64)
         .filter(|value| *value <= 9_007_199_254_740_991)
-        .ok_or_else(|| source_error("PI v3 integer field is invalid"))
+        .ok_or_else(|| source_error("第三方 Session v3 integer field is invalid"))
 }
 
 /// 功能：读取必需整数字段。
@@ -986,7 +1034,7 @@ fn internal_error(message: &'static str) -> AgentError {
 fn internal_serialization_error(error: serde_json::Error) -> AgentError {
     AgentError::new(
         ErrorCode::InternalError,
-        format!("PI v3 import serialization failed: {error}"),
+        format!("第三方 Session v3 import serialization failed: {error}"),
     )
 }
 
@@ -1010,7 +1058,7 @@ struct Conversion<'a> {
 }
 
 impl<'a> Conversion<'a> {
-    /// 功能：创建尚未产生 target record 的 PI v3 映射状态机。
+    /// 功能：创建尚未产生 target record 的 第三方 Session v3 映射状态机。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1075,7 +1123,9 @@ impl<'a> Conversion<'a> {
     fn select_source_parent(&mut self, entry: &SourceEntry) -> Result<(), AgentError> {
         let Some(source_parent) = entry.parent_id.as_deref() else {
             if self.selected_head.is_some() {
-                return Err(source_error("PI v3 source contains more than one root"));
+                return Err(source_error(
+                    "第三方 Session v3 source contains more than one root",
+                ));
             }
             return Ok(());
         };
@@ -1083,7 +1133,7 @@ impl<'a> Conversion<'a> {
             .mappings
             .get(source_parent)
             .map(|mapping| mapping.leaf_record_id.clone())
-            .ok_or_else(|| source_error("PI v3 source parent mapping is missing"))?;
+            .ok_or_else(|| source_error("第三方 Session v3 source parent mapping is missing"))?;
         if self.selected_head.as_deref() == Some(target_parent.as_str()) {
             return Ok(());
         }
@@ -1120,7 +1170,7 @@ impl<'a> Conversion<'a> {
             .as_object()
             .and_then(|object| object.get("message"))
             .and_then(Value::as_object)
-            .ok_or_else(|| source_error("PI v3 message is malformed"))?;
+            .ok_or_else(|| source_error("第三方 Session v3 message is malformed"))?;
         match string_field(value, "role")? {
             "user" => self.convert_user_message(entry, value),
             "assistant" => self.convert_assistant_message(entry, value),
@@ -1136,11 +1186,13 @@ impl<'a> Conversion<'a> {
                     quarantine,
                 )
             }
-            _ => Err(source_error("PI v3 message role is unsupported")),
+            _ => Err(source_error(
+                "第三方 Session v3 message role is unsupported",
+            )),
         }
     }
 
-    /// 功能：把 PI user content 转为 canonical user message。
+    /// 功能：把 第三方格式 user content 转为 canonical user message。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1184,7 +1236,7 @@ impl<'a> Conversion<'a> {
         self.report_mapping_warnings(entry, target_ids, redacted, unsupported, false)
     }
 
-    /// 功能：把 PI assistant 内容、Provider、finish reason 与 usage 归一化为完成消息。
+    /// 功能：把 第三方格式 assistant 内容、Provider、finish reason 与 usage 归一化为完成消息。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1208,7 +1260,11 @@ impl<'a> Conversion<'a> {
             "error" => "error",
             "cancelled" => "cancelled",
             "interrupted" => "interrupted",
-            _ => return Err(source_error("PI v3 assistant stop reason is invalid")),
+            _ => {
+                return Err(source_error(
+                    "第三方 Session v3 assistant stop reason is invalid",
+                ));
+            }
         };
         let usage = map_usage(message.get("usage"))?;
         let message_id = self.ids.message(&entry.entry_id);
@@ -1237,7 +1293,7 @@ impl<'a> Conversion<'a> {
         self.report_mapping_warnings(entry, target_ids, redacted, unsupported, false)
     }
 
-    /// 功能：把历史 PI toolResult 转为惰性 canonical tool message，不创建工具生命周期。
+    /// 功能：把历史 第三方格式 toolResult 转为惰性 canonical tool message，不创建工具生命周期。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1250,12 +1306,12 @@ impl<'a> Conversion<'a> {
             .get("toolCallId")
             .or_else(|| message.get("callId"))
             .and_then(Value::as_str)
-            .ok_or_else(|| source_error("PI v3 tool result call ID is missing"))?;
+            .ok_or_else(|| source_error("第三方 Session v3 tool result call ID is missing"))?;
         let name = message
             .get("toolName")
             .or_else(|| message.get("name"))
             .and_then(Value::as_str)
-            .ok_or_else(|| source_error("PI v3 tool result name is missing"))?;
+            .ok_or_else(|| source_error("第三方 Session v3 tool result name is missing"))?;
         validate_opaque_component(call_id)?;
         validate_tool_name(name)?;
         let (content, redacted, unsupported) = map_content(message.get("content"), false)?;
@@ -1300,7 +1356,7 @@ impl<'a> Conversion<'a> {
         self.report_mapping_warnings(entry, target_ids, redacted, unsupported, false)
     }
 
-    /// 功能：映射 PI model_change 并更新后续 thinking/compaction 使用的模型状态。
+    /// 功能：映射 第三方格式 model_change 并更新后续 thinking/compaction 使用的模型状态。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1351,7 +1407,7 @@ impl<'a> Conversion<'a> {
         self.register_simple_mapping(entry, record_id, None, true)
     }
 
-    /// 功能：把单条 PI compaction 展开为 summary message 与 `context.compacted` 两条记录。
+    /// 功能：把单条 第三方格式 compaction 展开为 summary message 与 `context.compacted` 两条记录。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1361,25 +1417,24 @@ impl<'a> Conversion<'a> {
         let (summary, redacted) = sanitize_text(&summary);
         self.redacted_values = self.redacted_values.saturating_add(u64::from(redacted));
         let retained_source = bounded_string_field(object, "firstKeptEntryId", 256)?;
-        let retained_mapping = self
-            .mappings
-            .get(&retained_source)
-            .ok_or_else(|| source_error("PI v3 compaction boundary mapping is missing"))?;
+        let retained_mapping = self.mappings.get(&retained_source).ok_or_else(|| {
+            source_error("第三方 Session v3 compaction boundary mapping is missing")
+        })?;
         if retained_mapping.message_role.as_deref() != Some("user") {
             return Err(source_error(
-                "PI v3 compaction boundary must map to a user message",
+                "第三方 Session v3 compaction boundary must map to a user message",
             ));
         }
         let retained_record_id = retained_mapping.leaf_record_id.clone();
         let source_leaf_record_id = self
             .selected_head
             .clone()
-            .ok_or_else(|| source_error("PI v3 compaction has no selected source"))?;
+            .ok_or_else(|| source_error("第三方 Session v3 compaction has no selected source"))?;
         let tokens_before = integer_field(object, "tokensBefore")?;
         let (provider, model) = self
             .current_provider
             .clone()
-            .ok_or_else(|| source_error("PI v3 compaction has no selected model"))?;
+            .ok_or_else(|| source_error("第三方 Session v3 compaction has no selected model"))?;
         let (summary_record_id, summary_message_id) = self.ids.compaction_summary();
         let summary_data = raw_json(format!(
             "{{\"message\":{{\"messageId\":{},\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":{}}}],\"provider\":{{\"id\":{},\"modelId\":{}}},\"finishReason\":\"stop\",\"usage\":{{\"inputTokens\":0,\"outputTokens\":0,\"totalTokens\":0}},\"time\":{},\"extensions\":{{\"{IMPORT_NAMESPACE}\":{{\"syntheticUsage\":true}}}}}}}}",
@@ -1443,7 +1498,7 @@ impl<'a> Conversion<'a> {
         )
     }
 
-    /// 功能：把 PI branch summary 转成固定 wrapper 的 canonical user message。
+    /// 功能：把 第三方格式 branch summary 转成固定 wrapper 的 canonical user message。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1482,7 +1537,7 @@ impl<'a> Conversion<'a> {
         self.report_mapping_warnings(entry, vec![record_id], u64::from(redacted), false, false)
     }
 
-    /// 功能：把 PI custom 数据隔离为 context-free extension 并完整登记报告。
+    /// 功能：把 第三方格式 custom 数据隔离为 context-free extension 并完整登记报告。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1499,7 +1554,7 @@ impl<'a> Conversion<'a> {
         )
     }
 
-    /// 功能：把 PI custom_message 隔离，明确禁止其进入 Provider context。
+    /// 功能：把 第三方格式 custom_message 隔离，明确禁止其进入 Provider context。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1516,7 +1571,7 @@ impl<'a> Conversion<'a> {
         )
     }
 
-    /// 功能：把 PI label 保存为 extension-only inspectable metadata。
+    /// 功能：把 第三方格式 label 保存为 extension-only inspectable metadata。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1527,7 +1582,7 @@ impl<'a> Conversion<'a> {
             .mappings
             .get(&target_source_id)
             .map(|mapping| mapping.leaf_record_id.clone())
-            .ok_or_else(|| source_error("PI v3 label target mapping is missing"))?;
+            .ok_or_else(|| source_error("第三方 Session v3 label target mapping is missing"))?;
         let label = object.get("label").cloned().unwrap_or(Value::Null);
         let (label, redactions) = sanitize_value(&label);
         self.redacted_values = self.redacted_values.saturating_add(redactions);
@@ -1557,7 +1612,7 @@ impl<'a> Conversion<'a> {
         )
     }
 
-    /// 功能：把 PI session_info 的 bounded name 映射为 portable session.metadata。
+    /// 功能：把 第三方 session_info 的 bounded name 映射为 portable session.metadata。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1565,7 +1620,7 @@ impl<'a> Conversion<'a> {
         let object = require_object(&entry.value, "session info")?;
         let name = object.get("name").cloned().unwrap_or(Value::Null);
         if name.as_str().is_some_and(|value| value.len() > 256) {
-            return Err(source_error("PI v3 session name exceeds limit"));
+            return Err(source_error("第三方 Session v3 session name exceeds limit"));
         }
         let (name, redactions) = sanitize_value(&name);
         self.redacted_values = self.redacted_values.saturating_add(redactions);
@@ -1589,7 +1644,7 @@ impl<'a> Conversion<'a> {
         Ok(())
     }
 
-    /// 功能：隔离 base/tree 合法但类型未知的 PI future entry。
+    /// 功能：隔离 base/tree 合法但类型未知的 第三方格式 future entry。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1647,7 +1702,7 @@ impl<'a> Conversion<'a> {
         )
     }
 
-    /// 功能：追加标准 PI namespace extension record。
+    /// 功能：追加标准 第三方格式 namespace extension record。
     ///
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1717,7 +1772,9 @@ impl<'a> Conversion<'a> {
             )
             .is_some()
         {
-            return Err(internal_error("PI v3 source mapping was duplicated"));
+            return Err(internal_error(
+                "第三方 Session v3 source mapping was duplicated",
+            ));
         }
         if mapped {
             self.mapped_source_entries = self.mapped_source_entries.saturating_add(1);
@@ -1853,7 +1910,9 @@ impl<'a> Conversion<'a> {
     ) -> Result<(), AgentError> {
         for reason in &reason_codes {
             if !WARNING_ORDER.contains(&reason.as_str()) {
-                return Err(internal_error("PI v3 report reason is not governed"));
+                return Err(internal_error(
+                    "第三方 Session v3 report reason is not governed",
+                ));
             }
             self.warnings.insert(reason.clone());
         }
@@ -1880,7 +1939,7 @@ impl<'a> Conversion<'a> {
             .ok()
             .and_then(|value| value.checked_add(1))
             .filter(|value| *value <= 9_007_199_254_740_991)
-            .ok_or_else(|| source_error("PI v3 target sequence exceeds limit"))
+            .ok_or_else(|| source_error("第三方 Session v3 target sequence exceeds limit"))
     }
 
     /// 功能：在内存 target 中追加一条 record 并拒绝重复 ID/非法父引用。
@@ -1894,7 +1953,7 @@ impl<'a> Conversion<'a> {
             .any(|existing| existing.record_id == record.record_id)
         {
             return Err(internal_error(
-                "PI v3 target generated a duplicate record ID",
+                "第三方 Session v3 target generated a duplicate record ID",
             ));
         }
         if record.parent_id.as_ref().is_some_and(|parent| {
@@ -1903,7 +1962,9 @@ impl<'a> Conversion<'a> {
                 .iter()
                 .any(|existing| &existing.record_id == parent)
         }) {
-            return Err(internal_error("PI v3 target generated a future parent"));
+            return Err(internal_error(
+                "第三方 Session v3 target generated a future parent",
+            ));
         }
         self.records.push(record);
         Ok(())
@@ -2154,7 +2215,7 @@ fn raw_json(value: String) -> Result<Box<RawValue>, AgentError> {
     RawValue::from_string(value).map_err(|error| {
         AgentError::new(
             ErrorCode::InternalError,
-            format!("PI v3 internal JSON failed at bounded length {length}: {error}"),
+            format!("第三方 Session v3 internal JSON failed at bounded length {length}: {error}"),
         )
     })
 }
@@ -2194,9 +2255,9 @@ fn content_array(blocks: &[String]) -> String {
     format!("[{}]", blocks.join(","))
 }
 
-/// 功能：映射 PI message content 中的 text/thinking/toolCall，标记不支持块。
+/// 功能：映射 第三方格式 message content 中的 text/thinking/toolCall，标记不支持块。
 ///
-/// 输入：PI content 值及是否允许 assistant reasoning/tool-call。
+/// 输入：第三方格式 content 值及是否允许 assistant reasoning/tool-call。
 /// 输出：有序 portable block JSON、redaction 数和是否发生有损排除。
 /// 不变量：tool call 仅在 ID/name/object arguments 全部安全时进入 inert transcript。
 /// 失败：content 非字符串/数组、超限或已知块字段畸形时拒绝。
@@ -2211,14 +2272,14 @@ fn map_content(
         owned = vec![serde_json::json!({"type":"text","text":text})];
         owned.as_slice()
     } else {
-        value
-            .and_then(Value::as_array)
-            .ok_or_else(|| source_error("PI v3 message content must be string or array"))?
+        value.and_then(Value::as_array).ok_or_else(|| {
+            source_error("第三方 Session v3 message content must be string or array")
+        })?
     };
     let maximum_blocks = if assistant { MAX_CONTENT_BLOCKS } else { 128 };
     if values.len() > maximum_blocks {
         return Err(source_error(
-            "PI v3 message content block count exceeds limit",
+            "第三方 Session v3 message content block count exceeds limit",
         ));
     }
     let mut result = Vec::new();
@@ -2227,13 +2288,13 @@ fn map_content(
     for value in values {
         let block = value
             .as_object()
-            .ok_or_else(|| source_error("PI v3 content block must be an object"))?;
+            .ok_or_else(|| source_error("第三方 Session v3 content block must be an object"))?;
         match string_field(block, "type")? {
             "text" => {
                 let text = block
                     .get("text")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| source_error("PI v3 text block is invalid"))?;
+                    .ok_or_else(|| source_error("第三方 Session v3 text block is invalid"))?;
                 let (text, redacted) = sanitize_text(text);
                 redactions = redactions.saturating_add(u64::from(redacted));
                 result.push(MappedContentBlock::Json(format!(
@@ -2245,7 +2306,7 @@ fn map_content(
                 let thinking = block
                     .get("thinking")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| source_error("PI v3 thinking block is invalid"))?;
+                    .ok_or_else(|| source_error("第三方 Session v3 thinking block is invalid"))?;
                 let (thinking, redacted) = sanitize_text(thinking);
                 redactions = redactions.saturating_add(u64::from(redacted));
                 result.push(MappedContentBlock::Json(format!(
@@ -2324,14 +2385,14 @@ fn map_content(
     Ok((result, redactions, unsupported))
 }
 
-/// 功能：按 ADR 0012 归一化 PI usage 和 aggregate USD cost。
+/// 功能：按 ADR 0012 归一化 第三方格式 usage 和 aggregate USD cost。
 ///
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 fn map_usage(value: Option<&Value>) -> Result<String, AgentError> {
     let usage = value
         .and_then(Value::as_object)
-        .ok_or_else(|| source_error("PI v3 assistant usage is missing"))?;
+        .ok_or_else(|| source_error("第三方 Session v3 assistant usage is missing"))?;
     let input = integer_field(usage, "input")?;
     let output = integer_field(usage, "output")?;
     let cache_read = integer_field(usage, "cacheRead")?;
@@ -2340,21 +2401,23 @@ fn map_usage(value: Option<&Value>) -> Result<String, AgentError> {
     let normalized_input = input
         .checked_add(cache_read)
         .and_then(|value| value.checked_add(cache_write))
-        .ok_or_else(|| source_error("PI v3 usage input sum overflows"))?;
+        .ok_or_else(|| source_error("第三方 Session v3 usage input sum overflows"))?;
     if normalized_input.checked_add(output) != Some(total) {
-        return Err(source_error("PI v3 usage total is inconsistent"));
+        return Err(source_error(
+            "第三方 Session v3 usage total is inconsistent",
+        ));
     }
     let cost = usage
         .get("cost")
         .and_then(Value::as_object)
-        .ok_or_else(|| source_error("PI v3 usage cost is missing"))?;
+        .ok_or_else(|| source_error("第三方 Session v3 usage cost is missing"))?;
     let amount = decimal_amount(
         cost.get("total")
-            .ok_or_else(|| source_error("PI v3 usage total cost is missing"))?,
+            .ok_or_else(|| source_error("第三方 Session v3 usage total cost is missing"))?,
     )?;
     let reasoning = usage
         .get("reasoning")
-        .map(|value| non_negative_integer(Some(value), "PI v3 reasoning tokens"))
+        .map(|value| non_negative_integer(Some(value), "第三方 Session v3 reasoning tokens"))
         .transpose()?;
     let reasoning_json =
         reasoning.map_or_else(String::new, |value| format!(",\"reasoningTokens\":{value}"));
@@ -2364,7 +2427,7 @@ fn map_usage(value: Option<&Value>) -> Result<String, AgentError> {
     ))
 }
 
-/// 功能：把非负 PI numeric cost 转为最多 12 位小数的 portable amount 字符串。
+/// 功能：把非负 第三方格式 numeric cost 转为最多 12 位小数的 portable amount 字符串。
 ///
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -2375,7 +2438,7 @@ fn decimal_amount(value: &Value) -> Result<String, AgentError> {
     let number = value
         .as_f64()
         .filter(|number| number.is_finite() && *number >= 0.0)
-        .ok_or_else(|| source_error("PI v3 usage cost is invalid"))?;
+        .ok_or_else(|| source_error("第三方 Session v3 usage cost is invalid"))?;
     let mut result = format!("{number:.12}");
     while result.ends_with('0') {
         result.pop();
@@ -2403,7 +2466,7 @@ fn validate_opaque_component(value: &str) -> Result<(), AgentError> {
         Ok(())
     } else {
         Err(source_error(
-            "PI v3 identity cannot map to portable opaque ID",
+            "第三方 Session v3 identity cannot map to portable opaque ID",
         ))
     }
 }
@@ -2425,7 +2488,7 @@ fn validate_tool_name(value: &str) -> Result<(), AgentError> {
     if valid {
         Ok(())
     } else {
-        Err(source_error("PI v3 tool name is invalid"))
+        Err(source_error("第三方 Session v3 tool name is invalid"))
     }
 }
 
@@ -2574,7 +2637,7 @@ fn custom_quarantine_json(
         sanitized_value_json(
             object
                 .get("customType")
-                .ok_or_else(|| source_error("PI custom type is missing"))?,
+                .ok_or_else(|| source_error("第三方格式 custom type is missing"))?,
             redactions,
         )?,
         sanitized_value_json(object.get("data").unwrap_or(&Value::Null), redactions)?
@@ -2594,7 +2657,7 @@ fn custom_message_quarantine_json(
         sanitized_value_json(
             object
                 .get("customType")
-                .ok_or_else(|| source_error("PI custom message type is missing"))?,
+                .ok_or_else(|| source_error("第三方格式 custom message type is missing"))?,
             redactions,
         )?,
         sanitized_value_json(object.get("content").unwrap_or(&Value::Null), redactions)?,
@@ -2619,7 +2682,7 @@ fn label_quarantine_json(
         sanitized_value_json(
             object
                 .get("targetId")
-                .ok_or_else(|| source_error("PI label target is missing"))?,
+                .ok_or_else(|| source_error("第三方格式 label target is missing"))?,
             redactions,
         )?,
         sanitized_value_json(object.get("label").unwrap_or(&Value::Null), redactions)?
@@ -2638,7 +2701,7 @@ fn unknown_quarantine_json(
         .value
         .as_object()
         .cloned()
-        .ok_or_else(|| source_error("PI unknown entry is not an object"))?;
+        .ok_or_else(|| source_error("第三方格式 unknown entry is not an object"))?;
     for key in ["type", "id", "parentId", "timestamp"] {
         value.remove(key);
     }
@@ -2726,13 +2789,15 @@ fn publish_import(
         validate_opaque_id(&artifact.artifact_id, "artifact ID")?;
         if !artifact_ids.insert(artifact.artifact_id.clone()) {
             return Err(internal_error(
-                "PI v3 import generated duplicate artifact ID",
+                "第三方 Session v3 import generated duplicate artifact ID",
             ));
         }
         write_new_synced(&artifact_root.join(&artifact.artifact_id), &artifact.bytes)?;
     }
     if !artifact_ids.insert(report_artifact_id.to_owned()) {
-        return Err(internal_error("PI v3 report artifact ID was reused"));
+        return Err(internal_error(
+            "第三方 Session v3 report artifact ID was reused",
+        ));
     }
     write_new_synced(&artifact_root.join(report_artifact_id), report)?;
     sync_directory(&artifact_root)?;
@@ -2785,7 +2850,7 @@ fn publish_directory_no_replace(
         let directory = File::open(sessions_root)?;
         let staging_name = staging
             .file_name()
-            .ok_or_else(|| internal_error("PI v3 staging name is missing"))?;
+            .ok_or_else(|| internal_error("第三方 Session v3 staging name is missing"))?;
         match renameat2(
             &directory,
             staging_name,
@@ -2974,7 +3039,9 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{PiV3ImportOptions, import_pi_v3, parse_source_bytes, sanitize_value};
+    use super::{
+        LegacySessionV3ImportOptions, import_legacy_session_v3, parse_source_bytes, sanitize_value,
+    };
 
     /// 功能：确认 source parser 拒绝重复键、CRLF 与 future parent。
     /// 作者：高宏顺
@@ -3016,14 +3083,14 @@ mod tests {
         let source = directory.path().join("source.jsonl");
         let source_bytes = b"{\"type\":\"session\",\"version\":3,\"id\":\"pi-source\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"ignored\"}\n{\"type\":\"message\",\"id\":\"u1\",\"parentId\":null,\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n";
         fs::write(&source, source_bytes)?;
-        let options = PiV3ImportOptions {
+        let options = LegacySessionV3ImportOptions {
             source: source.clone(),
             workspace,
             state_root: state.clone(),
             session_id: Some("session-import-test".to_owned()),
             conformance: false,
         };
-        let result = import_pi_v3(options.clone()).await?;
+        let result = import_legacy_session_v3(options.clone()).await?;
         assert_eq!(result.session_id, "session-import-test");
         assert_eq!(fs::read(&source)?, source_bytes);
         assert!(
@@ -3031,7 +3098,7 @@ mod tests {
                 .join("sessions/session-import-test/journal.jsonl")
                 .is_file()
         );
-        assert!(import_pi_v3(options).await.is_err());
+        assert!(import_legacy_session_v3(options).await.is_err());
         Ok(())
     }
 }

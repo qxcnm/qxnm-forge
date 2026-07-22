@@ -404,19 +404,22 @@ describe("QXNM Forge workspace", () => {
     expect(screen.getByLabelText("名称")).toHaveValue("星思研 New API");
     expect(screen.getByLabelText("Provider ID")).toHaveValue("newapi-gzxsy");
     expect(screen.getByLabelText("Base URL")).toHaveValue("https://api.example/v1");
+    expect(screen.getByLabelText("模型目录 URL")).toHaveValue(
+      "https://api.example/v1/models",
+    );
     expect(screen.getByLabelText("Logo 资源 ID")).toHaveValue("newapi-gzxsy");
     expect(screen.getByAltText("提供商 Logo 预览")).toHaveAttribute(
       "src",
       "/providers/newapi-gzxsy.jpg",
     );
-    expect(screen.getByLabelText("API Key")).toHaveValue("test-only-key");
+    expect(screen.getByLabelText("Responses / Chat API Key")).toHaveValue("test-only-key");
     fireEvent.change(screen.getByLabelText("模型 ID"), {
       target: { value: "gpt-5" },
     });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText("已保存，预览已更新")).toBeInTheDocument();
-    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(screen.getByLabelText("Responses / Chat API Key")).toHaveValue("");
     expect(
       screen.getByRole("button", {
         name: "编辑提供商 星思研 New API · 凭据已配置",
@@ -430,11 +433,11 @@ describe("QXNM Forge workspace", () => {
     fireEvent.click(modelSelect);
     fireEvent.click(
       await screen.findByRole("option", {
-        name: "gpt-5 · newapi-gzxsy/openai-completions",
+        name: "gpt-5 · newapi-gzxsy/openai-responses",
       }),
     );
     expect(modelSelect).toHaveTextContent(
-      "gpt-5 · newapi-gzxsy/openai-completions",
+      "gpt-5 · newapi-gzxsy/openai-responses",
     );
 
     const agentSelect = screen.getByLabelText("选择智能体");
@@ -444,7 +447,7 @@ describe("QXNM Forge workspace", () => {
     fireEvent.click(modelSelect);
     fireEvent.click(
       await screen.findByRole("option", {
-        name: "gpt-5 · newapi-gzxsy/openai-completions",
+        name: "gpt-5 · newapi-gzxsy/openai-responses",
       }),
     );
     expect(agentSelect).toHaveTextContent("默认智能体");

@@ -24,7 +24,9 @@ use qxnm_forge::provider_connection::{
 use qxnm_forge::provider_identity::ProviderIdentityAdvertisement;
 use qxnm_forge::provider_route::ProviderRouteSnapshot;
 use qxnm_forge::session::SessionStore;
-use qxnm_forge::session::pi_v3_import::{PiV3ImportOptions, import_pi_v3};
+use qxnm_forge::session::legacy_session_v3_import::{
+    LegacySessionV3ImportOptions, import_legacy_session_v3,
+};
 use qxnm_forge::sponsored_catalog::{
     SponsoredCatalogService, generate_catalog_keypair, sign_catalog_file, verify_catalog_file,
 };
@@ -69,7 +71,7 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
     },
-    /// 管理 portable Session，包括一次性 PI v3 clean-room 导入。
+    /// 管理 portable Session，包括一次性第三方 Session v3 clean-room 导入。
     Session {
         #[command(subcommand)]
         command: SessionCommand,
@@ -88,8 +90,9 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum SessionCommand {
-    /// 把一个只读 PI Session v3 JSONL 导入为新的 portable Session。
-    ImportPiV3 {
+    /// 把一个只读第三方 Session v3 JSONL 导入为新的 portable Session。
+    #[command(name = "import-session-v3", alias = "import-pi-v3")]
+    ImportLegacySessionV3 {
         #[arg(long)]
         source: PathBuf,
         #[arg(long)]
@@ -397,7 +400,7 @@ async fn run(
         }
         Command::Session {
             command:
-                SessionCommand::ImportPiV3 {
+                SessionCommand::ImportLegacySessionV3 {
                     source,
                     workspace,
                     state_dir,
@@ -406,7 +409,7 @@ async fn run(
                     conformance,
                 },
         } => {
-            let outcome = import_pi_v3(PiV3ImportOptions {
+            let outcome = import_legacy_session_v3(LegacySessionV3ImportOptions {
                 source,
                 workspace,
                 state_root: state_dir,
@@ -419,7 +422,7 @@ async fn run(
                     "{}",
                     serde_json::to_string(&outcome).map_err(|_| AgentError::new(
                         ErrorCode::InternalError,
-                        "PI v3 import result serialization failed"
+                        "third-party Session v3 import result serialization failed"
                     ))?
                 ),
                 OutputFormat::Text => {

@@ -514,7 +514,7 @@ class SpecSchemaTests(unittest.TestCase):
 
         输入：一个合法 HTTPS OpenAI-compatible connection 及安全负例。
         输出：合法及待发现空目录实体通过，secret、危险 URL、重复模型和未知字段全部拒绝。
-        不变量：可读取的 connection 投影永远只有 credentialConfigured 状态。
+        不变量：可读取的 connection 投影永远只有两个 credential presence 状态。
         失败：ADR 0029 的字段或封闭对象约束漂移时测试失败。
         作者：高宏顺
         邮箱：18272669457@163.com
@@ -530,10 +530,13 @@ class SpecSchemaTests(unittest.TestCase):
             "providerId": "custom-example",
             "apiFamily": "openai-completions",
             "baseUrl": "https://api.example/v1",
+            "modelsUrl": "https://api.example/v1/models",
             "modelIds": ["gpt-5"],
+            "supportsTools": True,
             "logoAssetId": "new-api",
             "enabled": True,
             "credentialConfigured": False,
+            "imageCredentialConfigured": False,
             "createdAt": "2026-07-21T00:00:00Z",
             "updatedAt": "2026-07-21T00:00:00Z",
         }
@@ -544,15 +547,16 @@ class SpecSchemaTests(unittest.TestCase):
         configuration = {
             key: value
             for key, value in connection.items()
-            if key != "credentialConfigured"
+            if key not in {"credentialConfigured", "imageCredentialConfigured"}
         }
         self.validator(
             "custom-provider-connection.schema.json", "#/$defs/document"
-        ).validate({"schemaVersion": "0.1", "connections": [configuration]})
+        ).validate({"schemaVersion": "0.2", "connections": [configuration]})
         projected_fields = {
             "connectionId",
             "revision",
             "credentialConfigured",
+            "imageCredentialConfigured",
             "createdAt",
             "updatedAt",
         }
@@ -589,12 +593,16 @@ class SpecSchemaTests(unittest.TestCase):
             ),
             (
                 "providerCredentials/set",
-                {"providerId": "custom-example", "credential": "test-only-secret"},
+                {
+                    "providerId": "custom-example",
+                    "credentialKind": "responses",
+                    "credential": "test-only-secret",
+                },
                 "providerCredentialsSetRequest",
             ),
             (
                 "providerCredentials/remove",
-                {"providerId": "custom-example"},
+                {"providerId": "custom-example", "credentialKind": "image"},
                 "providerCredentialsRemoveRequest",
             ),
         )

@@ -142,7 +142,7 @@ describe("ProviderSettings secret import boundary", () => {
     fireEvent.click(importButton);
 
     expect(importInput).toHaveValue("");
-    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(screen.getByLabelText("Responses / Chat API Key")).toHaveValue("");
     expect(
       screen.getByText("无法解析连接 JSON，请检查 _type、url 和 key 字段"),
     ).toBeInTheDocument();
@@ -163,8 +163,8 @@ describe("ProviderSettings secret import boundary", () => {
     fireEvent.click(importButton);
 
     expect(importInput).toHaveValue("");
-    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "password");
-    expect(screen.getByLabelText("API Key")).toHaveValue(importedSecret);
+    expect(screen.getByLabelText("Responses / Chat API Key")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("Responses / Chat API Key")).toHaveValue(importedSecret);
     fireEvent.change(screen.getByLabelText("模型 ID"), {
       target: { value: "manual-preview-model" },
     });
@@ -178,7 +178,7 @@ describe("ProviderSettings secret import boundary", () => {
     ).not.toMatch(/failed-import-secret|successful-import-secret/);
 
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(screen.getByLabelText("Responses / Chat API Key")).toHaveValue("");
     expect(await screen.findByText("已保存，预览已更新")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
@@ -229,11 +229,14 @@ describe("ProviderSettings secret import boundary", () => {
             displayName: "星思研 New API",
             providerId: "newapi-gzxsy",
             baseUrl: "https://api.example.invalid/v1",
+            modelsUrl: "https://api.example.invalid/v1/models",
             apiFamily: "openai-completions",
             modelIds: ["model-a", "model-b"],
+            supportsTools: false,
             logoAssetId: "newapi-gzxsy",
             enabled: true,
             credentialConfigured: true,
+            imageCredentialConfigured: false,
             createdAt: "2026-07-22T00:00:00Z",
             updatedAt: "2026-07-22T00:00:01Z",
           },
@@ -269,7 +272,7 @@ describe("ProviderSettings secret import boundary", () => {
     ).toBeInTheDocument();
     expect(discoverModels).toHaveBeenCalledWith(expect.any(String), 1);
     expect(screen.getByLabelText("模型 ID")).toHaveValue("model-a\nmodel-b");
-    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    expect(screen.getByLabelText("Responses / Chat API Key")).toHaveValue("");
     expect(onModelReady).toHaveBeenCalledWith("rust", {
       providerId: "newapi-gzxsy",
       modelId: "model-a",

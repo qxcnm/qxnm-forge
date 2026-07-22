@@ -1618,7 +1618,7 @@
       },
       "status": "conformant",
       "evidence": [
-        "rust/src/session/pi_v3_import.rs",
+        "rust/src/session/legacy_session_v3_import.rs",
         "rust/src/main.rs",
         "CONFORMANCE/pi_v3_import_runner.py",
         "CONFORMANCE/fixtures/session/pi-v3-import-v0.1/expected.journal.jsonl",
@@ -1678,9 +1678,9 @@
       },
       "status": "conformant",
       "evidence": [
-        "dotnet/src/QxnmForge.Core/Session/PiV3Importer.cs",
+        "dotnet/src/QxnmForge.Core/Session/LegacySessionV3Importer.cs",
         "dotnet/src/QxnmForge.Cli/Program.cs",
-        "dotnet/tests/QxnmForge.Core.Tests/PiV3ImporterTests.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/LegacySessionV3ImporterTests.cs",
         "CONFORMANCE/pi_v3_import_runner.py",
         "CONFORMANCE/fixtures/session/pi-v3-import-v0.1/expected.journal.jsonl"
       ],

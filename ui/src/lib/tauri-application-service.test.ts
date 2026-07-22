@@ -75,6 +75,40 @@ describe("TauriApplicationServiceClient", () => {
   });
 
   /**
+   * 验证输入图片只通过品牌中立 artifacts/create 发布，并严格解析脱敏引用。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("publishes input images through artifacts/create", async () => {
+    const artifact = {
+      artifactId: "artifact-input-1",
+      mediaType: "image/png",
+      byteLength: 8,
+      sha256: "0".repeat(64),
+    };
+    invokeMock.mockResolvedValue({ artifact });
+    const client = new TauriApplicationServiceClient("dotnet");
+
+    await expect(
+      client.createArtifact({
+        sessionId: "session-input-1",
+        mediaType: "image/png",
+        dataBase64: "iVBORw0KGgo=",
+      }),
+    ).resolves.toEqual({ artifact });
+    expect(invokeMock).toHaveBeenCalledWith("application_service_request", {
+      backend: "dotnet",
+      method: "artifacts/create",
+      params: {
+        sessionId: "session-input-1",
+        mediaType: "image/png",
+        dataBase64: "iVBORw0KGgo=",
+      },
+    });
+  });
+
+  /**
    * 验证审批决定只通过 allowlist 内的 approval/respond 提交，并要求 accepted 回执。
    *
    * 作者：高宏顺
@@ -144,8 +178,10 @@ describe("TauriApplicationServiceClient", () => {
       displayName: "Example Provider",
       providerId: "custom.example",
       baseUrl: "https://api.example.invalid/v1",
+      modelsUrl: "https://api.example.invalid/catalog/models",
       apiFamily: "openai-completions",
       modelIds: ["model-a"],
+      supportsTools: true,
       logoAssetId: "custom.brand.dark",
       enabled: true,
     } as const;
@@ -155,6 +191,7 @@ describe("TauriApplicationServiceClient", () => {
         revision: 1,
         ...connectionInput,
         credentialConfigured: false,
+        imageCredentialConfigured: false,
         createdAt: "2026-07-21T00:00:00Z",
         updatedAt: "2026-07-21T00:00:00Z",
       },
@@ -186,11 +223,14 @@ describe("TauriApplicationServiceClient", () => {
         displayName: "Example Provider",
         providerId: "custom.example",
         baseUrl: "https://api.example.invalid/v1",
+        modelsUrl: "https://api.example.invalid/catalog/models",
         apiFamily: "openai-completions",
         modelIds: ["model-a", "model-b"],
+        supportsTools: false,
         logoAssetId: null,
         enabled: true,
         credentialConfigured: true,
+        imageCredentialConfigured: false,
         createdAt: "2026-07-21T00:00:00Z",
         updatedAt: "2026-07-22T00:00:00Z",
       },
@@ -253,26 +293,29 @@ describe("TauriApplicationServiceClient", () => {
    * 邮箱：18272669457@163.com
    */
   it("uses dedicated host commands for provider credentials", async () => {
-    invokeMock.mockImplementation((command: string) =>
+    invokeMock.mockImplementation((command: string, arguments_?: unknown) =>
       Promise.resolve({
         providerId: "newapi",
+        credentialKind: (arguments_ as { credentialKind: string }).credentialKind,
         credentialConfigured: command === "provider_credential_set",
         restartRequired: true,
       }),
     );
     const client = new TauriApplicationServiceClient("rust");
 
-    await client.setProviderCredential("newapi", "test-secret");
-    await client.removeProviderCredential("newapi");
+    await client.setProviderCredential("newapi", "responses", "test-secret");
+    await client.removeProviderCredential("newapi", "image");
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, "provider_credential_set", {
       backend: "rust",
       providerId: "newapi",
+      credentialKind: "responses",
       credential: "test-secret",
     });
     expect(invokeMock).toHaveBeenNthCalledWith(2, "provider_credential_remove", {
       backend: "rust",
       providerId: "newapi",
+      credentialKind: "image",
     });
   });
 
@@ -285,19 +328,20 @@ describe("TauriApplicationServiceClient", () => {
   it("enforces the shared provider credential length boundary", async () => {
     invokeMock.mockResolvedValue({
       providerId: "newapi",
+      credentialKind: "responses",
       credentialConfigured: true,
       restartRequired: true,
     });
     const client = new TauriApplicationServiceClient("rust");
     const maximumCredential = "x".repeat(16_384);
 
-    await client.setProviderCredential("newapi", maximumCredential);
+    await client.setProviderCredential("newapi", "responses", maximumCredential);
     const arguments_ = invokeMock.mock.calls[0]?.[1] as
       | { credential?: string }
       | undefined;
     expect(arguments_?.credential).toHaveLength(16_384);
     await expect(
-      client.setProviderCredential("newapi", "x".repeat(16_385)),
+      client.setProviderCredential("newapi", "responses", "x".repeat(16_385)),
     ).rejects.toThrow();
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });

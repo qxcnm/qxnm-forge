@@ -15,7 +15,7 @@ use crate::domain::{ArtifactRef, validate_image_signature};
 use crate::error::{AgentError, ErrorCode};
 use crate::protocol::parse_strict_value;
 
-pub mod pi_v3_import;
+pub mod legacy_session_v3_import;
 mod writer_lease;
 
 use writer_lease::{PortableWriterLease, create_session_directory};

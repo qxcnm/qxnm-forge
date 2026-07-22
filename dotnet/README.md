@@ -1,7 +1,7 @@
 # qxnm-forge .NET vertical slice
 
 独立的 .NET 10 挑战实现，作者高宏顺 `<18272669457@163.com>`。运行时不调用
-Rust、PI 或其他语言实现。
+Rust、任何参考项目 runtime 或其他语言实现。
 
 当前可验证纵切面包含：portable JSONL session、deterministic faux Provider、
 多 turn Agent loop、JSON-RPC/NDJSON stdio daemon、纯文本 `run` CLI、默认权限、

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -38,6 +40,7 @@ use crate::terminal::{TerminalAfterResponse, TerminalManager, TerminalNotificati
 const MAX_FRAME_BYTES: usize = 1_048_576;
 const MAX_EVENT_BYTES: usize = 262_144;
 const MAX_ARTIFACT_BYTES: usize = 1_073_741_824;
+const MAX_INPUT_IMAGE_BYTES: usize = 524_288;
 const OUTBOUND_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// stdio daemon 的一次请求处理结果；`after_response` 用于强制响应先于后续事件。
@@ -72,6 +75,18 @@ struct FauxConfigureParams {
 struct ModelsListParams {
     #[serde(default)]
     provider_id: Option<Value>,
+}
+
+/// `artifacts/create` 的严格图片发布参数。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ArtifactCreateParams {
+    session_id: String,
+    media_type: String,
+    data_base64: String,
 }
 
 /// `session/list` 的严格可选 cursor 与 page limit 参数。
@@ -503,12 +518,15 @@ impl Daemon {
             }
             "providerCredentials/set" => {
                 let params: ProviderCredentialsSetParams = parse_params(request.params)?;
-                self.provider_connections
-                    .service()
-                    .set_credential(&params.provider_id, &params.credential)?;
+                self.provider_connections.service().set_credential(
+                    &params.provider_id,
+                    &params.credential_kind,
+                    &params.credential,
+                )?;
                 Ok((
                     json!({
                         "providerId":params.provider_id,
+                        "credentialKind":params.credential_kind,
                         "credentialConfigured":true,
                         "restartRequired":true
                     }),
@@ -519,15 +537,25 @@ impl Daemon {
                 let params: ProviderCredentialsRemoveParams = parse_params(request.params)?;
                 self.provider_connections
                     .service()
-                    .remove_credential(&params.provider_id)?;
+                    .remove_credential(&params.provider_id, &params.credential_kind)?;
                 Ok((
                     json!({
                         "providerId":params.provider_id,
+                        "credentialKind":params.credential_kind,
                         "credentialConfigured":false,
                         "restartRequired":true
                     }),
                     None,
                 ))
+            }
+            "artifacts/create" => {
+                let params: ArtifactCreateParams = parse_params(request.params)?;
+                let bytes = decode_input_image(&params.data_base64)?;
+                let artifact = self
+                    .agent
+                    .publish_input_image(&params.session_id, &params.media_type, &bytes)
+                    .await?;
+                Ok((json!({"artifact":artifact}), None))
             }
             "models/list" => {
                 let params: ModelsListParams = parse_params(request.params)?;
@@ -929,6 +957,7 @@ impl Daemon {
             "providerConnections/delete",
             "providerCredentials/set",
             "providerCredentials/remove",
+            "artifacts/create",
             "models/list",
             "providerCatalog/list",
             "run/start",
@@ -1056,6 +1085,39 @@ impl Daemon {
         models.sort_by_key(model_key);
         models
     }
+}
+
+/// 严格解码 `artifacts/create` 的 canonical Base64，并执行固定输入大小上限。
+///
+/// 输入：不含 data URL 前缀或空白的 Base64 文本。
+/// 输出：最多 512 KiB 的原始图片字节。
+/// 不变量：失败错误不包含输入、字节、路径或摘要；宽松 Base64 与非 canonical padding 均拒绝。
+/// 失败：字符、padding、解码或大小边界不满足时返回 `invalid_params`。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn decode_input_image(value: &str) -> Result<Vec<u8>, AgentError> {
+    if value.is_empty()
+        || value.len() > 699_052
+        || value.bytes().any(|byte| byte.is_ascii_whitespace())
+    {
+        return Err(AgentError::new(
+            ErrorCode::InvalidParams,
+            "artifact image data is invalid",
+        ));
+    }
+    let bytes = BASE64_STANDARD
+        .decode(value)
+        .map_err(|_| AgentError::new(ErrorCode::InvalidParams, "artifact image data is invalid"))?;
+    if bytes.is_empty()
+        || bytes.len() > MAX_INPUT_IMAGE_BYTES
+        || BASE64_STANDARD.encode(&bytes) != value
+    {
+        return Err(AgentError::new(
+            ErrorCode::InvalidParams,
+            "artifact image data is invalid",
+        ));
+    }
+    Ok(bytes)
 }
 
 /// 功能：增量读取一个有界 LF/CRLF NDJSON 帧，超限后持续排空到下一帧边界。
@@ -1214,7 +1276,22 @@ mod tests {
     use serde_json::json;
     use tokio::io::BufReader;
 
-    use super::{InboundFrame, parse_run_start_params, read_bounded_frame};
+    use super::{InboundFrame, decode_input_image, parse_run_start_params, read_bounded_frame};
+
+    /// 功能：验证输入图片只接受 canonical Base64，并在错误中不回显正文。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn input_image_base64_is_strict_and_redacted() {
+        assert_eq!(
+            decode_input_image("iVBORw0KGgo=").expect("canonical PNG prefix should decode"),
+            [137, 80, 78, 71, 13, 10, 26, 10]
+        );
+        for invalid in ["iVBORw0KGgo", "iVBORw0K Ggo=", "!!!!"] {
+            let error = decode_input_image(invalid).expect_err("invalid base64 must fail");
+            assert!(!error.message.contains(invalid));
+        }
+    }
 
     /// 功能：验证 run/start 的非法 Profile 引用使用冻结错误且不扩大到其他字段。
     /// 作者：高宏顺

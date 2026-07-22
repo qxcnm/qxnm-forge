@@ -581,7 +581,7 @@ internal static class ProviderIdentityAdvertisement
     }
 
     /// <summary>
-    /// 功能：验证 manifest 只引用固定 PI v1 catalog。
+    /// 功能：验证 manifest 只引用固定 v1 reference catalog。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -1419,7 +1419,7 @@ internal static class ProviderIdentityAdvertisement
     }
 
     /// <summary>
-    /// 功能：验证固定 PI reference object，阻止 commit/license 漂移。
+    /// 功能：验证固定第三方 reference object，阻止 commit/license 漂移。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>

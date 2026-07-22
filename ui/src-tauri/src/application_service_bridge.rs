@@ -262,7 +262,7 @@ pub(crate) async fn application_service_request(
 
 /// 把 Provider credential 送到本地 daemon 的专用写入边界。
 ///
-/// 输入：后端、受限 Provider ID 与密码输入框中的 credential。
+/// 输入：后端、受限 Provider ID、封闭 credential 用途与密码输入框中的 credential。
 /// 输出：只含 `credentialConfigured` 的脱敏结果。
 /// 不变量：此方法不属于通用 RPC allowlist；credential 不进入 argv、日志、Session 或返回值；写入帧发出后无论回执结果都丢弃共享 state root 的两套旧 daemon。
 /// 失败：Provider ID、credential、连接、CredentialStore 或协议失败时返回脱敏错误。
@@ -274,9 +274,13 @@ pub(crate) async fn provider_credential_set(
     state: tauri::State<'_, ApplicationServiceBridge>,
     backend: BackendKind,
     provider_id: String,
+    credential_kind: String,
     credential: String,
 ) -> Result<Value, BridgeError> {
-    if !valid_provider_id(&provider_id) || !valid_credential(&credential) {
+    if !valid_provider_id(&provider_id)
+        || !valid_credential_kind(&credential_kind)
+        || !valid_credential(&credential)
+    {
         return Err(BridgeError::internal(
             "provider credential input is invalid",
         ));
@@ -286,7 +290,11 @@ pub(crate) async fn provider_credential_set(
     let result = connection
         .request(
             "providerCredentials/set",
-            json!({"providerId":provider_id,"credential":credential}),
+            json!({
+                "providerId":provider_id,
+                "credentialKind":credential_kind,
+                "credential":credential
+            }),
         )
         .await;
     state.connections.lock().await.clear();
@@ -295,7 +303,7 @@ pub(crate) async fn provider_credential_set(
 
 /// 删除本地 daemon `CredentialStore` 中指定 Provider 的 credential。
 ///
-/// 输入：后端与受限 Provider ID。
+/// 输入：后端、受限 Provider ID 与封闭 credential 用途。
 /// 输出：只含 `credentialConfigured:false` 的脱敏结果。
 /// 不变量：WebView 无法指定 state root、文件路径或任意 daemon 方法；写入帧发出后无论回执结果都丢弃共享 state root 的两套旧 daemon。
 /// 失败：Provider ID、连接、CredentialStore 或协议失败时返回脱敏错误。
@@ -307,8 +315,9 @@ pub(crate) async fn provider_credential_remove(
     state: tauri::State<'_, ApplicationServiceBridge>,
     backend: BackendKind,
     provider_id: String,
+    credential_kind: String,
 ) -> Result<Value, BridgeError> {
-    if !valid_provider_id(&provider_id) {
+    if !valid_provider_id(&provider_id) || !valid_credential_kind(&credential_kind) {
         return Err(BridgeError::internal(
             "provider credential input is invalid",
         ));
@@ -318,7 +327,7 @@ pub(crate) async fn provider_credential_remove(
     let result = connection
         .request(
             "providerCredentials/remove",
-            json!({"providerId":provider_id}),
+            json!({"providerId":provider_id,"credentialKind":credential_kind}),
         )
         .await;
     state.connections.lock().await.clear();
@@ -565,6 +574,7 @@ fn allowed_method(method: &str) -> bool {
     matches!(
         method,
         "models/list"
+            | "artifacts/create"
             | "run/start"
             | "run/cancel"
             | "run/steer"
@@ -647,6 +657,14 @@ fn valid_provider_id(value: &str) -> bool {
         && bytes.iter().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-')
         })
+}
+
+/// 验证 Provider credential 用途属于互不回退的封闭枚举。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn valid_credential_kind(value: &str) -> bool {
+    matches!(value, "responses" | "image")
 }
 
 /// 验证 credential 可安全进入单个本地写入请求且不能注入协议行。
@@ -823,7 +841,7 @@ fn terminate_process_tree(process_id: u32) {
 mod tests {
     use super::{
         ApplicationServiceBridge, BackendKind, MAX_FRAME_BYTES, allowed_method, daemon_arguments,
-        invalidates_daemon_snapshot, valid_credential, valid_provider_id,
+        invalidates_daemon_snapshot, valid_credential, valid_credential_kind, valid_provider_id,
         validate_forwarded_request,
     };
     use serde_json::json;
@@ -841,6 +859,7 @@ mod tests {
         assert!(allowed_method("providerConnections/discoverModels"));
         assert!(allowed_method("session/archive"));
         assert!(allowed_method("run/start"));
+        assert!(allowed_method("artifacts/create"));
         assert!(!allowed_method("providerCredentials/set"));
         assert!(!allowed_method("faux/configure"));
         assert!(!allowed_method("terminal/open"));
@@ -908,6 +927,9 @@ mod tests {
     #[test]
     fn provider_credential_inputs_are_bounded() {
         assert!(valid_provider_id("custom-newapi"));
+        assert!(valid_credential_kind("responses"));
+        assert!(valid_credential_kind("image"));
+        assert!(!valid_credential_kind("codex"));
         assert!(!valid_provider_id("Custom NewAPI"));
         assert!(valid_credential("test-only-secret"));
         assert!(!valid_credential("line-one\nline-two"));

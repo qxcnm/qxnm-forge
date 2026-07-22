@@ -40,7 +40,7 @@ public sealed class CustomProviderConnectionTests
         Assert.Equal(first.CreatedAt, first.UpdatedAt);
         Assert.Equal(TimeSpan.Zero, first.CreatedAt.Offset);
 
-        service.SetCredential("alpha", Credential);
+        service.SetCredential("alpha", "responses", Credential);
         var configured = Assert.Single(service.List());
         Assert.True(configured.CredentialConfigured);
         var connectionDocument = File.ReadAllText(Path.Combine(
@@ -79,6 +79,58 @@ public sealed class CustomProviderConnectionTests
     }
 
     /// <summary>
+    /// 功能：确认 Responses 与 Image key 独立存取，Image key 不参与模型发现，删除连接会同时清理两者。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    [Fact]
+    public async Task ResponsesAndImageCredentialsRemainIsolated()
+    {
+        using var temporary = new TemporaryDirectory();
+        var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+        var stateRoot = Path.Combine(temporary.Path, "state");
+        var handler = new DiscoveryResponseHandler(
+            HttpStatusCode.OK,
+            Encoding.UTF8.GetBytes("{\"data\":[{\"id\":\"must-not-be-read\"}]}"));
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var service = new CustomProviderConnectionService(
+            stateRoot,
+            workspace,
+            allowLoopbackHttp: false,
+            client);
+        var created = service.Create(CreateInput("dual-key", "Dual key"));
+        var imageCredentialId = created.ConnectionId + ".image";
+        var credentials = new ProviderCredentialStore(stateRoot, workspace);
+
+        service.SetCredential("dual-key", "responses", Credential);
+        service.SetCredential("dual-key", "image", "image-secret-never-return");
+
+        var configured = Assert.Single(service.List());
+        Assert.True(configured.CredentialConfigured);
+        Assert.True(configured.ImageCredentialConfigured);
+        Assert.Equal([imageCredentialId, "dual-key"], credentials.List());
+
+        service.RemoveCredential("dual-key", "responses");
+
+        var imageOnly = Assert.Single(service.List());
+        Assert.False(imageOnly.CredentialConfigured);
+        Assert.True(imageOnly.ImageCredentialConfigured);
+        Assert.True(credentials.TryReadForRequest(imageCredentialId, out var imageCredential));
+        Assert.Equal("image-secret-never-return", imageCredential);
+        _ = await Assert.ThrowsAsync<ProviderConnectionException>(() =>
+            service.DiscoverModelsAsync(
+                created.ConnectionId,
+                created.Revision,
+                CancellationToken.None));
+        Assert.Null(handler.Method);
+
+        service.SetCredential("dual-key", "responses", Credential);
+        service.Delete(created.ConnectionId, created.Revision);
+
+        Assert.Empty(credentials.List());
+    }
+
+    /// <summary>
     /// 功能：确认 Provider rename 不会继承目标 ID 的历史 orphan credential，并清理新旧两端。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -91,7 +143,7 @@ public sealed class CustomProviderConnectionTests
         var stateRoot = Path.Combine(temporary.Path, "state");
         var service = new CustomProviderConnectionService(stateRoot, workspace);
         var connection = service.Create(CreateInput("alpha.source", "Alpha"));
-        service.SetCredential("alpha.source", Credential);
+        service.SetCredential("alpha.source", "responses", Credential);
         var credentials = new ProviderCredentialStore(stateRoot, workspace);
         credentials.Set("beta.orphan", "orphan-destination-secret");
 
@@ -267,7 +319,7 @@ public sealed class CustomProviderConnectionTests
             ModelIds = [],
             LogoAssetId = "discovery-logo",
         });
-        service.SetCredential("discovery", Credential);
+        service.SetCredential("discovery", "responses", Credential);
 
         FileStream? credentialLock = null;
         handler.BeforeResponse = () => credentialLock = new FileStream(
@@ -331,7 +383,7 @@ public sealed class CustomProviderConnectionTests
                 allowLoopbackHttp: false,
                 client);
             var created = service.Create(CreateInput("failure", "Failure"));
-            service.SetCredential("failure", Credential);
+            service.SetCredential("failure", "responses", Credential);
 
             var exception = await Assert.ThrowsAsync<ProviderConnectionException>(() =>
                 service.DiscoverModelsAsync(
@@ -371,7 +423,7 @@ public sealed class CustomProviderConnectionTests
             allowLoopbackHttp: false,
             client);
         var created = service.Create(CreateInput("concurrent", "Before"));
-        service.SetCredential("concurrent", Credential);
+        service.SetCredential("concurrent", "responses", Credential);
         handler.BeforeResponse = () => service.Update(
             created.ConnectionId,
             created.Revision,
@@ -411,7 +463,7 @@ public sealed class CustomProviderConnectionTests
             allowLoopbackHttp: false,
             client);
         var created = connections.Create(CreateInput("rpc.discovery", "RPC") with { ModelIds = [] });
-        connections.SetCredential("rpc.discovery", Credential);
+        connections.SetCredential("rpc.discovery", "responses", Credential);
         await using var repository = new SessionRepository(stateRoot, workspace);
         await using var registry = new ProviderRegistry([new FauxProvider()]);
         using var tools = new ToolRegistry(workspace);
@@ -464,7 +516,7 @@ public sealed class CustomProviderConnectionTests
             connections);
         var initialize = InitializeRequest("init");
         const string connection =
-            "{\"displayName\":\"New API\",\"providerId\":\"newapi\",\"apiFamily\":\"openai-completions\",\"baseUrl\":\"https://example.invalid/v1\",\"modelIds\":[\"model-a\",\"model-b\"],\"logoAssetId\":\"newapi-logo\",\"enabled\":true}";
+            "{\"displayName\":\"New API\",\"providerId\":\"newapi\",\"apiFamily\":\"openai-completions\",\"baseUrl\":\"https://example.invalid/v1\",\"modelsUrl\":\"https://example.invalid/catalog/models\",\"modelIds\":[\"model-a\",\"model-b\"],\"supportsTools\":true,\"logoAssetId\":\"newapi-logo\",\"enabled\":true}";
         var createFrames = await ExchangeAsync(
             daemon,
             initialize + "\n" +
@@ -489,13 +541,14 @@ public sealed class CustomProviderConnectionTests
         var configuredFrames = await ExchangeAsync(
             daemon,
             InitializeRequest("init-2") + "\n" +
-            "{\"jsonrpc\":\"2.0\",\"id\":\"credential\",\"method\":\"providerCredentials/set\",\"params\":{\"providerId\":\"newapi\",\"credential\":\"" + Credential + "\"}}\n" +
+            "{\"jsonrpc\":\"2.0\",\"id\":\"credential\",\"method\":\"providerCredentials/set\",\"params\":{\"providerId\":\"newapi\",\"credentialKind\":\"responses\",\"credential\":\"" + Credential + "\"}}\n" +
             "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"providerConnections/list\",\"params\":{}}\n" +
             "{\"jsonrpc\":\"2.0\",\"id\":\"unknown\",\"method\":\"providerConnections/create\",\"params\":{\"connection\":" + connection + ",\"credential\":\"hidden\"}}\n");
         var configuredText = string.Join('\n', configuredFrames.Select(static frame => frame.GetRawText()));
         Assert.DoesNotContain(Credential, configuredText, StringComparison.Ordinal);
         var credentialResult = configuredFrames[1].GetProperty("result");
         Assert.Equal("newapi", credentialResult.GetProperty("providerId").GetString());
+        Assert.Equal("responses", credentialResult.GetProperty("credentialKind").GetString());
         Assert.True(credentialResult.GetProperty("credentialConfigured").GetBoolean());
         Assert.True(credentialResult.GetProperty("restartRequired").GetBoolean());
         Assert.True(configuredFrames[2]
@@ -506,6 +559,24 @@ public sealed class CustomProviderConnectionTests
         Assert.Equal(
             "invalid_params",
             configuredFrames[3].GetProperty("error").GetProperty("details").GetProperty("kind").GetString());
+
+        var isolatedCredentialFrames = await ExchangeAsync(
+            daemon,
+            InitializeRequest("init-credential-isolation") + "\n" +
+            "{\"jsonrpc\":\"2.0\",\"id\":\"image-key\",\"method\":\"providerCredentials/set\",\"params\":{\"providerId\":\"newapi\",\"credentialKind\":\"image\",\"credential\":\"image-secret\"}}\n" +
+            "{\"jsonrpc\":\"2.0\",\"id\":\"remove-responses\",\"method\":\"providerCredentials/remove\",\"params\":{\"providerId\":\"newapi\",\"credentialKind\":\"responses\"}}\n" +
+            "{\"jsonrpc\":\"2.0\",\"id\":\"list-isolated\",\"method\":\"providerConnections/list\",\"params\":{}}\n");
+        var imageCredentialResult = isolatedCredentialFrames[1].GetProperty("result");
+        Assert.Equal("image", imageCredentialResult.GetProperty("credentialKind").GetString());
+        Assert.True(imageCredentialResult.GetProperty("credentialConfigured").GetBoolean());
+        var removedResponsesResult = isolatedCredentialFrames[2].GetProperty("result");
+        Assert.Equal("responses", removedResponsesResult.GetProperty("credentialKind").GetString());
+        Assert.False(removedResponsesResult.GetProperty("credentialConfigured").GetBoolean());
+        var isolatedConnection = isolatedCredentialFrames[3]
+            .GetProperty("result")
+            .GetProperty("connections")[0];
+        Assert.False(isolatedConnection.GetProperty("credentialConfigured").GetBoolean());
+        Assert.True(isolatedConnection.GetProperty("imageCredentialConfigured").GetBoolean());
 
         var staleFrames = await ExchangeAsync(
             daemon,
@@ -532,9 +603,9 @@ public sealed class CustomProviderConnectionTests
         _ = service.Create(CreateInput("missing-key", "Missing Key"));
         _ = service.Create(CreateInput("disabled", "Disabled") with { Enabled = false });
         _ = service.Create(CreateInput("undiscovered", "Undiscovered") with { ModelIds = [] });
-        service.SetCredential("ready", Credential);
-        service.SetCredential("disabled", Credential);
-        service.SetCredential("undiscovered", Credential);
+        service.SetCredential("ready", "responses", Credential);
+        service.SetCredential("disabled", "responses", Credential);
+        service.SetCredential("undiscovered", "responses", Credential);
 
         using var environment = new ProviderEnvironmentIsolation();
         await using var registry = ProviderRegistryFactory.CreateFromEnvironment(
@@ -615,7 +686,7 @@ public sealed class CustomProviderConnectionTests
         {
             BaseUrl = "http://127.0.0.1:41000/v1",
         });
-        service.SetCredential("loopback.custom", Credential);
+        service.SetCredential("loopback.custom", "responses", Credential);
 
         _ = Assert.Throws<ProviderConnectionException>(() =>
             ProviderRegistryFactory.CreateFromEnvironment(
@@ -704,7 +775,7 @@ public sealed class CustomProviderConnectionTests
         try
         {
             var exception = Assert.Throws<ProviderConnectionException>(() =>
-                service.SetCredential("alpha", Credential));
+                service.SetCredential("alpha", "responses", Credential));
             Assert.Equal("provider_connection_store_locked", exception.Error.Details.Kind);
             var coordinated = Assert.Throws<ProviderConnectionException>(() =>
                 service.SetCredentialCoordinated("canonical.test", Credential));
@@ -733,7 +804,9 @@ public sealed class CustomProviderConnectionTests
             providerId,
             "openai-completions",
             "https://example.invalid/v1",
+            "https://example.invalid/v1/models",
             ["model-a"],
+            SupportsTools: false,
             null,
             Enabled: true);
     }

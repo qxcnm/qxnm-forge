@@ -33,8 +33,8 @@ internal static class Program
             {
                 "daemon" => await RunDaemonAsync(args[1..], CancellationToken.None).ConfigureAwait(false),
                 "run" => await RunOnceAsync(args[1..], CancellationToken.None).ConfigureAwait(false),
-                "session" when args.Length > 1 && args[1] == "import-pi-v3" =>
-                    await RunPiV3ImportAsync(args[2..], CancellationToken.None).ConfigureAwait(false),
+                "session" when args.Length > 1 && args[1] is "import-session-v3" or "import-pi-v3" =>
+                    await RunLegacySessionV3ImportAsync(args[2..], CancellationToken.None).ConfigureAwait(false),
                 "sponsors" => await RunSponsorsAsync(args[1..], CancellationToken.None).ConfigureAwait(false),
                 "auth" => await RunAuthAsync(args[1..], CancellationToken.None).ConfigureAwait(false),
                 _ => Usage(),
@@ -54,9 +54,9 @@ internal static class Program
             await Console.Error.WriteLineAsync(exception.Message).ConfigureAwait(false);
             return 2;
         }
-        catch (PiV3ImportException exception)
+        catch (LegacySessionV3ImportException exception)
         {
-            await Console.Error.WriteLineAsync("PI v3 import failed safely: " + exception.Kind).ConfigureAwait(false);
+            await Console.Error.WriteLineAsync("third-party Session v3 import failed safely: " + exception.Kind).ConfigureAwait(false);
             return exception.ExitCode;
         }
         catch (ProviderIdentityAdvertisementException)
@@ -103,18 +103,18 @@ internal static class Program
     }
 
     /// <summary>
-    /// 功能：运行离线 PI Session v3 clean-room 一次性导入并只输出三个安全结果字段。
+    /// 功能：运行离线第三方 Session v3 clean-room 一次性导入并只输出三个安全结果字段。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
-    /// <param name="args">import-pi-v3 portable 参数；source 路径不会写入输出或持久化。</param>
+    /// <param name="args">import-session-v3 portable 参数；source 路径不会写入输出或持久化。</param>
     /// <param name="cancellationToken">读取、持久化与发布取消信号。</param>
     /// <returns>目标原子发布后返回 0；失败由 Main 映射 portable 退出码。</returns>
-    private static async Task<int> RunPiV3ImportAsync(string[] args, CancellationToken cancellationToken)
+    private static async Task<int> RunLegacySessionV3ImportAsync(string[] args, CancellationToken cancellationToken)
     {
-        var options = ParsePiV3ImportOptions(args);
-        var result = await PiV3Importer.ImportAsync(
-            new PiV3ImportOptions(
+        var options = ParseLegacySessionV3ImportOptions(args);
+        var result = await LegacySessionV3Importer.ImportAsync(
+            new LegacySessionV3ImportOptions(
                 options.Source,
                 options.Workspace,
                 options.StateDirectory,
@@ -143,14 +143,14 @@ internal static class Program
     }
 
     /// <summary>
-    /// 功能：严格解析 import-pi-v3 必需路径、可选新 Session、输出格式和 conformance 开关。
+    /// 功能：严格解析 import-session-v3 必需路径、可选新 Session、输出格式和 conformance 开关。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="args">子命令后的 argv；未知或重复参数均拒绝。</param>
     /// <returns>不含 secret 的不可变导入 CLI 选项。</returns>
     /// <exception cref="ArgumentException">参数缺失、重复、未知或 format 非法。</exception>
-    private static PiV3CliOptions ParsePiV3ImportOptions(string[] args)
+    private static LegacySessionV3CliOptions ParseLegacySessionV3ImportOptions(string[] args)
     {
         string? source = null;
         string? workspace = null;
@@ -200,16 +200,16 @@ internal static class Program
                 case "--no-color":
                     break;
                 default:
-                    throw new ArgumentException("unknown PI import argument");
+                    throw new ArgumentException("unknown Session v3 import argument");
             }
         }
 
         if (source is null || workspace is null || stateDirectory is null)
         {
-            throw new ArgumentException("PI import requires --source, --workspace and --state-dir");
+            throw new ArgumentException("Session v3 import requires --source, --workspace and --state-dir");
         }
 
-        return new PiV3CliOptions(source, workspace, stateDirectory, session, format, conformance);
+        return new LegacySessionV3CliOptions(source, workspace, stateDirectory, session, format, conformance);
     }
 
     /// <summary>
@@ -1168,7 +1168,7 @@ internal static class Program
     {
         Console.Error.WriteLine("Usage: qxnm-forge-dotnet daemon --stdio [--conformance] [--workspace PATH] [--state-dir PATH]");
         Console.Error.WriteLine("       qxnm-forge-dotnet run [--workspace PATH] [--state-dir PATH] [--session ID] [PROMPT]");
-        Console.Error.WriteLine("       qxnm-forge-dotnet session import-pi-v3 --source FILE --workspace PATH --state-dir PATH [--session ID] [--format text|json] [--conformance]");
+        Console.Error.WriteLine("       qxnm-forge-dotnet session import-session-v3 --source FILE --workspace PATH --state-dir PATH [--session ID] [--format text|json] [--conformance]");
         Console.Error.WriteLine("       qxnm-forge-dotnet sponsors keygen|sign|verify|configure|list|use|installed|remove [OPTIONS]");
         Console.Error.WriteLine("       qxnm-forge-dotnet auth set|list|remove [OPTIONS]  # secret only via stdin");
         return 2;
@@ -1176,7 +1176,7 @@ internal static class Program
 }
 
 /// <summary>
-/// 功能：保存 PI v3 import CLI 的显式路径、目标 ID、输出格式和测试模式。
+/// 功能：保存第三方 Session v3 import CLI 的显式路径、目标 ID、输出格式和测试模式。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
@@ -1186,7 +1186,7 @@ internal static class Program
 /// <param name="Session">可选新 Session ID。</param>
 /// <param name="Format">text 或 json。</param>
 /// <param name="Conformance">是否请求固定合成夹具输出。</param>
-internal sealed record PiV3CliOptions(
+internal sealed record LegacySessionV3CliOptions(
     string Source,
     string Workspace,
     string StateDirectory,

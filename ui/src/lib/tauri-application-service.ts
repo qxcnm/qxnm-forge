@@ -4,6 +4,8 @@ import { z } from "zod";
 import type {
   ApprovalDecision,
   ApplicationServiceClient,
+  ArtifactCreateInput,
+  ArtifactCreateResult,
   BackendKind,
   InitializeResult,
   ModelDescriptor,
@@ -12,6 +14,7 @@ import type {
   ProviderConnectionDeleteResult,
   ProviderConnectionInput,
   ProviderConnectionMutationResult,
+  ProviderCredentialKind,
   ProviderCredentialStatus,
   ProviderModelDiscoveryResult,
   RunStartInput,
@@ -142,8 +145,10 @@ const providerConnectionInputSchema = z
     displayName: z.string().min(1).max(64),
     providerId: z.string().max(128).regex(PROVIDER_ID_PATTERN),
     baseUrl: z.string().min(1).max(2_048).refine(isSafeProviderBaseUrl),
-    apiFamily: z.literal("openai-completions"),
+    modelsUrl: z.string().min(1).max(2_048).refine(isSafeProviderBaseUrl),
+    apiFamily: z.enum(["openai-responses", "openai-completions"]),
     modelIds: z.array(z.string().min(1).max(256)).max(512).refine(hasUniqueValues),
+    supportsTools: z.boolean(),
     logoAssetId: z.string().min(1).max(128).regex(PROVIDER_ID_PATTERN).nullable(),
     enabled: z.boolean(),
   })
@@ -169,6 +174,7 @@ const providerConnectionSchema = providerConnectionInputSchema
     connectionId: z.string().max(128).regex(OPAQUE_ID_PATTERN),
     revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     credentialConfigured: z.boolean(),
+    imageCredentialConfigured: z.boolean(),
     createdAt: z.iso.datetime({ offset: false }),
     updatedAt: z.iso.datetime({ offset: false }),
   })
@@ -194,6 +200,7 @@ const providerModelDiscoveryResultSchema = z
 const providerCredentialStatusSchema = z
   .object({
     providerId: z.string().max(128).regex(PROVIDER_ID_PATTERN),
+    credentialKind: z.enum(["responses", "image"]),
     credentialConfigured: z.boolean(),
     restartRequired: z.literal(true),
   })
@@ -222,6 +229,20 @@ const artifactReferenceSchema = z
     displayName: z.string().min(1).max(256).optional(),
     ...optionalExtensions,
   })
+  .strict();
+const artifactCreateInputSchema = z
+  .object({
+    sessionId: opaqueIdSchema,
+    mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+    dataBase64: z
+      .string()
+      .min(4)
+      .max(699_052)
+      .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+  })
+  .strict();
+const artifactCreateResultSchema = z
+  .object({ artifact: artifactReferenceSchema })
   .strict();
 const textContentSchema = z
   .object({ type: z.literal("text"), text: z.string(), ...optionalExtensions })
@@ -821,13 +842,26 @@ export class TauriApplicationServiceClient implements ApplicationServiceClient {
    */
   public async startRun(input: RunStartInput): Promise<RunStartResult> {
     const prompt = input.prompt.trim();
-    if (prompt.length === 0) {
-      throw new Error("prompt must not be empty");
+    const attachments = input.attachments ?? [];
+    const content = [
+      ...(prompt.length > 0 ? [{ type: "text" as const, text: prompt }] : []),
+      ...attachments.map((attachment) =>
+        attachment.type === "text"
+          ? { type: "text" as const, text: attachment.text }
+          : {
+              type: "image_ref" as const,
+              artifact: artifactReferenceSchema.parse(attachment.artifact),
+              ...(attachment.alt ? { alt: attachment.alt } : {}),
+            },
+      ),
+    ];
+    if (content.length === 0 || !content.some((item) => item.type !== "text" || item.text.length > 0)) {
+      throw new Error("run input must not be empty");
     }
     const result = runStartResultSchema.parse(
       await this.#request("run/start", {
         sessionId: input.sessionId,
-        input: { role: "user", content: [{ type: "text", text: prompt }] },
+        input: { role: "user", content },
         provider: {
           id: input.model.providerId,
           modelId: input.model.modelId,
@@ -837,6 +871,19 @@ export class TauriApplicationServiceClient implements ApplicationServiceClient {
       }),
     );
     return result;
+  }
+
+  /**
+   * durable 发布同 Session 输入图片，并严格拒绝响应中的字节、路径或未知字段。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public async createArtifact(input: ArtifactCreateInput): Promise<ArtifactCreateResult> {
+    const parameters = artifactCreateInputSchema.parse(input);
+    return artifactCreateResultSchema.parse(
+      await this.#request("artifacts/create", parameters),
+    );
   }
 
   /**
@@ -993,16 +1040,22 @@ export class TauriApplicationServiceClient implements ApplicationServiceClient {
    */
   public async setProviderCredential(
     providerId: string,
+    credentialKind: ProviderCredentialKind,
     credential: string,
   ): Promise<ProviderCredentialStatus> {
     const validatedCredential = z.string().min(1).max(16_384).parse(credential);
-    return providerCredentialStatusSchema.parse(
+    const status = providerCredentialStatusSchema.parse(
       await invoke<unknown>("provider_credential_set", {
         backend: this.#backend,
         providerId,
+        credentialKind,
         credential: validatedCredential,
       }),
     );
+    if (status.credentialKind !== credentialKind || !status.credentialConfigured) {
+      throw new Error("Provider credential write was not confirmed");
+    }
+    return status;
   }
 
   /**
@@ -1013,14 +1066,16 @@ export class TauriApplicationServiceClient implements ApplicationServiceClient {
    */
   public async removeProviderCredential(
     providerId: string,
+    credentialKind: ProviderCredentialKind,
   ): Promise<ProviderCredentialStatus> {
     const credential = providerCredentialStatusSchema.parse(
       await invoke<unknown>("provider_credential_remove", {
         backend: this.#backend,
         providerId,
+        credentialKind,
       }),
     );
-    if (credential.credentialConfigured) {
+    if (credential.credentialKind !== credentialKind || credential.credentialConfigured) {
       throw new Error("Provider credential removal was not confirmed");
     }
     return credential;

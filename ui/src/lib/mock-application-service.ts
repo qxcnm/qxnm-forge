@@ -1,6 +1,8 @@
 import type {
   ApprovalDecision,
   ApplicationServiceClient,
+  ArtifactCreateInput,
+  ArtifactCreateResult,
   BackendKind,
   InitializeResult,
   ModelDescriptor,
@@ -9,6 +11,7 @@ import type {
   ProviderConnectionDeleteResult,
   ProviderConnectionInput,
   ProviderConnectionMutationResult,
+  ProviderCredentialKind,
   ProviderCredentialStatus,
   ProviderModelDiscoveryResult,
   RunStartInput,
@@ -32,6 +35,7 @@ import { TauriApplicationServiceClient } from "@/lib/tauri-application-service";
 const SHARED_METHODS = [
   "initialize",
   "models/list",
+  "artifacts/create",
   "run/start",
   "run/cancel",
   "approval/respond",
@@ -357,7 +361,7 @@ function createMockModelSnapshot(state: MockServiceState): readonly ModelDescrip
         apiFamily: connection.apiFamily,
         displayName: modelId,
         supportsReasoning: false,
-        supportsTools: false,
+        supportsTools: connection.supportsTools,
       });
     }
   }
@@ -393,8 +397,10 @@ function normalizeProviderInput(input: ProviderConnectionInput): ProviderConnect
   const apiFamily = input.apiFamily;
   const modelIds = [...new Set(input.modelIds.map((modelId) => modelId.trim()).filter(Boolean))];
   let baseUrl: URL;
+  let modelsUrl: URL;
   try {
     baseUrl = new URL(input.baseUrl.trim());
+    modelsUrl = new URL(input.modelsUrl.trim());
   } catch {
     throw new Error("Provider URL 无效");
   }
@@ -404,13 +410,18 @@ function normalizeProviderInput(input: ProviderConnectionInput): ProviderConnect
     !/^[a-z0-9][a-z0-9.-]*$/.test(providerId) ||
     RESERVED_PROVIDER_IDS.has(providerId) ||
     providerId.startsWith("relay-") ||
-    apiFamily !== "openai-completions" ||
+    (apiFamily !== "openai-responses" && apiFamily !== "openai-completions") ||
     modelIds.length > 512 ||
     baseUrl.protocol !== "https:" ||
     baseUrl.username !== "" ||
     baseUrl.password !== "" ||
     baseUrl.search !== "" ||
     baseUrl.hash !== "" ||
+    modelsUrl.protocol !== "https:" ||
+    modelsUrl.username !== "" ||
+    modelsUrl.password !== "" ||
+    modelsUrl.search !== "" ||
+    modelsUrl.hash !== "" ||
     (input.logoAssetId !== null &&
       input.logoAssetId.trim() !== "" &&
       !/^[a-z0-9][a-z0-9.-]*$/.test(input.logoAssetId.trim()))
@@ -421,8 +432,10 @@ function normalizeProviderInput(input: ProviderConnectionInput): ProviderConnect
     displayName,
     providerId,
     baseUrl: baseUrl.toString().replace(/\/$/, ""),
+    modelsUrl: modelsUrl.toString().replace(/\/$/, ""),
     apiFamily,
     modelIds,
+    supportsTools: input.supportsTools,
     logoAssetId: input.logoAssetId?.trim() || null,
     enabled: input.enabled,
   };
@@ -574,8 +587,13 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
    * 邮箱：18272669457@163.com
    */
   public async startRun(input: RunStartInput): Promise<RunStartResult> {
-    if (input.prompt.trim().length === 0) {
-      throw new Error("prompt must not be empty");
+    if (
+      input.prompt.trim().length === 0 &&
+      !(input.attachments ?? []).some(
+        (attachment) => attachment.type === "image_ref" || attachment.text.length > 0,
+      )
+    ) {
+      throw new Error("run input must not be empty");
     }
     if (
       !createMockModelSnapshot(this.#state).some(
@@ -588,6 +606,42 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
     await wait(760);
     return {
       runId: crypto.randomUUID(),
+    };
+  }
+
+  /**
+   * 在 faux 预览中验证图片边界并返回不保留正文的临时 artifact 引用。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public async createArtifact(input: ArtifactCreateInput): Promise<ArtifactCreateResult> {
+    let bytes: Uint8Array;
+    try {
+      const binary = atob(input.dataBase64);
+      bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    } catch {
+      throw new Error("artifact image data is invalid");
+    }
+    if (
+      !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(input.mediaType) ||
+      bytes.length === 0 ||
+      bytes.length > 524_288
+    ) {
+      throw new Error("artifact image data is invalid");
+    }
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const sha256 = [...digest]
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+    await wait(30);
+    return {
+      artifact: {
+        artifactId: `artifact-${crypto.randomUUID()}`,
+        mediaType: input.mediaType,
+        byteLength: bytes.length,
+        sha256,
+      },
     };
   }
 
@@ -728,6 +782,7 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
       connectionId: crypto.randomUUID(),
       revision: 1,
       credentialConfigured: false,
+      imageCredentialConfigured: false,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -766,6 +821,7 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
       connectionId,
       revision: current.revision + 1,
       credentialConfigured: current.credentialConfigured,
+      imageCredentialConfigured: current.imageCredentialConfigured,
       createdAt: current.createdAt,
       updatedAt: new Date().toISOString(),
     };
@@ -823,6 +879,7 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
    */
   public async setProviderCredential(
     providerId: string,
+    credentialKind: ProviderCredentialKind,
     credential: string,
   ): Promise<ProviderCredentialStatus> {
     const connection = [...this.#state.providerConnections.values()].find(
@@ -833,10 +890,12 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
     }
     this.#state.providerConnections.set(connection.connectionId, {
       ...connection,
-      credentialConfigured: true,
+      ...(credentialKind === "responses"
+        ? { credentialConfigured: true }
+        : { imageCredentialConfigured: true }),
     });
     await wait(40);
-    return { providerId, credentialConfigured: true, restartRequired: true };
+    return { providerId, credentialKind, credentialConfigured: true, restartRequired: true };
   }
 
   /**
@@ -847,6 +906,7 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
    */
   public async removeProviderCredential(
     providerId: string,
+    credentialKind: ProviderCredentialKind,
   ): Promise<ProviderCredentialStatus> {
     const connection = [...this.#state.providerConnections.values()].find(
       (candidate) => candidate.providerId === providerId,
@@ -856,10 +916,12 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
     }
     this.#state.providerConnections.set(connection.connectionId, {
       ...connection,
-      credentialConfigured: false,
+      ...(credentialKind === "responses"
+        ? { credentialConfigured: false }
+        : { imageCredentialConfigured: false }),
     });
     await wait(40);
-    return { providerId, credentialConfigured: false, restartRequired: true };
+    return { providerId, credentialKind, credentialConfigured: false, restartRequired: true };
   }
 
   /**

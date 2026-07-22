@@ -12,16 +12,16 @@ using QxnmForge.Serialization;
 namespace QxnmForge.Session;
 
 /// <summary>
-/// 功能：保存 PI Session v3 一次性导入所需的调用方授权路径与运行模式。
+/// 功能：保存 第三方 Session v3 一次性导入所需的调用方授权路径与运行模式。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
-/// <param name="SourcePath">只读 PI v3 JSONL 源文件。</param>
+/// <param name="SourcePath">只读 第三方 Session v3 JSONL 源文件。</param>
 /// <param name="Workspace">已存在的规范工作区。</param>
 /// <param name="StateDirectory">调用方授权的本地状态根目录。</param>
 /// <param name="SessionId">可选的新 Session ID；不得等于源 ID 或已存在。</param>
 /// <param name="Conformance">是否启用固定合成夹具的确定性 ID 与字节。</param>
-public sealed record PiV3ImportOptions(
+public sealed record LegacySessionV3ImportOptions(
     string SourcePath,
     string Workspace,
     string StateDirectory,
@@ -36,14 +36,14 @@ public sealed record PiV3ImportOptions(
 /// <param name="Status">报告中的 completed 或 completed_with_warnings。</param>
 /// <param name="SessionId">新建的 portable Session ID。</param>
 /// <param name="ReportArtifactId">强绑定到 header 的导入报告 artifact ID。</param>
-public sealed record PiV3ImportResult(string Status, string SessionId, string ReportArtifactId);
+public sealed record LegacySessionV3ImportResult(string Status, string SessionId, string ReportArtifactId);
 
 /// <summary>
-/// 功能：表示 PI v3 源、映射、隐私或原子发布不满足 clean-room 契约。
+/// 功能：表示 第三方 Session v3 源、映射、隐私或原子发布不满足 clean-room 契约。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
-public sealed class PiV3ImportException : Exception
+public sealed class LegacySessionV3ImportException : Exception
 {
     /// <summary>
     /// 功能：用稳定错误类别和 portable 退出码创建不回显源内容的导入异常。
@@ -52,7 +52,7 @@ public sealed class PiV3ImportException : Exception
     /// </summary>
     /// <param name="kind">不含实例值、路径或 secret 的稳定错误类别。</param>
     /// <param name="exitCode">CLI portable 退出码。</param>
-    public PiV3ImportException(string kind, int exitCode)
+    public LegacySessionV3ImportException(string kind, int exitCode)
         : base(kind)
     {
         Kind = kind;
@@ -75,11 +75,11 @@ public sealed class PiV3ImportException : Exception
 }
 
 /// <summary>
-/// 功能：独立使用 .NET 解析、映射并原子发布 PI Session v3 clean-room 导入结果。
+/// 功能：独立使用 .NET 解析、映射并原子发布 第三方 Session v3 clean-room 导入结果。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
-public static partial class PiV3Importer
+public static partial class LegacySessionV3Importer
 {
     private const int MaxSourceBytes = 16_777_216;
     private const int MaxLineBytes = 1_048_576;
@@ -136,17 +136,17 @@ public static partial class PiV3Importer
     ];
 
     /// <summary>
-    /// 功能：严格读取 PI v3、生成 portable journal/report 并以不覆盖方式发布新 Session。
+    /// 功能：严格读取 第三方 Session v3、生成 portable journal/report 并以不覆盖方式发布新 Session。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="options">调用方显式选择的源、工作区、状态根、目标 ID 与 conformance 模式。</param>
     /// <param name="cancellationToken">读取、持久化与发布前检查的取消信号。</param>
     /// <returns>目标 durable 发布后才返回的安全成功摘要。</returns>
-    /// <remarks>不变量：不执行 PI、工具或 Provider；不修改源；artifact 先于 journal 写入；目标从不覆盖。</remarks>
-    /// <exception cref="PiV3ImportException">源不兼容、隐私边界失败、目标已存在或持久化失败。</exception>
-    public static async Task<PiV3ImportResult> ImportAsync(
-        PiV3ImportOptions options,
+    /// <remarks>不变量：不执行第三方 runtime、工具或 Provider；不修改源；artifact 先于 journal 写入；目标从不覆盖。</remarks>
+    /// <exception cref="LegacySessionV3ImportException">源不兼容、隐私边界失败、目标已存在或持久化失败。</exception>
+    public static async Task<LegacySessionV3ImportResult> ImportAsync(
+        LegacySessionV3ImportOptions options,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -206,7 +206,7 @@ public static partial class PiV3Importer
             journalBytes,
             source,
             cancellationToken).ConfigureAwait(false);
-        return new PiV3ImportResult(
+        return new LegacySessionV3ImportResult(
             context.Warnings.Count == 0 ? "completed" : "completed_with_warnings",
             sessionId,
             artifactId);
@@ -219,7 +219,7 @@ public static partial class PiV3Importer
     /// </summary>
     /// <param name="workspace">调用方选择的工作区。</param>
     /// <returns>规范绝对路径。</returns>
-    /// <exception cref="PiV3ImportException">路径缺失、不是目录或叶节点是链接。</exception>
+    /// <exception cref="LegacySessionV3ImportException">路径缺失、不是目录或叶节点是链接。</exception>
     private static string ValidateWorkspace(string workspace)
     {
         try
@@ -234,7 +234,7 @@ public static partial class PiV3Importer
 
             return path;
         }
-        catch (PiV3ImportException)
+        catch (LegacySessionV3ImportException)
         {
             throw;
         }
@@ -251,7 +251,7 @@ public static partial class PiV3Importer
     /// </summary>
     /// <param name="stateDirectory">显式 --state-dir 值。</param>
     /// <returns>规范绝对路径。</returns>
-    /// <exception cref="PiV3ImportException">状态根不能安全创建或不是普通目录。</exception>
+    /// <exception cref="LegacySessionV3ImportException">状态根不能安全创建或不是普通目录。</exception>
     private static string ValidateStateDirectory(string stateDirectory)
     {
         try
@@ -267,7 +267,7 @@ public static partial class PiV3Importer
 
             return path;
         }
-        catch (PiV3ImportException)
+        catch (LegacySessionV3ImportException)
         {
             throw;
         }
@@ -278,13 +278,13 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：按严格 UTF-8、LF、大小、深度、重复键和 earlier-parent 规则解析完整 PI v3 源。
+    /// 功能：按严格 UTF-8、LF、大小、深度、重复键和 earlier-parent 规则解析完整 第三方 Session v3 源。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="bytes">由持续打开的只读句柄取得的完整源字节。</param>
     /// <returns>克隆后的 header 与逐行 entry 证据。</returns>
-    /// <exception cref="PiV3ImportException">任意 framing、JSON、header、tree 或 known-entry 约束失败。</exception>
+    /// <exception cref="LegacySessionV3ImportException">任意 framing、JSON、header、tree 或 known-entry 约束失败。</exception>
     private static ParsedSource ParseSource(byte[] bytes)
     {
         if (bytes.Length is <= 0 or > MaxSourceBytes ||
@@ -405,7 +405,7 @@ public static partial class PiV3Importer
     /// </summary>
     /// <param name="line">不含 LF 的单行 UTF-8 JSON。</param>
     /// <returns>脱离 JsonDocument 生命周期的对象克隆。</returns>
-    /// <exception cref="PiV3ImportException">UTF-8、语法、深度、重复键或顶层类型无效。</exception>
+    /// <exception cref="LegacySessionV3ImportException">UTF-8、语法、深度、重复键或顶层类型无效。</exception>
     private static JsonElement ParseStrictObject(ReadOnlyMemory<byte> line)
     {
         try
@@ -426,7 +426,7 @@ public static partial class PiV3Importer
 
             return document.RootElement.Clone();
         }
-        catch (PiV3ImportException)
+        catch (LegacySessionV3ImportException)
         {
             throw;
         }
@@ -443,7 +443,7 @@ public static partial class PiV3Importer
     /// </summary>
     /// <param name="json">单个 JSON 文档原始字节。</param>
     /// <remarks>不变量：数组层使用空哨兵；最多接受公共契约规定的 64 层。</remarks>
-    /// <exception cref="PiV3ImportException">发现同一对象内重复属性。</exception>
+    /// <exception cref="LegacySessionV3ImportException">发现同一对象内重复属性。</exception>
     private static void ValidateNoDuplicateKeys(ReadOnlySpan<byte> json)
     {
         var reader = new Utf8JsonReader(
@@ -481,14 +481,14 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：验证已知 PI entry 的必要字段、类型、引用和 compaction 祖先边界。
+    /// 功能：验证已知 第三方格式 entry 的必要字段、类型、引用和 compaction 祖先边界。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="value">已通过 base/tree 验证的 entry。</param>
     /// <param name="entryType">已验证类型。</param>
     /// <param name="prior">只含更早 entry 的索引。</param>
-    /// <exception cref="PiV3ImportException">已知 entry 畸形或引用无效。</exception>
+    /// <exception cref="LegacySessionV3ImportException">已知 entry 畸形或引用无效。</exception>
     private static void ValidateKnownEntry(
         JsonElement value,
         string entryType,
@@ -597,7 +597,7 @@ public static partial class PiV3Importer
     /// </summary>
     /// <param name="context">当前目标记录、模型状态、映射和报告上下文。</param>
     /// <param name="entry">严格验证后的源 entry。</param>
-    /// <exception cref="PiV3ImportException">父映射缺失或已知内容不能安全转换。</exception>
+    /// <exception cref="LegacySessionV3ImportException">父映射缺失或已知内容不能安全转换。</exception>
     private static void MapEntry(ImportContext context, SourceEntry entry)
     {
         string? mappedParent = null;
@@ -766,7 +766,7 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：映射 PI model_change 并更新随后 compaction 使用的模型状态。
+    /// 功能：映射 第三方格式 model_change 并更新随后 compaction 使用的模型状态。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -819,7 +819,7 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：把 PI compaction 展开为零 usage assistant summary 和 durable context.compacted pair。
+    /// 功能：把 第三方格式 compaction 展开为零 usage assistant summary 和 durable context.compacted pair。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -910,7 +910,7 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：按冻结 wrapper 把 PI branch summary 映射为用户文本，并隔离可选 details/fromHook。
+    /// 功能：按冻结 wrapper 把 第三方格式 branch summary 映射为用户文本，并隔离可选 details/fromHook。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -1073,7 +1073,7 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：创建统一 context-free PI provenance extension，并生成逐行损失报告。
+    /// 功能：创建统一 context-free 第三方格式 provenance extension，并生成逐行损失报告。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -1124,7 +1124,7 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：把 PI 文本、thinking 和有效 toolCall block 映射为 portable content，并报告其余 block。
+    /// 功能：把 第三方格式 文本、thinking 和有效 toolCall block 映射为 portable content，并报告其余 block。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -1207,7 +1207,7 @@ public static partial class PiV3Importer
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="context">导入上下文。</param>
-    /// <param name="source">PI toolCall block。</param>
+    /// <param name="source">第三方格式 toolCall block。</param>
     /// <param name="reasons">脱敏或损失原因集合。</param>
     /// <param name="target">成功时的 portable tool_call。</param>
     /// <returns>ID、名称和对象参数均有效时为 true。</returns>
@@ -1237,13 +1237,13 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：按 ADR 0012 把 PI usage 聚合 cache token、验证 total 并归一 USD cost。
+    /// 功能：按 ADR 0012 把 第三方格式 usage 聚合 cache token、验证 total 并归一 USD cost。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="message">assistant source message。</param>
     /// <returns>满足 portable usage Schema 的对象。</returns>
-    /// <exception cref="PiV3ImportException">token、总和或 cost 非法。</exception>
+    /// <exception cref="LegacySessionV3ImportException">token、总和或 cost 非法。</exception>
     private static JsonObject MapUsage(JsonElement message)
     {
         var usage = RequireObject(message, "usage");
@@ -1298,11 +1298,11 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：把 PI stopReason 映射为 portable finishReason 并拒绝未知值。
+    /// 功能：把 第三方格式 stopReason 映射为 portable finishReason 并拒绝未知值。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
-    /// <param name="reason">PI stop reason。</param>
+    /// <param name="reason">第三方格式 stop reason。</param>
     /// <returns>portable spelling。</returns>
     private static string MapFinishReason(string reason)
     {
@@ -1490,6 +1490,7 @@ public static partial class PiV3Importer
             ["mediaType"] = ReportMediaType,
             ["byteLength"] = byteLength,
             ["sha256"] = sha256,
+            // 冻结的 portable displayName；保留旧值以避免既有 journal 与 conformance fixture 迁移。
             ["displayName"] = "PI Session v3 import report",
         };
         AddRecord(
@@ -1552,7 +1553,7 @@ public static partial class PiV3Importer
     /// <param name="journalBytes">待发布 journal。</param>
     /// <param name="reportBytes">待发布 report。</param>
     /// <param name="reportHash">调用方计算的 report SHA-256。</param>
-    /// <exception cref="PiV3ImportException">任何生成不变量失败。</exception>
+    /// <exception cref="LegacySessionV3ImportException">任何生成不变量失败。</exception>
     private static void ValidateGeneratedJournal(
         ImportContext context,
         byte[] journalBytes,
@@ -1648,7 +1649,7 @@ public static partial class PiV3Importer
             Directory.Move(temporary, target);
             published = true;
         }
-        catch (PiV3ImportException)
+        catch (LegacySessionV3ImportException)
         {
             throw;
         }
@@ -1936,7 +1937,7 @@ public static partial class PiV3Importer
     }
 
     /// <summary>
-    /// 功能：创建 PI source entry 的标准 top-level provenance extension。
+    /// 功能：创建 第三方格式 source entry 的标准 top-level provenance extension。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -2356,9 +2357,9 @@ public static partial class PiV3Importer
     /// </summary>
     /// <param name="kind">稳定安全类别。</param>
     /// <returns>导入异常。</returns>
-    private static PiV3ImportException InvalidSource(string kind)
+    private static LegacySessionV3ImportException InvalidSource(string kind)
     {
-        return new PiV3ImportException(kind, 7);
+        return new LegacySessionV3ImportException(kind, 7);
     }
 
     /// <summary>
@@ -2368,9 +2369,9 @@ public static partial class PiV3Importer
     /// </summary>
     /// <param name="kind">稳定安全类别。</param>
     /// <returns>导入异常。</returns>
-    private static PiV3ImportException InvalidUsage(string kind)
+    private static LegacySessionV3ImportException InvalidUsage(string kind)
     {
-        return new PiV3ImportException(kind, 2);
+        return new LegacySessionV3ImportException(kind, 2);
     }
 
     /// <summary>
@@ -2380,9 +2381,9 @@ public static partial class PiV3Importer
     /// </summary>
     /// <param name="kind">稳定安全类别。</param>
     /// <returns>导入异常。</returns>
-    private static PiV3ImportException PublishFailure(string kind)
+    private static LegacySessionV3ImportException PublishFailure(string kind)
     {
-        return new PiV3ImportException(kind, 8);
+        return new LegacySessionV3ImportException(kind, 8);
     }
 
     /// <summary>
@@ -2451,7 +2452,7 @@ public static partial class PiV3Importer
     private static partial Regex ToolNamePattern();
 
     /// <summary>
-    /// 功能：取得可进入报告的 PI source type 编译期正则。
+    /// 功能：取得可进入报告的 第三方格式 source type 编译期正则。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -2460,7 +2461,7 @@ public static partial class PiV3Importer
     private static partial Regex SourceTypePattern();
 
     /// <summary>
-    /// 功能：保存严格 PI source 的 header 与按文件顺序排列的 entry。
+    /// 功能：保存严格 第三方格式 source 的 header 与按文件顺序排列的 entry。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -2469,7 +2470,7 @@ public static partial class PiV3Importer
     private sealed record ParsedSource(JsonElement Header, IReadOnlyList<SourceEntry> Entries);
 
     /// <summary>
-    /// 功能：保存一条严格 PI entry 的来源、tree 与逐行字节证据。
+    /// 功能：保存一条严格 第三方格式 entry 的来源、tree 与逐行字节证据。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -2519,7 +2520,7 @@ public static partial class PiV3Importer
         /// 邮箱：18272669457@163.com
         /// </summary>
         /// <param name="sessionId">新目标 Session ID。</param>
-        /// <param name="sourceSessionId">PI header ID。</param>
+        /// <param name="sourceSessionId">第三方格式 header ID。</param>
         /// <param name="sourceSha256">完整源字节 hash。</param>
         /// <param name="sourceByteLength">完整源长度。</param>
         /// <param name="workspace">portable workspace 或 conformance placeholder。</param>
@@ -2747,7 +2748,7 @@ public static partial class PiV3Importer
                 stream = null;
                 return result;
             }
-            catch (PiV3ImportException)
+            catch (LegacySessionV3ImportException)
             {
                 throw;
             }

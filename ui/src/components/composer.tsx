@@ -1,4 +1,4 @@
-import type { FormEvent, KeyboardEvent } from "react";
+import { useRef, useState, type ChangeEvent, type ClipboardEvent, type FormEvent, type KeyboardEvent } from "react";
 import {
   ArrowUp,
   Bot,
@@ -8,6 +8,7 @@ import {
   Paperclip,
   RefreshCw,
   Server,
+  X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -34,6 +35,24 @@ export type ComposerModelLoadState =
   | "unsupported"
   | "ready";
 
+export type ComposerAttachment =
+  | {
+      readonly id: string;
+      readonly kind: "image";
+      readonly name: string;
+      readonly mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+      readonly byteLength: number;
+      readonly dataBase64: string;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "text";
+      readonly name: string;
+      readonly mediaType: string;
+      readonly byteLength: number;
+      readonly text: string;
+    };
+
 interface ComposerProps {
   readonly value: string;
   readonly selectedModelRouteKey: string;
@@ -44,10 +63,13 @@ interface ComposerProps {
   readonly runtimeEnvironment?: RuntimeEnvironment;
   readonly submitMode: ComposerSubmitMode;
   readonly busy: boolean;
+  readonly attachments: readonly ComposerAttachment[];
+  readonly submissionError?: string | null;
   readonly onValueChange: (value: string) => void;
   readonly onModelChange: (modelRouteKey: string) => void;
   readonly onRetryModels: () => void;
   readonly onAgentChange: (profileId: string | null) => void;
+  readonly onAttachmentsChange: (attachments: readonly ComposerAttachment[]) => void;
   readonly onSubmit: () => void;
 }
 
@@ -67,13 +89,18 @@ export function Composer({
   runtimeEnvironment,
   submitMode,
   busy,
+  attachments,
+  submissionError,
   onValueChange,
   onModelChange,
   onRetryModels,
   onAgentChange,
+  onAttachmentsChange,
   onSubmit,
 }: ComposerProps) {
   const { t } = useTranslation();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const selectedAgent = agentProfiles.find(
     (profile) => profile.profileId === selectedAgentProfileId,
   );
@@ -93,7 +120,7 @@ export function Composer({
    */
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!busy && value.trim().length > 0) {
+    if (!busy && (value.trim().length > 0 || attachments.length > 0)) {
       onSubmit();
     }
   };
@@ -112,10 +139,101 @@ export function Composer({
         : (event.metaKey || event.ctrlKey) && !event.shiftKey);
     if (shouldSubmit) {
       event.preventDefault();
-      if (!busy && value.trim().length > 0) {
+      if (!busy && (value.trim().length > 0 || attachments.length > 0)) {
         onSubmit();
       }
     }
+  };
+
+  /**
+   * 读取文件选择或剪贴板附件，严格限制类型、数量、大小与 UTF-8 文本。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  const addFiles = async (files: readonly File[]) => {
+    setAttachmentError(null);
+    if (attachments.length + files.length > 8) {
+      setAttachmentError(t("composer.attachmentTooMany"));
+      return;
+    }
+    const added: ComposerAttachment[] = [];
+    try {
+      for (const file of files) {
+        const buffer = await file.arrayBuffer();
+        if (["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
+          if (buffer.byteLength === 0 || buffer.byteLength > 524_288) {
+            throw new Error("too-large");
+          }
+          const bytes = new Uint8Array(buffer);
+          let binary = "";
+          for (let offset = 0; offset < bytes.length; offset += 8_192) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + 8_192));
+          }
+          added.push({
+            id: crypto.randomUUID(),
+            kind: "image",
+            name: file.name || t("composer.pastedImage"),
+            mediaType: file.type as "image/png" | "image/jpeg" | "image/webp" | "image/gif",
+            byteLength: bytes.length,
+            dataBase64: btoa(binary),
+          });
+          continue;
+        }
+        const isText = file.type.startsWith("text/") ||
+          /\.(?:txt|md|markdown|json|jsonl|csv|tsv|xml|ya?ml|toml|log|rs|cs|ts|tsx|js|jsx|css|html|sql)$/i.test(file.name);
+        if (!isText) {
+          throw new Error("unsupported");
+        }
+        if (buffer.byteLength === 0 || buffer.byteLength > 262_144) {
+          throw new Error("too-large");
+        }
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+        if (text.includes("\0")) {
+          throw new Error("unsupported");
+        }
+        added.push({
+          id: crypto.randomUUID(),
+          kind: "text",
+          name: file.name || t("composer.pastedFile"),
+          mediaType: file.type || "text/plain",
+          byteLength: buffer.byteLength,
+          text,
+        });
+      }
+      onAttachmentsChange([...attachments, ...added]);
+    } catch (error) {
+      setAttachmentError(
+        error instanceof Error && error.message === "too-large"
+          ? t("composer.attachmentTooLarge")
+          : t("composer.attachmentUnsupported"),
+      );
+    }
+  };
+
+  /**
+   * 优先消费剪贴板文件项；纯文本粘贴继续交给 Textarea 默认行为。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...event.clipboardData.files];
+    if (files.length > 0) {
+      event.preventDefault();
+      void addFiles(files);
+    }
+  };
+
+  /**
+   * 消费隐藏文件输入并允许再次选择同一文件。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  const handleFileSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    void addFiles([...(event.currentTarget.files ?? [])]);
+    event.currentTarget.value = "";
   };
 
   return (
@@ -124,10 +242,29 @@ export function Composer({
         onSubmit={handleSubmit}
         className="mx-auto w-full max-w-[760px] rounded-2xl border bg-background p-2 shadow-sm focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/20"
       >
+        {attachments.length > 0 ? (
+          <div className="flex flex-wrap gap-1 px-1 pb-2">
+            {attachments.map((attachment) => (
+              <span key={attachment.id} className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-[10px] text-foreground/75">
+                <span className="max-w-48 truncate">{attachment.name}</span>
+                <span className="text-muted-foreground">{Math.ceil(attachment.byteLength / 1024)} KB</span>
+                <button
+                  type="button"
+                  className="rounded text-muted-foreground hover:text-foreground"
+                  onClick={() => onAttachmentsChange(attachments.filter((item) => item.id !== attachment.id))}
+                  aria-label={t("composer.removeAttachment", { name: attachment.name })}
+                >
+                  <X className="size-3" aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <Textarea
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder={t("composer.placeholder")}
           aria-label={t("composer.messageLabel")}
           className="min-h-[54px] resize-none border-0 px-2 py-1 text-[13px] leading-5 shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
@@ -141,7 +278,8 @@ export function Composer({
                 variant="ghost"
                 size="icon"
                 className="size-8 rounded-full text-muted-foreground"
-                disabled
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy}
                 aria-label={t("composer.addAttachment")}
               >
                 <Paperclip className="size-4" aria-hidden="true" />
@@ -149,6 +287,15 @@ export function Composer({
             </TooltipTrigger>
             <TooltipContent>{t("composer.addAttachment")}</TooltipContent>
           </Tooltip>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            accept="image/png,image/jpeg,image/webp,image/gif,text/*,.md,.markdown,.json,.jsonl,.csv,.tsv,.xml,.yaml,.yml,.toml,.log,.rs,.cs,.ts,.tsx,.js,.jsx,.css,.html,.sql"
+            onChange={handleFileSelection}
+            aria-label={t("composer.attachmentInput")}
+          />
 
           <Select
             value={selectedAgentProfileId ?? "__default__"}
@@ -221,7 +368,7 @@ export function Composer({
             type="submit"
             size="icon"
             className="size-8 rounded-full bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
-            disabled={busy || value.trim().length === 0 || modelLoadState !== "ready"}
+            disabled={busy || (value.trim().length === 0 && attachments.length === 0) || modelLoadState !== "ready"}
             aria-label={busy ? t("composer.submitting") : t("composer.send")}
           >
             {busy ? (
@@ -232,6 +379,12 @@ export function Composer({
           </Button>
         </div>
       </form>
+
+      {attachmentError || submissionError ? (
+        <p className="mx-auto mt-1 w-full max-w-[760px] px-2 text-[10px] text-red-600" role="alert">
+          {attachmentError ?? submissionError}
+        </p>
+      ) : null}
 
       <div className="mx-auto mt-1.5 flex h-7 w-full max-w-[760px] items-center gap-2 overflow-hidden px-1 text-[10px] text-muted-foreground">
         <BackendSwitcher compact />

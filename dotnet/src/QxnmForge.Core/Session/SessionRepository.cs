@@ -340,6 +340,49 @@ public sealed class SessionRepository : IAsyncDisposable
     }
 
     /// <summary>
+    /// 功能：在静止 Session 中 durable 发布客户端输入图片及其 artifact.created 记录。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionId">opaque Session ID；不存在时先创建 portable journal。</param>
+    /// <param name="mediaType">PNG、JPEG、WebP 或 GIF 的规范 MIME。</param>
+    /// <param name="bytes">已由协议边界严格解码且不超过 512 KiB 的完整图片。</param>
+    /// <param name="cancellationToken">打开、发布和 journal flush 取消信号。</param>
+    /// <returns>文件与 artifact.created 均 durable 后的不含路径引用。</returns>
+    /// <remarks>不变量：与 run 接受共享 StateGate；活动 Session 拒绝发布；append 失败留下的未引用文件可安全回收。</remarks>
+    /// <exception cref="SessionMutationException">Session 生命周期变更或正在运行。</exception>
+    /// <exception cref="ArtifactValidationException">MIME、大小或魔数无效。</exception>
+    /// <exception cref="IOException">文件或 journal durable 发布失败。</exception>
+    internal async Task<ArtifactReference> PublishInputImageAsync(
+        string sessionId,
+        string mediaType,
+        ReadOnlyMemory<byte> bytes,
+        CancellationToken cancellationToken = default)
+    {
+        using var runtimeUse = await AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: true,
+            cancellationToken).ConfigureAwait(false);
+        var runtime = runtimeUse.Runtime;
+        if (runtime.ActiveRun is not null)
+        {
+            throw new SessionMutationException(-32004, true, "session_busy");
+        }
+
+        var artifact = await SessionArtifactStore.PublishImageAsync(
+            runtime.Journal.DirectoryPath,
+            mediaType,
+            bytes,
+            524_288,
+            cancellationToken).ConfigureAwait(false);
+        await runtime.Journal.AppendAsync(
+            "artifact.created",
+            new { Artifact = artifact },
+            cancellationToken).ConfigureAwait(false);
+        return artifact;
+    }
+
+    /// <summary>
     /// 功能：取得 session/get 使用的一致 durable 投影，并按事件序号应用 afterSeq 过滤。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com

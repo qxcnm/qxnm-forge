@@ -128,7 +128,7 @@ impl Provider for AzureOpenAiResponsesProvider {
 ///
 /// 输入：包含历史消息、工具结果、工具定义及模型部署名的 ProviderRequest。
 /// 输出：兼容 Responses wire 且包含 `store:false` 的 JSON 对象。
-/// 不变量：工具顺序保持，工具 schema 使用非严格模式以兼容冻结 PI 行为。
+/// 不变量：工具顺序保持，工具 schema 使用非严格模式以兼容冻结 reference 行为。
 /// 失败：映射为纯内存操作，不返回错误。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com

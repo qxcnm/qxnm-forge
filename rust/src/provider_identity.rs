@@ -1381,25 +1381,30 @@ fn faux_model() -> AdvertisedModel {
     }
 }
 
-/// 功能：为已验证的自定义 OpenAI Chat 连接构造公开文本模型 descriptor。
+/// 功能：为已验证的自定义 OpenAI Chat/Responses 连接构造公开文本模型 descriptor。
 ///
-/// 输入：启动快照固定的安全 Provider ID 与已验证 model ID。
-/// 输出：支持文本输入输出与 streaming、但不臆测 tools 的品牌中立 descriptor。
-/// 不变量：不含 endpoint、credential、产品品牌或动态推断能力；API family 固定为 `openai-completions`。
+/// 输入：启动快照固定的安全 Provider ID、已验证 model ID、通用 API family 与显式工具能力。
+/// 输出：支持文本输入输出与 streaming，并精确反映用户工具声明的品牌中立 descriptor。
+/// 不变量：不含 endpoint、credential、产品品牌或动态推断能力；不得生成 `codex-responses` family。
 /// 失败：调用方已完成输入验证，本方法不执行 I/O 且不返回错误。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
-pub(crate) fn custom_openai_chat_model(provider_id: &str, model_id: &str) -> AdvertisedModel {
+pub(crate) fn custom_openai_model(
+    provider_id: &str,
+    model_id: &str,
+    api_family: &str,
+    supports_tools: bool,
+) -> AdvertisedModel {
     AdvertisedModel {
         provider_id: provider_id.to_owned(),
         model_id: model_id.to_owned(),
         display_name: model_id.to_owned(),
-        api_family: "openai-completions".to_owned(),
+        api_family: api_family.to_owned(),
         capabilities: AdvertisedModelCapabilities {
             input: vec!["text".to_owned()],
             output: vec!["text".to_owned()],
             streaming: true,
-            tools: false,
+            tools: supports_tools,
             reasoning: false,
             context_tokens: None,
             max_output_tokens: None,

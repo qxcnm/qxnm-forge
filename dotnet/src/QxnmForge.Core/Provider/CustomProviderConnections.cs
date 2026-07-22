@@ -13,9 +13,11 @@ namespace QxnmForge.Provider;
 /// </summary>
 /// <param name="DisplayName">长度 1..64 的用户可见名称。</param>
 /// <param name="ProviderId">连接间唯一的品牌中立安全 ID。</param>
-/// <param name="ApiFamily">当前固定为 openai-completions。</param>
+/// <param name="ApiFamily">通用 openai-responses 或 openai-completions。</param>
 /// <param name="BaseUrl">无认证信息、query 或 fragment 的 HTTPS base URL。</param>
+/// <param name="ModelsUrl">显式模型目录 URL，不从 BaseUrl 猜测。</param>
 /// <param name="ModelIds">0..512 个唯一模型 ID；为空时连接尚不可执行。</param>
+/// <param name="SupportsTools">是否显式声明该连接支持 function tools。</param>
 /// <param name="LogoAssetId">可选的本地公开 Logo 资源安全 ID。</param>
 /// <param name="Enabled">是否允许下次 daemon 启动注册该连接。</param>
 public sealed record ProviderConnectionInput(
@@ -23,7 +25,9 @@ public sealed record ProviderConnectionInput(
     string ProviderId,
     string ApiFamily,
     string BaseUrl,
+    string ModelsUrl,
     IReadOnlyList<string> ModelIds,
+    bool SupportsTools,
     string? LogoAssetId,
     bool Enabled);
 
@@ -36,9 +40,11 @@ public sealed record ProviderConnectionInput(
 /// <param name="Revision">从 1 开始递增的安全整数 CAS revision。</param>
 /// <param name="DisplayName">用户可见名称。</param>
 /// <param name="ProviderId">连接间唯一的品牌中立 Provider ID。</param>
-/// <param name="ApiFamily">固定 openai-completions。</param>
+/// <param name="ApiFamily">通用 OpenAI API family。</param>
 /// <param name="BaseUrl">经验证的 API base URL。</param>
+/// <param name="ModelsUrl">经验证的精确模型目录 URL。</param>
 /// <param name="ModelIds">显式模型 allowlist。</param>
+/// <param name="SupportsTools">显式工具能力声明。</param>
 /// <param name="LogoAssetId">可选本地公开 Logo 资源 ID。</param>
 /// <param name="Enabled">是否允许下次启动注册。</param>
 /// <param name="CreatedAt">UTC 创建时间。</param>
@@ -50,7 +56,9 @@ public sealed record ProviderConnectionConfiguration(
     string ProviderId,
     string ApiFamily,
     string BaseUrl,
+    string ModelsUrl,
     IReadOnlyList<string> ModelIds,
+    bool SupportsTools,
     string? LogoAssetId,
     bool Enabled,
     DateTimeOffset CreatedAt,
@@ -65,12 +73,15 @@ public sealed record ProviderConnectionConfiguration(
 /// <param name="Revision">当前 CAS revision。</param>
 /// <param name="DisplayName">用户可见名称。</param>
 /// <param name="ProviderId">品牌中立 Provider ID。</param>
-/// <param name="ApiFamily">固定 openai-completions。</param>
+/// <param name="ApiFamily">通用 OpenAI API family。</param>
 /// <param name="BaseUrl">公开 API base URL。</param>
+/// <param name="ModelsUrl">公开的精确模型目录 URL。</param>
 /// <param name="ModelIds">显式模型 allowlist。</param>
+/// <param name="SupportsTools">显式工具能力声明。</param>
 /// <param name="LogoAssetId">可选本地公开 Logo 资源 ID。</param>
 /// <param name="Enabled">是否允许启动注册。</param>
 /// <param name="CredentialConfigured">CredentialStore 是否包含该 Provider ID。</param>
+/// <param name="ImageCredentialConfigured">是否配置独立 Image key。</param>
 /// <param name="CreatedAt">UTC 创建时间。</param>
 /// <param name="UpdatedAt">UTC 最近更新时间。</param>
 public sealed record ProviderConnection(
@@ -80,10 +91,13 @@ public sealed record ProviderConnection(
     string ProviderId,
     string ApiFamily,
     string BaseUrl,
+    string ModelsUrl,
     IReadOnlyList<string> ModelIds,
+    bool SupportsTools,
     string? LogoAssetId,
     bool Enabled,
     bool CredentialConfigured,
+    bool ImageCredentialConfigured,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -92,7 +106,7 @@ public sealed record ProviderConnection(
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
-/// <param name="SchemaVersion">固定 0.1。</param>
+/// <param name="SchemaVersion">固定 0.2。</param>
 /// <param name="Connections">最多 128 条非敏感连接。</param>
 internal sealed record ProviderConnectionDocument(
     string SchemaVersion,
@@ -228,7 +242,8 @@ public sealed class ProviderConnectionException : Exception
 /// </summary>
 public sealed class CustomProviderConnectionStore
 {
-    private const string SchemaVersion = "0.1";
+    private const string SchemaVersion = "0.2";
+    private const string LegacySchemaVersion = "0.1";
     private const long MaxSafeInteger = 9_007_199_254_740_991;
     private const int MaximumDocumentBytes = 2 * 1024 * 1024;
     private const int MaximumConnections = 128;
@@ -400,7 +415,9 @@ public sealed class CustomProviderConnectionStore
                 input.ProviderId,
                 input.ApiFamily,
                 input.BaseUrl,
+                input.ModelsUrl,
                 input.ModelIds.ToArray(),
+                input.SupportsTools,
                 input.LogoAssetId,
                 input.Enabled,
                 now,
@@ -522,7 +539,9 @@ public sealed class CustomProviderConnectionStore
                 input.ProviderId,
                 input.ApiFamily,
                 input.BaseUrl,
+                input.ModelsUrl,
                 input.ModelIds.ToArray(),
+                input.SupportsTools,
                 input.LogoAssetId,
                 input.Enabled,
                 current.CreatedAt,
@@ -628,12 +647,12 @@ public sealed class CustomProviderConnectionStore
     /// </summary>
     /// <param name="connectionId">服务签发的连接 ID。</param>
     /// <param name="expectedRevision">客户端读取的当前 revision。</param>
-    /// <param name="beforePublish">CAS 成功后、连接发布删除前收到 Provider ID。</param>
+    /// <param name="beforePublish">CAS 成功后、连接发布删除前收到 Provider ID 与 connection ID。</param>
     /// <returns>已删除连接的 Provider ID。</returns>
     internal string DeleteWithCredentialCleanup(
         string connectionId,
         long expectedRevision,
-        Action<string> beforePublish)
+        Action<string, string> beforePublish)
     {
         ArgumentNullException.ThrowIfNull(beforePublish);
         return DeleteCore(connectionId, expectedRevision, beforePublish);
@@ -651,7 +670,7 @@ public sealed class CustomProviderConnectionStore
     private string DeleteCore(
         string connectionId,
         long expectedRevision,
-        Action<string>? beforePublish)
+        Action<string, string>? beforePublish)
     {
         ValidateSafeId(connectionId, "connectionId");
         ValidateExpectedRevision(expectedRevision);
@@ -671,7 +690,7 @@ public sealed class CustomProviderConnectionStore
                 throw ProviderConnectionException.RevisionConflict();
             }
 
-            beforePublish?.Invoke(current.ProviderId);
+            beforePublish?.Invoke(current.ProviderId, current.ConnectionId);
 
             var connections = document.Connections
                 .Where(connection => !string.Equals(
@@ -712,10 +731,12 @@ public sealed class CustomProviderConnectionStore
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="providerId">必须对应唯一连接的 Provider ID。</param>
-    /// <param name="operation">只接收公开 Provider ID、不得回调连接 Store 的敏感边界操作。</param>
+    /// <param name="operation">接收不可变连接快照、不得回调连接 Store 的敏感边界操作。</param>
     /// <remarks>不变量：所有组合写操作固定采用 connection lock 后 credential lock 的顺序。</remarks>
     /// <exception cref="ProviderConnectionException">连接缺失、连接锁冲突或文档无效。</exception>
-    internal void ExecuteForProvider(string providerId, Action<string> operation)
+    internal void ExecuteForProvider(
+        string providerId,
+        Action<ProviderConnectionConfiguration> operation)
     {
         ValidateSafeId(providerId, "providerId");
         ArgumentNullException.ThrowIfNull(operation);
@@ -723,8 +744,9 @@ public sealed class CustomProviderConnectionStore
         {
             using var stateLock = AcquireLock();
             var document = ReadDocumentUnlocked();
-            if (!document.Connections.Any(connection =>
-                    string.Equals(connection.ProviderId, providerId, StringComparison.Ordinal)))
+            var connection = document.Connections.FirstOrDefault(connection =>
+                string.Equals(connection.ProviderId, providerId, StringComparison.Ordinal));
+            if (connection is null)
             {
                 throw new ProviderConnectionException(new PortableError(
                     -32602,
@@ -733,7 +755,7 @@ public sealed class CustomProviderConnectionStore
                     new ErrorDetails("provider_connection_not_found", ProviderId: providerId)));
             }
 
-            operation(providerId);
+            operation(Clone(connection));
         }
         catch (ProviderCommercialStateException exception)
         {
@@ -789,12 +811,13 @@ public sealed class CustomProviderConnectionStore
             throw ProviderConnectionException.Invalid("providerId");
         }
 
-        if (!string.Equals(input.ApiFamily, "openai-completions", StringComparison.Ordinal))
+        if (input.ApiFamily is not ("openai-responses" or "openai-completions"))
         {
             throw ProviderConnectionException.Invalid("apiFamily");
         }
 
         ValidateBaseUrl(input.BaseUrl, allowLoopbackHttp);
+        ValidateBaseUrl(input.ModelsUrl, allowLoopbackHttp);
         ValidateModelIds(input.ModelIds, allowEmpty: true);
 
         if (input.LogoAssetId is not null)
@@ -942,6 +965,17 @@ public sealed class CustomProviderConnectionStore
         var document = CommercialFileSafety.ParseStrict<ProviderConnectionDocument>(
             CommercialFileSafety.ReadBounded(path, MaximumDocumentBytes, sensitive: false),
             "provider_connection_json");
+        if (document.SchemaVersion == LegacySchemaVersion)
+        {
+            var migrated = document.Connections.Select(connection => connection with
+            {
+                ModelsUrl = NativeProviderEndpoint.Append(
+                    new Uri(connection.BaseUrl, UriKind.Absolute),
+                    "/models").ToString(),
+                SupportsTools = false,
+            }).ToArray();
+            document = new ProviderConnectionDocument(SchemaVersion, migrated);
+        }
         try
         {
             ValidateDocument(document);
@@ -1009,7 +1043,9 @@ public sealed class CustomProviderConnectionStore
                     connection.ProviderId,
                     connection.ApiFamily,
                     connection.BaseUrl,
+                    connection.ModelsUrl,
                     connection.ModelIds,
+                    connection.SupportsTools,
                     connection.LogoAssetId,
                     connection.Enabled),
                 allowLoopbackHttp);
@@ -1174,6 +1210,8 @@ public sealed class CustomProviderConnectionStore
 /// </summary>
 public sealed class CustomProviderConnectionService
 {
+    private const string ResponsesCredentialKind = "responses";
+    private const string ImageCredentialKind = "image";
     private const int MaximumDiscoveryBytes = 1024 * 1024;
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromSeconds(20);
     private static readonly HttpClient SharedDiscoveryHttpClient = CreateDiscoveryHttpClient();
@@ -1309,7 +1347,8 @@ public sealed class CustomProviderConnectionService
         CancellationToken cancellationToken)
     {
         var connection = connections.ReadExact(connectionId, expectedRevision);
-        var endpoint = BuildDiscoveryEndpoint(connection.BaseUrl);
+        var configured = ListConfiguredProviderIds();
+        var endpoint = BuildDiscoveryEndpoint(connection.ModelsUrl);
         var modelIds = await FetchModelsAsync(
             endpoint,
             connection.ProviderId,
@@ -1320,7 +1359,7 @@ public sealed class CustomProviderConnectionService
             modelIds);
         return Project(
             updated,
-            new HashSet<string>([updated.ProviderId], StringComparer.Ordinal));
+            configured);
     }
 
     /// <summary>
@@ -1336,11 +1375,12 @@ public sealed class CustomProviderConnectionService
         _ = connections.DeleteWithCredentialCleanup(
             connectionId,
             expectedRevision,
-            providerId =>
+            (providerId, deletedConnectionId) =>
             {
                 try
                 {
                     _ = credentials.Remove(providerId);
+                    _ = credentials.Remove(ImageCredentialId(deletedConnectionId));
                 }
                 catch (ProviderCommercialStateException exception)
                 {
@@ -1355,11 +1395,13 @@ public sealed class CustomProviderConnectionService
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="providerId">必须对应唯一已存在连接的 Provider ID。</param>
+    /// <param name="credentialKind">responses 或 image。</param>
     /// <param name="credential">1..16384 且无 CR/LF/NUL 的 secret。</param>
     /// <remarks>不变量：credential 不进入连接 JSON、返回值、日志、Session 或异常。</remarks>
-    public void SetCredential(string providerId, string credential)
+    public void SetCredential(string providerId, string credentialKind, string credential)
     {
         CustomProviderConnectionStore.ValidateSafeId(providerId, "providerId");
+        ValidateCredentialKind(credentialKind);
         if (credential is null ||
             credential.Length is < 1 or > 16_384 ||
             credential.IndexOfAny(['\r', '\n', '\0']) >= 0)
@@ -1369,11 +1411,11 @@ public sealed class CustomProviderConnectionService
 
         connections.ExecuteForProvider(
             providerId,
-            id =>
+            connection =>
             {
                 try
                 {
-                    credentials.Set(id, credential);
+                    credentials.Set(CredentialId(connection, credentialKind), credential);
                 }
                 catch (ProviderCommercialStateException exception)
                 {
@@ -1388,15 +1430,17 @@ public sealed class CustomProviderConnectionService
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="providerId">必须对应唯一已存在连接的 Provider ID。</param>
-    public void RemoveCredential(string providerId)
+    /// <param name="credentialKind">responses 或 image。</param>
+    public void RemoveCredential(string providerId, string credentialKind)
     {
+        ValidateCredentialKind(credentialKind);
         connections.ExecuteForProvider(
             providerId,
-            id =>
+            connection =>
             {
                 try
                 {
-                    _ = credentials.Remove(id);
+                    _ = credentials.Remove(CredentialId(connection, credentialKind));
                 }
                 catch (ProviderCommercialStateException exception)
                 {
@@ -1476,6 +1520,50 @@ public sealed class CustomProviderConnectionService
     }
 
     /// <summary>
+    /// 功能：验证自定义 Provider credential 的封闭用途枚举。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="credentialKind">responses 或 image。</param>
+    /// <exception cref="ProviderConnectionException">未知用途。</exception>
+    private static void ValidateCredentialKind(string credentialKind)
+    {
+        if (credentialKind is not (ResponsesCredentialKind or ImageCredentialKind))
+        {
+            throw ProviderConnectionException.Invalid("credentialKind");
+        }
+    }
+
+    /// <summary>
+    /// 功能：派生连接级独立 Image credential identity。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="connectionId">服务签发的安全连接 ID。</param>
+    /// <returns>符合 CredentialStore ID 语法的独立 identity。</returns>
+    private static string ImageCredentialId(string connectionId)
+    {
+        return connectionId + ".image";
+    }
+
+    /// <summary>
+    /// 功能：把用途映射到互不回退的 CredentialStore identity。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="connection">已验证连接。</param>
+    /// <param name="credentialKind">已验证用途。</param>
+    /// <returns>Responses Provider ID 或连接级 Image ID。</returns>
+    private static string CredentialId(
+        ProviderConnectionConfiguration connection,
+        string credentialKind)
+    {
+        return credentialKind == ResponsesCredentialKind
+            ? connection.ProviderId
+            : ImageCredentialId(connection.ConnectionId);
+    }
+
+    /// <summary>
     /// 功能：发送单次禁止 redirect 的 Bearer GET，并读取不超过 1 MiB 的严格模型目录。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -1547,20 +1635,18 @@ public sealed class CustomProviderConnectionService
     }
 
     /// <summary>
-    /// 功能：在读取 credential 前构造同源且不含 query 的模型发现 endpoint。
+    /// 功能：在读取 credential 前解析用户显式保存的精确模型发现 endpoint。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
-    /// <param name="baseUrl">已由持久化连接验证的非敏感 base URL。</param>
-    /// <returns>字面追加 `/models` 的绝对 URI。</returns>
+    /// <param name="modelsUrl">已由持久化连接验证的非敏感精确 URL。</param>
+    /// <returns>不拼接路径的绝对 URI。</returns>
     /// <exception cref="ProviderConnectionException">URI 状态意外失效时返回固定脱敏错误。</exception>
-    private static Uri BuildDiscoveryEndpoint(string baseUrl)
+    private static Uri BuildDiscoveryEndpoint(string modelsUrl)
     {
         try
         {
-            return NativeProviderEndpoint.Append(
-                new Uri(baseUrl, UriKind.Absolute),
-                "/models");
+            return new Uri(modelsUrl, UriKind.Absolute);
         }
         catch (Exception exception) when (exception is ArgumentException or FormatException)
         {
@@ -1789,10 +1875,13 @@ public sealed class CustomProviderConnectionService
             connection.ProviderId,
             connection.ApiFamily,
             connection.BaseUrl,
+            connection.ModelsUrl,
             connection.ModelIds.ToArray(),
+            connection.SupportsTools,
             connection.LogoAssetId,
             connection.Enabled,
             configured.Contains(connection.ProviderId),
+            configured.Contains(ImageCredentialId(connection.ConnectionId)),
             connection.CreatedAt,
             connection.UpdatedAt);
     }
@@ -1866,6 +1955,51 @@ internal sealed class CustomOpenAiCompletionsProvider : OpenAiChatProvider
 }
 
 /// <summary>
+/// 功能：把启动期固定的自定义 OpenAI Responses 连接绑定到通用 Responses parser。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+internal sealed class CustomOpenAiResponsesProvider : OpenAiResponsesProvider
+{
+    private readonly Uri baseEndpoint;
+
+    /// <summary>
+    /// 功能：创建只在最终请求边界读取独立 Responses credential 的自定义 adapter。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="connection">已验证启动快照。</param>
+    /// <param name="store">工作区外 CredentialStore。</param>
+    /// <param name="options">有界 HTTP/SSE 策略。</param>
+    internal CustomOpenAiResponsesProvider(
+        ProviderConnectionConfiguration connection,
+        ProviderCredentialStore store,
+        ProviderTransportOptions options)
+        : base(
+            connection.ProviderId,
+            new Uri(connection.BaseUrl, UriKind.Absolute),
+            ProviderCredentialSource.FromStore(store, connection.ProviderId),
+            connection.ApiFamily,
+            connection.ModelIds,
+            options)
+    {
+        baseEndpoint = new Uri(connection.BaseUrl, UriKind.Absolute);
+    }
+
+    /// <summary>
+    /// 功能：在用户固定 API base 后同源追加 `/responses`。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">已通过 Provider/model allowlist 的请求。</param>
+    /// <returns>保持 authority 的精确 Responses endpoint。</returns>
+    protected override Uri CreateRequestEndpoint(ProviderRequest request)
+    {
+        return NativeProviderEndpoint.Append(baseEndpoint, "/responses");
+    }
+}
+
+/// <summary>
 /// 功能：创建自定义连接 adapter 与同源模型描述。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -1886,7 +2020,12 @@ internal static class CustomProviderConnectionAdapterFactory
         ProviderCredentialStore store,
         ProviderTransportOptions options)
     {
-        return new CustomOpenAiCompletionsProvider(connection, store, options);
+        return connection.ApiFamily switch
+        {
+            "openai-completions" => new CustomOpenAiCompletionsProvider(connection, store, options),
+            "openai-responses" => new CustomOpenAiResponsesProvider(connection, store, options),
+            _ => throw ProviderConnectionException.Invalid("apiFamily"),
+        };
     }
 
     /// <summary>
@@ -1908,7 +2047,7 @@ internal static class CustomProviderConnectionAdapterFactory
                 ["text"],
                 ["text"],
                 Streaming: true,
-                Tools: false,
+                Tools: connection.SupportsTools,
                 Reasoning: false))).ToArray();
     }
 }

@@ -71,7 +71,7 @@ describe("MockApplicationServiceClient", () => {
           apiFamily: "faux",
         },
       }),
-    ).rejects.toThrow("prompt must not be empty");
+    ).rejects.toThrow("run input must not be empty");
   });
 
   /**
@@ -105,20 +105,24 @@ describe("MockApplicationServiceClient", () => {
       displayName: "测试 New API",
       providerId: "test-newapi",
       baseUrl: "https://example.invalid/v1",
+      modelsUrl: "https://example.invalid/v1/models",
       apiFamily: "openai-completions",
       modelIds: ["gpt-5"],
+      supportsTools: false,
       logoAssetId: "newapi-gzxsy",
       enabled: true,
     });
     const secret = "test-secret-must-not-return";
     const status = await client.setProviderCredential(
       created.connection.providerId,
+      "responses",
       secret,
     );
     const connections = await client.listProviderConnections();
 
     expect(status).toEqual({
       providerId: "test-newapi",
+      credentialKind: "responses",
       credentialConfigured: true,
       restartRequired: true,
     });
@@ -139,8 +143,10 @@ describe("MockApplicationServiceClient", () => {
       displayName: "自定义 Provider",
       providerId: "custom.example",
       baseUrl: "https://example.invalid/v1",
+      modelsUrl: "https://example.invalid/v1/models",
       apiFamily: "openai-completions" as const,
       modelIds: ["model-v1"],
+      supportsTools: false,
       logoAssetId: "custom.logo",
       enabled: true,
     };
@@ -168,14 +174,20 @@ describe("MockApplicationServiceClient", () => {
       displayName: "Route Provider",
       providerId: "custom.routes",
       baseUrl: "https://example.invalid/v1",
+      modelsUrl: "https://example.invalid/v1/models",
       apiFamily: "openai-completions",
       modelIds: ["shared-model", "second-model"],
+      supportsTools: true,
       logoAssetId: null,
       enabled: true,
     });
 
     expect(await rustClient.listModels()).toHaveLength(1);
-    await rustClient.setProviderCredential(created.connection.providerId, "test-only-secret");
+    await rustClient.setProviderCredential(
+      created.connection.providerId,
+      "responses",
+      "test-only-secret",
+    );
 
     expect(await rustClient.listModels()).toEqual(
       expect.arrayContaining([
@@ -183,6 +195,7 @@ describe("MockApplicationServiceClient", () => {
           providerId: "custom.routes",
           modelId: "shared-model",
           apiFamily: "openai-completions",
+          supportsTools: true,
         }),
         expect.objectContaining({
           providerId: "custom.routes",
@@ -210,7 +223,7 @@ describe("MockApplicationServiceClient", () => {
       }),
     ).rejects.toThrow("model route is not available");
 
-    await rustClient.removeProviderCredential(created.connection.providerId);
+    await rustClient.removeProviderCredential(created.connection.providerId, "responses");
     expect(await rustClient.listModels()).toHaveLength(1);
   });
 

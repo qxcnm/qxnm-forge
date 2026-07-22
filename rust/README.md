@@ -3,7 +3,7 @@
 作者：高宏顺 `<18272669457@163.com>`
 
 本目录是完全独立的 Rust 原生实现。构建和运行均不导入、不启动其他语言实现，也不依赖
-`../PI`。公共行为以 `../SPEC/` 为准，`../CONFORMANCE/` 只通过 daemon 黑盒协议验证。
+或执行任何参考项目 runtime。公共行为以 `../SPEC/` 为准，`../CONFORMANCE/` 只通过 daemon 黑盒协议验证。
 
 ## Architecture
 
@@ -80,12 +80,12 @@ daemon shutdown/`SIGKILL`、idle/lifetime expiry 或生产 terminal policy。mac
 及任何非 Linux 平台均不会用 pipe 冒充或广告 terminal；Windows suspended Job/ConPTY
 尚未接入。
 
-## PI Session v3 一次性导入
+## 第三方 Session v3 一次性导入
 
 Rust CLI 提供完全离线的 clean-room 导入命令：
 
 ```sh
-cargo run -- session import-pi-v3 \
+cargo run -- session import-session-v3 \
   --source /path/to/session.jsonl \
   --workspace /path/to/workspace \
   --state-dir /path/to/state \
@@ -94,17 +94,18 @@ cargo run -- session import-pi-v3 \
 ```
 
 `--source`、`--workspace` 和 `--state-dir` 必填；省略 `--session` 时生成新的 opaque
-Session ID。目标 ID 必须不同于 PI source header ID，且目标目录已存在时拒绝，不覆盖、
+Session ID。目标 ID 必须不同于 source header ID，且目标目录已存在时拒绝，不覆盖、
 不合并、不续写。成功 JSON stdout 只包含 `status`、`sessionId` 和
-`reportArtifactId`，不会输出 source 路径、PI cwd、quarantine 内容或目标文件系统路径。
+`reportArtifactId`，不会输出 source 路径、source cwd、quarantine 内容或目标文件系统路径。
+旧命令名 `import-pi-v3` 仅作为兼容 alias 保留。
 
 导入器只读打开普通非符号链接 source，严格检查 UTF-8/LF、重复 JSON 键、大小、行长、
 深度、唯一 ID 与 earlier-only parent tree，并在发布前复核文件身份。它不会加载或执行
-PI、Provider、工具、扩展或历史 run。转换先在同父 staging 目录写入并 flush artifacts，
+第三方 runtime、Provider、工具、扩展或历史 run。转换先在同父 staging 目录写入并 flush artifacts，
 再写入完整 journal；通过普通 Session parser、provenance、报告 hash 和禁止生命周期记录
 检查后，Linux 使用 no-replace 原子 rename 发布。任何失败都会清理未发布 staging。
 
-PI branch jump 映射为显式 `branch.selected`；compaction 映射为 summary message 加
+第三方 branch jump 映射为显式 `branch.selected`；compaction 映射为 summary message 加
 `context.compacted`。custom、custom message、label 与未知 entry 进入
 `org.agentprotocol.pi-v3` 隔离边界并登记 mandatory report，不会进入 Provider context。
 报告固定使用 `application/vnd.qxnm-forge.pi-v3-import-report+json`，header 绑定 source

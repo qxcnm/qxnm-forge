@@ -91,7 +91,11 @@ public sealed class ProviderCatalogServiceTests
                     template.SuggestedProviderId,
                     template.ApiFamily,
                     template.DefaultBaseUrl,
+                    NativeProviderEndpoint.Append(
+                        new Uri(template.DefaultBaseUrl, UriKind.Absolute),
+                        "/models").AbsoluteUri,
                     [],
+                    SupportsTools: false,
                     template.LogoAssetId,
                     Enabled: true),
                 allowLoopbackHttp: false);

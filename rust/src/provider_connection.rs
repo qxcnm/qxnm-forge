@@ -29,14 +29,15 @@ use crate::commercial_state::ProviderCredentialStore;
 use crate::error::{AgentError, ErrorCode};
 use crate::protocol::parse_strict_value;
 use crate::provider::{
-    OpenAiChatProvider, Provider, ProviderCredentialSource, ProviderRequest, ProviderStream,
-    native_endpoint,
+    OpenAiChatProvider, OpenAiResponsesProvider, Provider, ProviderCredentialSource,
+    ProviderRequest, ProviderStream, native_endpoint,
 };
 use crate::provider_identity::{
-    AdvertisedModel, custom_openai_chat_model, is_canonical_provider_id, model_key,
+    AdvertisedModel, custom_openai_model, is_canonical_provider_id, model_key,
 };
 
-const DOCUMENT_SCHEMA_VERSION: &str = "0.1";
+const DOCUMENT_SCHEMA_VERSION: &str = "0.2";
+const LEGACY_DOCUMENT_SCHEMA_VERSION: &str = "0.1";
 const MAX_DOCUMENT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 128;
 const MAX_MODEL_IDS: usize = 512;
@@ -44,7 +45,10 @@ const MAX_MODEL_ID_BYTES: usize = 256;
 const MAX_MODEL_DISCOVERY_BYTES: usize = 1024 * 1024;
 const MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
-const API_FAMILY: &str = "openai-completions";
+const CHAT_API_FAMILY: &str = "openai-completions";
+const RESPONSES_API_FAMILY: &str = "openai-responses";
+const RESPONSES_CREDENTIAL_KIND: &str = "responses";
+const IMAGE_CREDENTIAL_KIND: &str = "image";
 #[cfg(windows)]
 const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
@@ -56,7 +60,9 @@ pub struct CustomProviderConnectionInput {
     pub provider_id: String,
     pub api_family: String,
     pub base_url: String,
+    pub models_url: String,
     pub model_ids: Vec<String>,
+    pub supports_tools: bool,
     pub logo_asset_id: Option<String>,
     pub enabled: bool,
 }
@@ -71,10 +77,13 @@ pub struct CustomProviderConnectionView {
     pub provider_id: String,
     pub api_family: String,
     pub base_url: String,
+    pub models_url: String,
     pub model_ids: Vec<String>,
+    pub supports_tools: bool,
     pub logo_asset_id: Option<String>,
     pub enabled: bool,
     pub credential_configured: bool,
+    pub image_credential_configured: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -121,6 +130,7 @@ pub struct ProviderConnectionsDeleteParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderCredentialsSetParams {
     pub provider_id: String,
+    pub credential_kind: String,
     pub credential: String,
 }
 
@@ -129,6 +139,7 @@ pub struct ProviderCredentialsSetParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderCredentialsRemoveParams {
     pub provider_id: String,
+    pub credential_kind: String,
 }
 
 /// 固定 JSON 文档内的一条非敏感连接记录。
@@ -141,7 +152,11 @@ struct StoredConnection {
     provider_id: String,
     api_family: String,
     base_url: String,
+    #[serde(default)]
+    models_url: String,
     model_ids: Vec<String>,
+    #[serde(default)]
+    supports_tools: bool,
     logo_asset_id: Option<String>,
     enabled: bool,
     created_at: String,
@@ -272,7 +287,9 @@ impl CustomProviderConnectionStore {
             provider_id: input.provider_id,
             api_family: input.api_family,
             base_url: input.base_url,
+            models_url: input.models_url,
             model_ids: input.model_ids,
+            supports_tools: input.supports_tools,
             logo_asset_id: input.logo_asset_id,
             enabled: input.enabled,
             created_at: now.clone(),
@@ -337,7 +354,9 @@ impl CustomProviderConnectionStore {
             provider_id: input.provider_id,
             api_family: input.api_family,
             base_url: input.base_url,
+            models_url: input.models_url,
             model_ids: input.model_ids,
+            supports_tools: input.supports_tools,
             logo_asset_id: input.logo_asset_id,
             enabled: input.enabled,
             created_at: previous.created_at.clone(),
@@ -432,7 +451,7 @@ impl CustomProviderConnectionStore {
         &self,
         connection_id: &str,
         expected_revision: u64,
-        remove_credential: impl FnOnce(&str) -> Result<(), AgentError>,
+        remove_credentials: impl FnOnce(&str, &str) -> Result<(), AgentError>,
     ) -> Result<String, AgentError> {
         validate_safe_id(connection_id, 128, "connectionId")?;
         validate_revision(expected_revision)?;
@@ -447,7 +466,7 @@ impl CustomProviderConnectionStore {
             return Err(revision_conflict());
         }
         let provider_id = document.connections[index].provider_id.clone();
-        remove_credential(&provider_id)?;
+        remove_credentials(&provider_id, &document.connections[index].connection_id)?;
         document.connections.remove(index);
         self.write_document_unlocked(&document)?;
         Ok(provider_id)
@@ -532,7 +551,17 @@ impl CustomProviderConnectionStore {
             Ok(_) => {}
         }
         let bytes = read_bounded_file(&path, MAX_DOCUMENT_BYTES)?;
-        let document: ConnectionDocument = parse_strict_json(&bytes)?;
+        let mut document: ConnectionDocument = parse_strict_json(&bytes)?;
+        if document.schema_version == LEGACY_DOCUMENT_SCHEMA_VERSION {
+            for connection in &mut document.connections {
+                if connection.models_url.is_empty() {
+                    connection.models_url = native_endpoint(&connection.base_url, "/models", &[])
+                        .map_err(|_| connection_store_error("shape", "Provider 连接配置文档无效"))?
+                        .to_string();
+                }
+            }
+            document.schema_version = DOCUMENT_SCHEMA_VERSION.to_owned();
+        }
         validate_document(&document, self.allow_conformance_loopback)?;
         Ok(document)
     }
@@ -721,7 +750,8 @@ impl CustomProviderConnectionService {
         let snapshot = self
             .connections
             .read_for_model_discovery(connection_id, expected_revision)?;
-        let endpoint = native_endpoint(&snapshot.base_url, "/models", &[])?;
+        let endpoint = Url::parse(&snapshot.models_url)
+            .map_err(|_| invalid_connection("modelsUrl", "Provider 模型目录 URL 无效"))?;
         let client = build_model_discovery_client()?;
         let credential = self.credentials.read_for_request(&snapshot.provider_id)?;
         let model_ids = fetch_discovered_model_ids(&client, endpoint, credential).await?;
@@ -730,7 +760,7 @@ impl CustomProviderConnectionService {
             expected_revision,
             model_ids,
         )?;
-        let configured = BTreeSet::from([connection.provider_id.clone()]);
+        let configured = self.configured_provider_ids()?;
         Ok(project_connection(connection, &configured))
     }
 
@@ -751,10 +781,14 @@ impl CustomProviderConnectionService {
         self.connections.delete_with_credential_removal(
             connection_id,
             expected_revision,
-            |provider_id| {
+            |provider_id, deleted_connection_id| {
                 let _ = self
                     .credentials
                     .remove(provider_id)
+                    .map_err(map_credential_error)?;
+                let _ = self
+                    .credentials
+                    .remove(&image_credential_id(deleted_connection_id))
                     .map_err(map_credential_error)?;
                 Ok(())
             },
@@ -769,13 +803,21 @@ impl CustomProviderConnectionService {
     /// 失败：连接不存在、secret header 边界、锁、权限或原子发布失败时安全拒绝。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
-    pub fn set_credential(&self, provider_id: &str, credential: &str) -> Result<(), AgentError> {
+    pub fn set_credential(
+        &self,
+        provider_id: &str,
+        credential_kind: &str,
+        credential: &str,
+    ) -> Result<(), AgentError> {
         validate_credential(credential)?;
-        self.connections.with_provider_lock(provider_id, |_| {
-            self.credentials
-                .set(provider_id, credential)
-                .map_err(map_credential_error)
-        })
+        validate_credential_kind(credential_kind)?;
+        self.connections
+            .with_provider_lock(provider_id, |connection| {
+                let credential_id = credential_store_id(connection, credential_kind);
+                self.credentials
+                    .set(&credential_id, credential)
+                    .map_err(map_credential_error)
+            })
     }
 
     /// 功能：移除已存在 Provider 连接对应的 credential。
@@ -786,14 +828,21 @@ impl CustomProviderConnectionService {
     /// 失败：连接不存在或 CredentialStore 无法安全读取/发布时拒绝。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
-    pub fn remove_credential(&self, provider_id: &str) -> Result<(), AgentError> {
-        self.connections.with_provider_lock(provider_id, |_| {
-            let _ = self
-                .credentials
-                .remove(provider_id)
-                .map_err(map_credential_error)?;
-            Ok(())
-        })
+    pub fn remove_credential(
+        &self,
+        provider_id: &str,
+        credential_kind: &str,
+    ) -> Result<(), AgentError> {
+        validate_credential_kind(credential_kind)?;
+        self.connections
+            .with_provider_lock(provider_id, |connection| {
+                let credential_id = credential_store_id(connection, credential_kind);
+                let _ = self
+                    .credentials
+                    .remove(&credential_id)
+                    .map_err(map_credential_error)?;
+                Ok(())
+            })
     }
 
     /// 功能：为通用 CLI 在固定锁顺序内写入或轮换任意合法 Provider credential。
@@ -929,10 +978,14 @@ impl CustomProviderRuntimeSnapshot {
             .iter()
             .filter(|connection| provider_id.is_none_or(|value| connection.provider_id == value))
             .flat_map(|connection| {
-                connection
-                    .model_ids
-                    .iter()
-                    .map(|model_id| custom_openai_chat_model(&connection.provider_id, model_id))
+                connection.model_ids.iter().map(|model_id| {
+                    custom_openai_model(
+                        &connection.provider_id,
+                        model_id,
+                        &connection.api_family,
+                        connection.supports_tools,
+                    )
+                })
             })
             .collect::<Vec<_>>();
         models.sort_by_key(model_key);
@@ -974,9 +1027,19 @@ impl CustomProviderRuntimeSnapshot {
             .any(|connection| {
                 connection.provider_id == provider_id
                     && connection.model_ids.iter().any(|model| model == model_id)
-                    && api_family.is_none_or(|family| family == API_FAMILY)
+                    && api_family.is_none_or(|family| family == connection.api_family)
             })
-            .then(|| API_FAMILY.to_owned())
+            .then(|| {
+                self.connections
+                    .iter()
+                    .find(|connection| {
+                        connection.provider_id == provider_id
+                            && connection.model_ids.iter().any(|model| model == model_id)
+                    })
+                    .expect("matching connection")
+                    .api_family
+                    .clone()
+            })
     }
 
     /// 功能：把自定义连接的模型集合并入实际 Provider capabilities。
@@ -1023,24 +1086,38 @@ impl CustomProviderRuntimeSnapshot {
     pub fn build_providers(&self) -> Result<BTreeMap<String, Arc<dyn Provider>>, AgentError> {
         let mut providers = BTreeMap::<String, Arc<dyn Provider>>::new();
         for connection in &self.connections {
-            let endpoint = native_endpoint(&connection.base_url, "/chat/completions", &[])?;
+            let request_path = match connection.api_family.as_str() {
+                CHAT_API_FAMILY => "/chat/completions",
+                RESPONSES_API_FAMILY => "/responses",
+                _ => return Err(invalid_connection("apiFamily", "Provider API family 无效")),
+            };
+            let endpoint = native_endpoint(&connection.base_url, request_path, &[])?;
             let source = ProviderCredentialSource::from_store(
                 self.credentials.clone(),
                 connection.provider_id.clone(),
             );
-            let inner: Arc<dyn Provider> = Arc::new(OpenAiChatProvider::with_credential_source(
-                &connection.provider_id,
-                endpoint.to_string(),
-                source,
-            ));
+            let inner: Arc<dyn Provider> = match connection.api_family.as_str() {
+                CHAT_API_FAMILY => Arc::new(OpenAiChatProvider::with_credential_source(
+                    &connection.provider_id,
+                    endpoint.to_string(),
+                    source,
+                )),
+                RESPONSES_API_FAMILY => Arc::new(OpenAiResponsesProvider::with_credential_source(
+                    &connection.provider_id,
+                    endpoint.to_string(),
+                    source,
+                )),
+                _ => unreachable!("validated API family"),
+            };
             let provider = CustomConnectionProvider {
                 provider_id: connection.provider_id.clone(),
+                api_family: connection.api_family.clone(),
                 model_ids: connection.model_ids.iter().cloned().collect(),
                 credentials: self.credentials.clone(),
                 inner,
             };
             providers.insert(
-                format!("{}|{API_FAMILY}", connection.provider_id),
+                format!("{}|{}", connection.provider_id, connection.api_family),
                 Arc::new(provider),
             );
         }
@@ -1075,6 +1152,7 @@ impl CustomProviderRuntimeSnapshot {
 /// 为自定义 Chat adapter 固定 API family、模型 allowlist 与请求期 credential presence。
 struct CustomConnectionProvider {
     provider_id: String,
+    api_family: String,
     model_ids: BTreeSet<String>,
     credentials: ProviderCredentialStore,
     inner: Arc<dyn Provider>,
@@ -1089,11 +1167,11 @@ impl Provider for CustomConnectionProvider {
         &self.provider_id
     }
 
-    /// 功能：返回固定的 OpenAI Chat API family。
+    /// 功能：返回连接显式选择的通用 OpenAI API family。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     fn api_family(&self) -> Option<&str> {
-        Some(API_FAMILY)
+        Some(&self.api_family)
     }
 
     /// 功能：按启动快照 allowlist 精确判断 model ID。
@@ -1142,6 +1220,8 @@ fn project_connection(
     configured: &BTreeSet<String>,
 ) -> CustomProviderConnectionView {
     let credential_configured = configured.contains(&connection.provider_id);
+    let image_credential_configured =
+        configured.contains(&image_credential_id(&connection.connection_id));
     CustomProviderConnectionView {
         connection_id: connection.connection_id,
         revision: connection.revision,
@@ -1149,10 +1229,13 @@ fn project_connection(
         provider_id: connection.provider_id,
         api_family: connection.api_family,
         base_url: connection.base_url,
+        models_url: connection.models_url,
         model_ids: connection.model_ids,
+        supports_tools: connection.supports_tools,
         logo_asset_id: connection.logo_asset_id,
         enabled: connection.enabled,
         credential_configured,
+        image_credential_configured,
         created_at: connection.created_at,
         updated_at: connection.updated_at,
     }
@@ -1330,7 +1413,9 @@ fn validate_stored_connection(
             provider_id: connection.provider_id.clone(),
             api_family: connection.api_family.clone(),
             base_url: connection.base_url.clone(),
+            models_url: connection.models_url.clone(),
             model_ids: connection.model_ids.clone(),
+            supports_tools: connection.supports_tools,
             logo_asset_id: connection.logo_asset_id.clone(),
             enabled: connection.enabled,
         },
@@ -1377,10 +1462,15 @@ fn validate_connection_input(
     {
         return Err(invalid_connection("providerId", "Provider ID 已被保留"));
     }
-    if input.api_family != API_FAMILY {
+    if !matches!(
+        input.api_family.as_str(),
+        CHAT_API_FAMILY | RESPONSES_API_FAMILY
+    ) {
         return Err(invalid_connection("apiFamily", "Provider API family 无效"));
     }
     validate_base_url(&input.base_url, allow_conformance_loopback)?;
+    validate_base_url(&input.models_url, allow_conformance_loopback)
+        .map_err(|_| invalid_connection("modelsUrl", "Provider 模型目录 URL 无效"))?;
     if !model_ids_are_valid(&input.model_ids, true) {
         return Err(invalid_connection("modelIds", "Provider 模型列表无效"));
     }
@@ -1403,6 +1493,53 @@ fn validate_credential(value: &str) -> Result<(), AgentError> {
         return Err(invalid_connection("credential", "Provider credential 无效"));
     }
     Ok(())
+}
+
+/// 功能：验证自定义 Provider credential 的独立用途。
+///
+/// 输入：协议中的 `responses` 或 `image`。
+/// 输出：命中封闭枚举时成功。
+/// 不变量：未知用途不能退回通用、Codex 或环境 credential。
+/// 失败：未知值返回固定 `invalid_params/credentialKind`。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn validate_credential_kind(value: &str) -> Result<(), AgentError> {
+    if matches!(value, RESPONSES_CREDENTIAL_KIND | IMAGE_CREDENTIAL_KIND) {
+        Ok(())
+    } else {
+        Err(invalid_connection(
+            "credentialKind",
+            "Provider credential kind 无效",
+        ))
+    }
+}
+
+/// 功能：派生只属于当前连接的 Image credential store identity。
+///
+/// 输入：服务生成且已验证的 connection ID。
+/// 输出：符合 CredentialStore ID 语法且不会与 Responses Provider ID 共用的 identity。
+/// 不变量：结果不含 secret，且长度保持在 128 字节内。
+/// 失败：调用方已验证 connection ID，本方法不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn image_credential_id(connection_id: &str) -> String {
+    format!("{connection_id}.image")
+}
+
+/// 功能：把 credential 用途映射到互不回退的 CredentialStore identity。
+///
+/// 输入：已验证连接与已验证用途。
+/// 输出：Responses 使用公开 Provider ID，Image 使用连接级派生 ID。
+/// 不变量：两类 key 永不共享同一 store entry。
+/// 失败：调用方已验证用途，本方法不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn credential_store_id(connection: &StoredConnection, credential_kind: &str) -> String {
+    match credential_kind {
+        RESPONSES_CREDENTIAL_KIND => connection.provider_id.clone(),
+        IMAGE_CREDENTIAL_KIND => image_credential_id(&connection.connection_id),
+        _ => unreachable!("validated credential kind"),
+    }
 }
 
 /// 功能：验证 base URL 为无 userinfo/query/fragment 的 HTTPS origin/path。
@@ -1889,7 +2026,9 @@ mod tests {
             provider_id: provider_id.to_owned(),
             api_family: "openai-completions".to_owned(),
             base_url: "https://example.test/v1".to_owned(),
+            models_url: "https://example.test/v1/models".to_owned(),
             model_ids: vec!["model-a".to_owned(), "model-b".to_owned()],
+            supports_tools: false,
             logo_asset_id: Some("new-api".to_owned()),
             enabled,
         }
@@ -1940,7 +2079,7 @@ mod tests {
         );
         assert!(!conflict.message.contains('2'));
 
-        service.set_credential("custom-one", "stable-secret")?;
+        service.set_credential("custom-one", "responses", "stable-secret")?;
         let stale_delete = service
             .delete(&created.connection_id, 2)
             .expect_err("stale delete must fail before credential removal");
@@ -1958,6 +2097,54 @@ mod tests {
         assert_eq!(updated.revision, 2);
         service.delete(&updated.connection_id, updated.revision)?;
         assert!(service.list()?.is_empty());
+        Ok(())
+    }
+
+    /// 功能：验证 Responses 与 Image key 独立存取，且 Image key 不会让文本模型快照变为可执行。
+    ///
+    /// 不变量：移除一种 key 不影响另一种；删除连接必须清理两种 store identity。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn isolates_responses_and_image_credentials() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempdir()?;
+        let state = root.path().join("state");
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(&workspace)?;
+        let service = service(&state, &workspace)?;
+        let created = service.create(input("dual-key", true))?;
+        let image_credential_id = format!("{}.image", created.connection_id);
+
+        service.set_credential("dual-key", "responses", "responses-secret")?;
+        service.set_credential("dual-key", "image", "image-secret")?;
+
+        let configured = service.list()?.remove(0);
+        assert!(configured.credential_configured);
+        assert!(configured.image_credential_configured);
+        assert_eq!(
+            service.credentials.read_for_request("dual-key")?,
+            "responses-secret"
+        );
+        assert_eq!(
+            service.credentials.read_for_request(&image_credential_id)?,
+            "image-secret"
+        );
+
+        service.remove_credential("dual-key", "responses")?;
+
+        let image_only = service.list()?.remove(0);
+        assert!(!image_only.credential_configured);
+        assert!(image_only.image_credential_configured);
+        assert!(service.credentials.read_for_request("dual-key").is_err());
+        assert!(service.runtime_snapshot()?.models(None).is_empty());
+        assert_eq!(
+            service.credentials.read_for_request(&image_credential_id)?,
+            "image-secret"
+        );
+
+        service.set_credential("dual-key", "responses", "responses-secret")?;
+        service.delete(&created.connection_id, created.revision)?;
+        assert!(service.credentials.list()?.is_empty());
         Ok(())
     }
 
@@ -1999,14 +2186,14 @@ mod tests {
         fs::create_dir_all(&workspace)?;
         let service = service(&state, &workspace)?;
         let created = service.create(input("lock-ordered", true))?;
-        service.set_credential("lock-ordered", "original-secret")?;
+        service.set_credential("lock-ordered", "responses", "original-secret")?;
 
         let connection_lock = service.connections.acquire_lock()?;
         let set_error = service
-            .set_credential("lock-ordered", "replacement-secret")
+            .set_credential("lock-ordered", "responses", "replacement-secret")
             .expect_err("set must acquire connection lock first");
         let remove_error = service
-            .remove_credential("lock-ordered")
+            .remove_credential("lock-ordered", "responses")
             .expect_err("remove must acquire connection lock first");
         let cli_set_error = service
             .set_credential_coordinated("canonical.example", "cli-secret")
@@ -2071,7 +2258,7 @@ mod tests {
         let service = service(&state, &workspace)?;
         let _ = service.create(input("custom-two", true))?;
         let invalid = service
-            .set_credential("custom-two", "bad\r\ncredential")
+            .set_credential("custom-two", "responses", "bad\r\ncredential")
             .expect_err("CRLF credential must be rejected before store mutation");
         assert_eq!(invalid.code, crate::error::ErrorCode::InvalidParams);
         assert_eq!(
@@ -2079,7 +2266,7 @@ mod tests {
             json!({"kind":"invalid_params","field":"credential"})
         );
         assert!(!service.list()?[0].credential_configured);
-        service.set_credential("custom-two", "test-secret-value")?;
+        service.set_credential("custom-two", "responses", "test-secret-value")?;
 
         let listed = service.list()?;
         assert!(listed[0].credential_configured);
@@ -2093,7 +2280,7 @@ mod tests {
         assert!(!document.contains("secret"));
         assert!(!document.contains("credential"));
 
-        service.remove_credential("custom-two")?;
+        service.remove_credential("custom-two", "responses")?;
         assert!(!service.list()?[0].credential_configured);
         Ok(())
     }
@@ -2111,8 +2298,8 @@ mod tests {
         let service = service(&state, &workspace)?;
         let _ = service.create(input("enabled-provider", true))?;
         let _ = service.create(input("disabled-provider", false))?;
-        service.set_credential("enabled-provider", "enabled-key")?;
-        service.set_credential("disabled-provider", "disabled-key")?;
+        service.set_credential("enabled-provider", "responses", "enabled-key")?;
+        service.set_credential("disabled-provider", "responses", "disabled-key")?;
 
         let snapshot = service.runtime_snapshot()?;
         let models = snapshot.models(None);
@@ -2289,7 +2476,7 @@ mod tests {
         let mut empty = input("empty-models", true);
         empty.model_ids.clear();
         let _ = service.create(empty)?;
-        service.set_credential("empty-models", "empty-model-secret")?;
+        service.set_credential("empty-models", "responses", "empty-model-secret")?;
         let snapshot = service.runtime_snapshot()?;
         assert!(!snapshot.contains_provider("empty-models"));
         assert!(snapshot.models(None).is_empty());

@@ -183,10 +183,12 @@ public sealed record ProviderConnectionDeleteResult(bool Deleted, bool RestartRe
 /// 邮箱：18272669457@163.com
 /// </summary>
 /// <param name="ProviderId">已存在连接的品牌中立 Provider ID。</param>
+/// <param name="CredentialKind">responses 或 image。</param>
 /// <param name="CredentialConfigured">操作完成后的 presence 状态。</param>
 /// <param name="RestartRequired">模型广告需在下一 daemon 启动重新计算。</param>
 public sealed record ProviderCredentialStatusResult(
     string ProviderId,
+    string CredentialKind,
     bool CredentialConfigured,
     bool RestartRequired);
 
@@ -250,6 +252,14 @@ public sealed record AgentProfilesDeleteResult(bool Deleted);
 /// </summary>
 /// <param name="RunId">accepted run ID。</param>
 public sealed record RunStartResult(string RunId);
+
+/// <summary>
+/// 功能：表示客户端输入图片 durable 发布后的 portable 回执。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+/// <param name="Artifact">不含字节、Base64、URL 或主机路径的强绑定引用。</param>
+public sealed record ArtifactCreateResult(ArtifactReference Artifact);
 
 /// <summary>
 /// 功能：表示 session/get 的 durable 快照与事件增量结果。

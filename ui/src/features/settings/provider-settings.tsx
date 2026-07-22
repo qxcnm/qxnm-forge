@@ -26,6 +26,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import i18n from "@/i18n";
@@ -37,6 +44,7 @@ import type {
   ProviderCatalogEntry,
   ProviderConnection,
   ProviderConnectionInput,
+  ProviderCredentialKind,
 } from "@/types/application-service";
 
 interface ProviderSettingsProps {
@@ -53,8 +61,10 @@ interface ProviderDraft {
   readonly displayName: string;
   readonly providerId: string;
   readonly baseUrl: string;
-  readonly apiFamily: "openai-completions";
+  readonly modelsUrl: string;
+  readonly apiFamily: "openai-responses" | "openai-completions";
   readonly modelIdsText: string;
+  readonly supportsTools: boolean;
   readonly logoAssetId: string;
   readonly enabled: boolean;
 }
@@ -68,8 +78,10 @@ const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
   displayName: "",
   providerId: "",
   baseUrl: "",
-  apiFamily: "openai-completions",
+  modelsUrl: "",
+  apiFamily: "openai-responses",
   modelIdsText: "",
+  supportsTools: false,
   logoAssetId: "newapi-gzxsy",
   enabled: true,
 };
@@ -87,8 +99,10 @@ function connectionToDraft(connection: ProviderConnection): ProviderDraft {
     displayName: connection.displayName,
     providerId: connection.providerId,
     baseUrl: connection.baseUrl,
+    modelsUrl: connection.modelsUrl,
     apiFamily: connection.apiFamily,
     modelIdsText: connection.modelIds.join("\n"),
+    supportsTools: connection.supportsTools,
     logoAssetId: connection.logoAssetId ?? "",
     enabled: connection.enabled,
   };
@@ -105,11 +119,13 @@ function draftToInput(draft: ProviderDraft): ProviderConnectionInput {
     displayName: draft.displayName,
     providerId: draft.providerId,
     baseUrl: draft.baseUrl,
+    modelsUrl: draft.modelsUrl,
     apiFamily: draft.apiFamily,
     modelIds: draft.modelIdsText
       .split(/[\n,]/)
       .map((modelId) => modelId.trim())
       .filter(Boolean),
+    supportsTools: draft.supportsTools,
     logoAssetId: draft.logoAssetId.trim() || null,
     enabled: draft.enabled,
   };
@@ -151,13 +167,16 @@ function parseConnectionImport(source: string): ImportedConnection {
   if (endpoint.pathname === "/") {
     endpoint.pathname = "/v1";
   }
+  const baseUrl = endpoint.toString().replace(/\/$/, "");
   return {
     draft: {
       displayName: "星思研 New API",
       providerId: "newapi-gzxsy",
-      baseUrl: endpoint.toString().replace(/\/$/, ""),
-      apiFamily: "openai-completions",
+      baseUrl,
+      modelsUrl: `${baseUrl}/models`,
+      apiFamily: "openai-responses",
       modelIdsText: "",
+      supportsTools: false,
       logoAssetId: "newapi-gzxsy",
       enabled: true,
     },
@@ -219,7 +238,8 @@ export function ProviderSettings({
     (connection) => connection.connectionId === selectedConnectionId,
   );
   const [draft, setDraft] = useState<ProviderDraft>(EMPTY_PROVIDER_DRAFT);
-  const [credential, setCredential] = useState("");
+  const [responsesCredential, setResponsesCredential] = useState("");
+  const [imageCredential, setImageCredential] = useState("");
   const importSourceRef = useRef<HTMLInputElement>(null);
   const [hasImportSource, setHasImportSource] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -308,7 +328,8 @@ export function ProviderSettings({
     setSelectedConnectionId(connection.connectionId);
     setEditingRevision(connection.revision);
     setDraft(connectionToDraft(connection));
-    setCredential("");
+    setResponsesCredential("");
+    setImageCredential("");
     if (importSourceRef.current) {
       importSourceRef.current.value = "";
     }
@@ -330,7 +351,8 @@ export function ProviderSettings({
     setSelectedConnectionId(null);
     setEditingRevision(null);
     setDraft(EMPTY_PROVIDER_DRAFT);
-    setCredential("");
+    setResponsesCredential("");
+    setImageCredential("");
     if (importSourceRef.current) {
       importSourceRef.current.value = "";
     }
@@ -364,12 +386,15 @@ export function ProviderSettings({
       displayName: preset.displayName,
       providerId: preset.suggestedProviderId,
       baseUrl: preset.defaultBaseUrl,
+      modelsUrl: `${preset.defaultBaseUrl.replace(/\/$/, "")}/models`,
       apiFamily: preset.apiFamily,
       modelIdsText: "",
+      supportsTools: false,
       logoAssetId: preset.logoAssetId ?? "",
       enabled: true,
     });
-    setCredential("");
+    setResponsesCredential("");
+    setImageCredential("");
     setNotice(null);
     setErrorMessage(null);
   };
@@ -391,7 +416,8 @@ export function ProviderSettings({
       setSelectedConnectionId(null);
       setEditingRevision(null);
       setDraft(imported.draft);
-      setCredential(canSetCredential ? imported.credential : "");
+      setResponsesCredential(canSetCredential ? imported.credential : "");
+      setImageCredential("");
       setNotice(
         canSetCredential
           ? t("provider.imported")
@@ -427,12 +453,15 @@ export function ProviderSettings({
       saving ||
       (connectionId ? !canUpdate : !canCreate) ||
       (connectionId !== null && expectedRevision === null) ||
-      (credential.trim().length > 0 && !canSetCredential)
+      ((responsesCredential.trim().length > 0 || imageCredential.trim().length > 0) &&
+        !canSetCredential)
     ) {
       return;
     }
-    const pendingCredential = credential;
-    setCredential("");
+    const pendingResponsesCredential = responsesCredential;
+    const pendingImageCredential = imageCredential;
+    setResponsesCredential("");
+    setImageCredential("");
     setSaving(true);
     setNotice(null);
     setErrorMessage(null);
@@ -460,9 +489,22 @@ export function ProviderSettings({
         return;
       }
 
-      if (pendingCredential.trim()) {
+      if (pendingResponsesCredential.trim() || pendingImageCredential.trim()) {
         try {
-          await service.setProviderCredential(result.connection.providerId, pendingCredential);
+          if (pendingResponsesCredential.trim()) {
+            await service.setProviderCredential(
+              result.connection.providerId,
+              "responses",
+              pendingResponsesCredential,
+            );
+          }
+          if (pendingImageCredential.trim()) {
+            await service.setProviderCredential(
+              result.connection.providerId,
+              "image",
+              pendingImageCredential,
+            );
+          }
         } catch {
           const refreshed = await refreshProviderQueries();
           setErrorMessage(
@@ -476,7 +518,7 @@ export function ProviderSettings({
       let discoveryFailed = false;
       if (
         canDiscover &&
-        (pendingCredential.trim().length > 0 || result.connection.credentialConfigured)
+        (pendingResponsesCredential.trim().length > 0 || result.connection.credentialConfigured)
       ) {
         try {
           const discovery = await service.discoverProviderModels(
@@ -524,16 +566,23 @@ export function ProviderSettings({
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  const handleRemoveCredential = async () => {
+  const handleRemoveCredential = async (credentialKind: ProviderCredentialKind) => {
     if (!selectedConnection || saving || !canRemoveCredential) {
       return;
     }
-    setCredential("");
+    if (credentialKind === "responses") {
+      setResponsesCredential("");
+    } else {
+      setImageCredential("");
+    }
     setSaving(true);
     setNotice(null);
     setErrorMessage(null);
     try {
-      const status = await service.removeProviderCredential(selectedConnection.providerId);
+      const status = await service.removeProviderCredential(
+        selectedConnection.providerId,
+        credentialKind,
+      );
       if (!(await refreshProviderQueries())) {
         setErrorMessage(t("provider.refreshFailed"));
         return;
@@ -575,7 +624,8 @@ export function ProviderSettings({
       setSelectedConnectionId(null);
       setEditingRevision(null);
       setDraft(EMPTY_PROVIDER_DRAFT);
-      setCredential("");
+      setResponsesCredential("");
+      setImageCredential("");
       if (!(await refreshProviderQueries())) {
         setErrorMessage(t("provider.refreshFailed"));
         return;
@@ -942,14 +992,34 @@ export function ProviderSettings({
               required
             />
           </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="provider-models-url" className="text-[10px]">{t("provider.fields.modelsUrl")}</Label>
+            <Input
+              id="provider-models-url"
+              type="url"
+              value={draft.modelsUrl}
+              onChange={(event) => setDraft({ ...draft, modelsUrl: event.target.value })}
+              className="h-8 font-mono text-[10px]"
+              placeholder="https://api.example.com/v1/models"
+              required
+            />
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="provider-api-family" className="text-[10px]">{t("provider.fields.apiFamily")}</Label>
-            <Input
-              id="provider-api-family"
+            <Select
               value={draft.apiFamily}
-              className="h-8 font-mono text-[10px]"
-              readOnly
-            />
+              onValueChange={(apiFamily: ProviderDraft["apiFamily"]) =>
+                setDraft({ ...draft, apiFamily })
+              }
+            >
+              <SelectTrigger id="provider-api-family" className="h-8 font-mono text-[10px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="openai-responses">openai-responses</SelectItem>
+                <SelectItem value="openai-completions">openai-completions</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="provider-logo" className="text-[10px]">{t("provider.fields.logoAssetId")}</Label>
@@ -980,8 +1050,20 @@ export function ProviderSettings({
             </p>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
+            <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+              <Switch
+                id="provider-supports-tools"
+                checked={draft.supportsTools}
+                onCheckedChange={(supportsTools) => setDraft({ ...draft, supportsTools })}
+              />
+              <Label htmlFor="provider-supports-tools" className="text-[10px] font-normal">
+                {t("provider.fields.supportsTools")}
+              </Label>
+            </div>
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
             <div className="flex items-center justify-between gap-2">
-              <Label htmlFor="provider-key" className="text-[10px]">{t("provider.fields.apiKey")}</Label>
+              <Label htmlFor="provider-responses-key" className="text-[10px]">{t("provider.fields.responsesApiKey")}</Label>
               {selectedConnection?.credentialConfigured ? (
                 <Badge variant="secondary" className="gap-1 bg-emerald-50 text-[9px] text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
                   <CheckCircle2 className="size-2.5" aria-hidden="true" />
@@ -993,10 +1075,10 @@ export function ProviderSettings({
               <div className="relative min-w-0 flex-1">
                 <KeyRound className="pointer-events-none absolute left-2.5 top-2 size-3 text-muted-foreground" aria-hidden="true" />
                 <Input
-                  id="provider-key"
+                  id="provider-responses-key"
                   type="password"
-                  value={credential}
-                  onChange={(event) => setCredential(event.target.value)}
+                  value={responsesCredential}
+                  onChange={(event) => setResponsesCredential(event.target.value)}
                   className="h-8 pl-8 text-[11px]"
                   placeholder={selectedConnection?.credentialConfigured ? t("provider.fields.replacementKey") : t("provider.fields.apiKeyPlaceholder")}
                   autoComplete="new-password"
@@ -1009,7 +1091,45 @@ export function ProviderSettings({
                   variant="outline"
                   size="sm"
                   className="h-8 px-2 text-[10px] shadow-none"
-                  onClick={() => void handleRemoveCredential()}
+                  onClick={() => void handleRemoveCredential("responses")}
+                  disabled={saving}
+                >
+                  {t("common.remove")}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="provider-image-key" className="text-[10px]">{t("provider.fields.imageApiKey")}</Label>
+              {selectedConnection?.imageCredentialConfigured ? (
+                <Badge variant="secondary" className="gap-1 bg-emerald-50 text-[9px] text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                  <CheckCircle2 className="size-2.5" aria-hidden="true" />
+                  {t("common.configured")}
+                </Badge>
+              ) : null}
+            </div>
+            <div className="flex gap-2">
+              <div className="relative min-w-0 flex-1">
+                <KeyRound className="pointer-events-none absolute left-2.5 top-2 size-3 text-muted-foreground" aria-hidden="true" />
+                <Input
+                  id="provider-image-key"
+                  type="password"
+                  value={imageCredential}
+                  onChange={(event) => setImageCredential(event.target.value)}
+                  className="h-8 pl-8 text-[11px]"
+                  placeholder={selectedConnection?.imageCredentialConfigured ? t("provider.fields.replacementKey") : t("provider.fields.apiKeyPlaceholder")}
+                  autoComplete="new-password"
+                  disabled={!canSetCredential}
+                />
+              </div>
+              {selectedConnection?.imageCredentialConfigured && canRemoveCredential ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2 text-[10px] shadow-none"
+                  onClick={() => void handleRemoveCredential("image")}
                   disabled={saving}
                 >
                   {t("common.remove")}
@@ -1036,7 +1156,7 @@ export function ProviderSettings({
             {saving
               ? t("provider.savingAndDiscovering")
               : canDiscover &&
-                  (credential.trim().length > 0 || selectedConnection?.credentialConfigured)
+                  (responsesCredential.trim().length > 0 || selectedConnection?.credentialConfigured)
                 ? t("provider.saveAndDiscover")
                 : t("common.save")}
           </Button>

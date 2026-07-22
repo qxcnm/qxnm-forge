@@ -40,11 +40,29 @@ export interface ModelDescriptor {
 export interface RunStartInput {
   readonly sessionId: string;
   readonly prompt: string;
+  readonly attachments?: readonly RunStartAttachment[];
   readonly model: Pick<ModelDescriptor, "providerId" | "modelId" | "apiFamily">;
   readonly agentProfile?: {
     readonly profileId: string;
     readonly revision: number;
   };
+}
+
+/** 运行输入中的附加文本或已 durable 图片引用。 */
+export type RunStartAttachment =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image_ref"; readonly artifact: SessionArtifactReference; readonly alt?: string };
+
+/** 发布一张同 Session 输入图片的瞬时请求。 */
+export interface ArtifactCreateInput {
+  readonly sessionId: string;
+  readonly mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  readonly dataBase64: string;
+}
+
+/** 输入图片 durable 发布后的 portable 引用。 */
+export interface ArtifactCreateResult {
+  readonly artifact: SessionArtifactReference;
 }
 
 /** 服务接受运行后的稳定引用。 */
@@ -64,8 +82,10 @@ export interface ProviderConnectionInput {
   readonly displayName: string;
   readonly providerId: string;
   readonly baseUrl: string;
-  readonly apiFamily: "openai-completions";
+  readonly modelsUrl: string;
+  readonly apiFamily: "openai-responses" | "openai-completions";
   readonly modelIds: readonly string[];
+  readonly supportsTools: boolean;
   readonly logoAssetId: string | null;
   readonly enabled: boolean;
 }
@@ -75,6 +95,7 @@ export interface ProviderConnection extends ProviderConnectionInput {
   readonly connectionId: string;
   readonly revision: number;
   readonly credentialConfigured: boolean;
+  readonly imageCredentialConfigured: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -101,9 +122,13 @@ export interface ProviderConnectionDeleteResult {
 /** Provider 凭据写入或移除后的最小状态投影。 */
 export interface ProviderCredentialStatus {
   readonly providerId: string;
+  readonly credentialKind: ProviderCredentialKind;
   readonly credentialConfigured: boolean;
   readonly restartRequired: true;
 }
+
+/** Provider 凭据互不回退的封闭用途。 */
+export type ProviderCredentialKind = "responses" | "image";
 
 /** 后端冻结目录投影出的 OpenAI-compatible Provider 配置模板。 */
 export interface ProviderCatalogEntry {
@@ -404,6 +429,14 @@ export interface ApplicationServiceClient extends AgentProfileService {
   listModels(): Promise<readonly ModelDescriptor[]>;
 
   /**
+   * durable 发布同 Session 输入图片，并只返回不含字节或路径的引用。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  createArtifact(input: ArtifactCreateInput): Promise<ArtifactCreateResult>;
+
+  /**
    * 请求后端开始一次 Agent 运行。
    *
    * 输入：稳定 Session、非空 prompt 与服务端模型三元标识。
@@ -539,6 +572,7 @@ export interface ApplicationServiceClient extends AgentProfileService {
    */
   setProviderCredential(
     providerId: string,
+    credentialKind: ProviderCredentialKind,
     credential: string,
   ): Promise<ProviderCredentialStatus>;
 
@@ -552,7 +586,10 @@ export interface ApplicationServiceClient extends AgentProfileService {
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  removeProviderCredential(providerId: string): Promise<ProviderCredentialStatus>;
+  removeProviderCredential(
+    providerId: string,
+    credentialKind: ProviderCredentialKind,
+  ): Promise<ProviderCredentialStatus>;
 
   /**
    * 读取指定 Session 当前 selected branch 的完整 portable 消息快照。

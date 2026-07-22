@@ -4,11 +4,11 @@ using QxnmForge.Session;
 namespace QxnmForge.Tests;
 
 /// <summary>
-/// 功能：验证 .NET 原生 PI Session v3 clean-room 导入的确定性、安全失败与通用生产映射。
+/// 功能：验证 .NET 原生 第三方 Session v3 clean-room 导入的确定性、安全失败与通用生产映射。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
-public sealed class PiV3ImporterTests
+public sealed class LegacySessionV3ImporterTests
 {
     /// <summary>
     /// 功能：确认固定合成 source 生成与公共 journal/report 逐字节相同的 durable Session。
@@ -27,8 +27,8 @@ public sealed class PiV3ImporterTests
         var sourceBefore = await File.ReadAllBytesAsync(source);
         var hashBefore = SHA256.HashData(sourceBefore);
 
-        var result = await PiV3Importer.ImportAsync(
-            new PiV3ImportOptions(
+        var result = await LegacySessionV3Importer.ImportAsync(
+            new LegacySessionV3ImportOptions(
                 source,
                 workspace,
                 state,
@@ -63,8 +63,8 @@ public sealed class PiV3ImporterTests
         var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
         var state = Directory.CreateDirectory(Path.Combine(temporary.Path, "state")).FullName;
 
-        var exception = await Assert.ThrowsAsync<PiV3ImportException>(() => PiV3Importer.ImportAsync(
-            new PiV3ImportOptions(source, workspace, state, "session-duplicate", Conformance: false)));
+        var exception = await Assert.ThrowsAsync<LegacySessionV3ImportException>(() => LegacySessionV3Importer.ImportAsync(
+            new LegacySessionV3ImportOptions(source, workspace, state, "session-duplicate", Conformance: false)));
 
         Assert.Equal(7, exception.ExitCode);
         Assert.Empty(Directory.EnumerateFiles(state, "journal.jsonl", SearchOption.AllDirectories));
@@ -90,15 +90,15 @@ public sealed class PiV3ImporterTests
         var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
         var state = Directory.CreateDirectory(Path.Combine(temporary.Path, "state")).FullName;
 
-        var exception = await Assert.ThrowsAsync<PiV3ImportException>(() => PiV3Importer.ImportAsync(
-            new PiV3ImportOptions(source, workspace, state, "session-link", Conformance: false)));
+        var exception = await Assert.ThrowsAsync<LegacySessionV3ImportException>(() => LegacySessionV3Importer.ImportAsync(
+            new LegacySessionV3ImportOptions(source, workspace, state, "session-link", Conformance: false)));
 
         Assert.Equal(7, exception.ExitCode);
         Assert.Empty(Directory.EnumerateFiles(state, "journal.jsonl", SearchOption.AllDirectories));
     }
 
     /// <summary>
-    /// 功能：确认生产模式为通用最小 PI v3 tree 生成 fresh ID，且不把 source/cwd 路径持久化。
+    /// 功能：确认生产模式为通用最小 第三方 Session v3 tree 生成 fresh ID，且不把 source/cwd 路径持久化。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -114,8 +114,8 @@ public sealed class PiV3ImporterTests
         var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
         var state = Directory.CreateDirectory(Path.Combine(temporary.Path, "state")).FullName;
 
-        var result = await PiV3Importer.ImportAsync(
-            new PiV3ImportOptions(source, workspace, state, SessionId: null, Conformance: false));
+        var result = await LegacySessionV3Importer.ImportAsync(
+            new LegacySessionV3ImportOptions(source, workspace, state, SessionId: null, Conformance: false));
 
         Assert.StartsWith("session-", result.SessionId, StringComparison.Ordinal);
         Assert.NotEqual("pi-generic-source", result.SessionId);
@@ -147,8 +147,8 @@ public sealed class PiV3ImporterTests
         var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
         var state = Directory.CreateDirectory(Path.Combine(temporary.Path, "state")).FullName;
 
-        var result = await PiV3Importer.ImportAsync(
-            new PiV3ImportOptions(source, workspace, state, "session-redaction", Conformance: false));
+        var result = await LegacySessionV3Importer.ImportAsync(
+            new LegacySessionV3ImportOptions(source, workspace, state, "session-redaction", Conformance: false));
 
         var session = Path.Combine(state, "sessions", result.SessionId);
         var report = await File.ReadAllTextAsync(Directory.EnumerateFiles(Path.Combine(session, "artifacts")).Single());
@@ -177,8 +177,8 @@ public sealed class PiV3ImporterTests
         var marker = Path.Combine(target, "owner-marker.txt");
         await File.WriteAllTextAsync(marker, "preserve-me");
 
-        var exception = await Assert.ThrowsAsync<PiV3ImportException>(() => PiV3Importer.ImportAsync(
-            new PiV3ImportOptions(source, workspace, state, "session-existing", Conformance: false)));
+        var exception = await Assert.ThrowsAsync<LegacySessionV3ImportException>(() => LegacySessionV3Importer.ImportAsync(
+            new LegacySessionV3ImportOptions(source, workspace, state, "session-existing", Conformance: false)));
 
         Assert.Equal(8, exception.ExitCode);
         Assert.Equal("preserve-me", await File.ReadAllTextAsync(marker));
@@ -202,15 +202,15 @@ public sealed class PiV3ImporterTests
             source,
             header + "{\"type\":\"message\",\"id\":\"entry-user\",\"parentId\":null,\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"unexpected\":true}\n");
 
-        await Assert.ThrowsAsync<PiV3ImportException>(() => PiV3Importer.ImportAsync(
-            new PiV3ImportOptions(source, workspace, state, "session-extra-field", Conformance: false)));
+        await Assert.ThrowsAsync<LegacySessionV3ImportException>(() => LegacySessionV3Importer.ImportAsync(
+            new LegacySessionV3ImportOptions(source, workspace, state, "session-extra-field", Conformance: false)));
         var nesting = new string('[', 65) + "0" + new string(']', 65);
         await File.WriteAllTextAsync(
             source,
             header + "{\"type\":\"future_entry\",\"id\":\"entry-deep\",\"parentId\":null,\"timestamp\":\"2026-01-01T00:00:01Z\",\"payload\":" + nesting + "}\n");
 
-        await Assert.ThrowsAsync<PiV3ImportException>(() => PiV3Importer.ImportAsync(
-            new PiV3ImportOptions(source, workspace, state, "session-deep", Conformance: false)));
+        await Assert.ThrowsAsync<LegacySessionV3ImportException>(() => LegacySessionV3Importer.ImportAsync(
+            new LegacySessionV3ImportOptions(source, workspace, state, "session-deep", Conformance: false)));
         Assert.Empty(Directory.EnumerateFiles(state, "journal.jsonl", SearchOption.AllDirectories));
     }
 }

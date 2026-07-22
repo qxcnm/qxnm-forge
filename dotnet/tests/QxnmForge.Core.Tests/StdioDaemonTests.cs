@@ -58,6 +58,94 @@ public sealed class StdioDaemonTests
     }
 
     /// <summary>
+    /// 功能：确认 artifacts/create 返回前已 durable 发布图片文件和 artifact.created，且响应与 journal 不回显 Base64 或路径。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>异步测试 Task。</returns>
+    [Fact]
+    public async Task ArtifactCreatePublishesDurableInputImageWithoutLeakingBytes()
+    {
+        using var temporary = new TemporaryDirectory();
+        var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+        var sessionsRoot = Path.Combine(temporary.Path, "sessions");
+        await using var repository = new SessionRepository(sessionsRoot, workspace);
+        var daemon = new StdioDaemon(
+            repository,
+            new AgentService(repository, new FauxProvider()),
+            conformanceMode: true);
+        const string encoded = "iVBORw0KGgpmaXh0dXJl";
+        var requests = string.Join('\n',
+            "{\"jsonrpc\":\"2.0\",\"id\":\"initialize-artifact\",\"method\":\"initialize\",\"params\":{\"protocolVersions\":[\"0.1\"],\"client\":{\"name\":\"test\",\"version\":\"0.1\"},\"capabilities\":{}}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":\"create-artifact\",\"method\":\"artifacts/create\",\"params\":{\"sessionId\":\"artifact-session\",\"mediaType\":\"image/png\",\"dataBase64\":\"" + encoded + "\"}}") + "\n";
+        await using var input = new MemoryStream(Encoding.UTF8.GetBytes(requests));
+        await using var output = new MemoryStream();
+
+        await daemon.RunAsync(input, output, CancellationToken.None);
+        var frames = ParseFrames(output);
+        try
+        {
+            Assert.Equal(2, frames.Count);
+            Assert.Contains(
+                frames[0].RootElement
+                    .GetProperty("result")
+                    .GetProperty("capabilities")
+                    .GetProperty("methods")
+                    .EnumerateArray(),
+                static method => method.GetString() == "artifacts/create");
+            var artifact = frames[1].RootElement.GetProperty("result").GetProperty("artifact");
+            Assert.Equal("image/png", artifact.GetProperty("mediaType").GetString());
+            Assert.Equal(15, artifact.GetProperty("byteLength").GetInt64());
+            var artifactId = artifact.GetProperty("artifactId").GetString()!;
+            Assert.DoesNotContain(encoded, Encoding.UTF8.GetString(output.ToArray()), StringComparison.Ordinal);
+
+            var runtime = await repository.GetAsync("artifact-session", CancellationToken.None);
+            var journalText = await File.ReadAllTextAsync(
+                runtime.Journal.JournalPath,
+                CancellationToken.None);
+            Assert.DoesNotContain(encoded, journalText, StringComparison.Ordinal);
+            Assert.DoesNotContain(runtime.Journal.DirectoryPath, journalText, StringComparison.Ordinal);
+            var records = journalText
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Skip(1)
+                .Select(static line => JsonDocument.Parse(line))
+                .ToArray();
+            try
+            {
+                var record = Assert.Single(records);
+                Assert.Equal("artifact.created", record.RootElement.GetProperty("kind").GetString());
+                Assert.Equal(
+                    artifactId,
+                    record.RootElement
+                        .GetProperty("data")
+                        .GetProperty("artifact")
+                        .GetProperty("artifactId")
+                        .GetString());
+            }
+            finally
+            {
+                foreach (var record in records)
+                {
+                    record.Dispose();
+                }
+            }
+
+            var expectedBytes = Convert.FromBase64String(encoded);
+            var storedBytes = await File.ReadAllBytesAsync(
+                Path.Combine(runtime.Journal.DirectoryPath, "artifacts", artifactId),
+                CancellationToken.None);
+            Assert.Equal(expectedBytes, storedBytes);
+        }
+        finally
+        {
+            foreach (var frame in frames)
+            {
+                frame.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
     /// 功能：确认 daemon 的 session/get 返回完整消息、event afterSeq 增量，并只广告真实 Provider、工具和方法。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com

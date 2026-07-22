@@ -256,6 +256,9 @@ public sealed class StdioDaemon
                 case "providerCredentials/remove" when providerConnections is not null:
                     await RemoveProviderCredentialAsync(request, writer, cancellationToken).ConfigureAwait(false);
                     break;
+                case "artifacts/create":
+                    await CreateArtifactAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
                 case "run/start":
                     acceptedRuns.Add(await StartRunAsync(
                         request,
@@ -360,6 +363,32 @@ public sealed class StdioDaemon
         await writer.WriteSuccessAsync(
             request.Id,
             new FauxConfigureResult(scenarioId),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：严格解码并 durable 发布同 Session 输入图片，响应不回显任何字节或路径。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">artifacts/create 请求。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">解码后发布与响应写入取消信号。</param>
+    /// <returns>artifact.created flush 后写出 portable 引用的任务。</returns>
+    private async Task CreateArtifactAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var (sessionId, mediaType, bytes) = ProtocolCodec.ParseArtifactCreate(request.Params);
+        var artifact = await sessions.PublishInputImageAsync(
+            sessionId,
+            mediaType,
+            bytes,
+            cancellationToken).ConfigureAwait(false);
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new ArtifactCreateResult(artifact),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -867,12 +896,14 @@ public sealed class StdioDaemon
         ProtocolWriter writer,
         CancellationToken cancellationToken)
     {
-        var (providerId, credential) = ProtocolCodec.ParseProviderCredentialsSet(request.Params);
-        providerConnections!.SetCredential(providerId, credential);
+        var (providerId, credentialKind, credential) =
+            ProtocolCodec.ParseProviderCredentialsSet(request.Params);
+        providerConnections!.SetCredential(providerId, credentialKind, credential);
         await writer.WriteSuccessAsync(
             request.Id,
             new ProviderCredentialStatusResult(
                 providerId,
+                credentialKind,
                 CredentialConfigured: true,
                 RestartRequired: true),
             cancellationToken).ConfigureAwait(false);
@@ -892,12 +923,14 @@ public sealed class StdioDaemon
         ProtocolWriter writer,
         CancellationToken cancellationToken)
     {
-        var providerId = ProtocolCodec.ParseProviderCredentialsRemove(request.Params);
-        providerConnections!.RemoveCredential(providerId);
+        var (providerId, credentialKind) =
+            ProtocolCodec.ParseProviderCredentialsRemove(request.Params);
+        providerConnections!.RemoveCredential(providerId, credentialKind);
         await writer.WriteSuccessAsync(
             request.Id,
             new ProviderCredentialStatusResult(
                 providerId,
+                credentialKind,
                 CredentialConfigured: false,
                 RestartRequired: true),
             cancellationToken).ConfigureAwait(false);
@@ -1070,7 +1103,7 @@ public sealed class StdioDaemon
 
         methods.AddRange(
             [
-                "run/start", "run/cancel", "approval/respond", "session/get",
+                "artifacts/create", "run/start", "run/cancel", "approval/respond", "session/get",
                 "session/branch/select", "session/compact", "models/list", "providerCatalog/list",
             ]);
         return new InitializeResult(

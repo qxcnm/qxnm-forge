@@ -166,6 +166,10 @@ python3 -m unittest discover -s CONFORMANCE/tests
 
 默认测试只使用离线 Provider、loopback mock 和合成凭据，不会偷偷调用付费模型。
 
+## 鸣谢与参考项目
+
+感谢 `PI-agent` 在模型目录、API 行为和 Session v3 设计方面提供的研究参考。QXNM Forge Community 是独立的 clean-room Rust/.NET 实现，不执行、不依赖或捆绑 `PI-agent` runtime；双方不存在官方关联，本项目也不暗示获得其背书。
+
 ## 许可证
 
 QXNM Forge Community 按 [PolyForm Noncommercial License 1.0.0](LICENSE) 提供，仅限非商业使用。

@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use crate::agent_profile::AgentProfileRunSnapshot;
 use crate::domain::{
-    ContentBlock, EventEnvelope, FinishReason, Message, ProviderEvent, Role, ToolEffect,
-    ToolOutput, Usage,
+    ArtifactRef, ContentBlock, EventEnvelope, FinishReason, Message, ProviderEvent, Role,
+    ToolEffect, ToolOutput, Usage,
 };
 use crate::error::{AgentError, ErrorCode};
 use crate::policy::PolicyDecision;
@@ -213,6 +213,45 @@ impl Agent {
     #[must_use]
     pub(crate) fn session_store(&self) -> SessionStore {
         self.sessions.clone()
+    }
+
+    /// 功能：在同一 Session 中 durable 发布客户端输入图片，并返回 portable 引用。
+    ///
+    /// 输入：opaque Session ID、受支持图片 MIME 与最多 512 KiB 的完整字节。
+    /// 输出：文件与 `artifact.created` 均 durable 后的强绑定引用。
+    /// 不变量：与 run 接受共享串行门禁；活动 Session 拒绝上传；字节、Base64 和主机路径不进入 journal 或错误。
+    /// 失败：Session busy、MIME/魔数/大小、路径、锁、发布或 journal 失败时返回脱敏错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub async fn publish_input_image(
+        &self,
+        session_id: &str,
+        media_type: &str,
+        bytes: &[u8],
+    ) -> Result<ArtifactRef, AgentError> {
+        if bytes.is_empty() || bytes.len() > 524_288 {
+            return Err(AgentError::new(
+                ErrorCode::InvalidParams,
+                "artifact image data is invalid",
+            ));
+        }
+        let _acceptance = self.acceptance.lock().await;
+        if self
+            .active
+            .lock()
+            .await
+            .values()
+            .any(|control| control.session_id == session_id)
+        {
+            return Err(session_busy_error());
+        }
+        self.sessions
+            .create_session(session_id, &self.workspace)
+            .await?;
+        let _lease = self.sessions.acquire_writer(session_id).await?;
+        self.sessions
+            .store_image_artifact(session_id, bytes, media_type)
+            .await
     }
 
     /// 功能：返回当前进程真实注册、可接受 run/start 的 Provider capability 列表。
@@ -3254,6 +3293,51 @@ mod tests {
             operation_hash("file.write", &arguments)?,
             "9f0e665711f1eeb35858845b61f10f2b703237a18290df088d4c9e41207e539d"
         );
+        Ok(())
+    }
+
+    /// 功能：验证客户端输入图片返回前已同时发布文件与 artifact.created，journal 不包含原始字节或路径。
+    ///
+    /// 不变量：测试只使用本地 synthetic PNG，不访问 Provider 或任何 credential。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn publishes_durable_input_image_artifact() -> Result<(), AgentError> {
+        let directory = tempdir()?;
+        let state = directory.path().join("state");
+        let guard = WorkspaceGuard::new(directory.path())?;
+        let sessions = SessionStore::new(&state, 1024 * 1024).await?;
+        let tools = Arc::new(ToolRegistry::new(
+            guard.clone(),
+            ToolPolicy::headless_default(),
+            sessions.clone(),
+        ));
+        let agent = Agent::new(
+            BTreeMap::new(),
+            tools,
+            sessions.clone(),
+            guard.root().to_path_buf(),
+        );
+        let png = b"\x89PNG\r\n\x1a\nfixture";
+
+        let artifact = agent
+            .publish_input_image("session-input-image", "image/png", png)
+            .await?;
+
+        let records = sessions.load("session-input-image").await?;
+        let record = records.first().ok_or_else(|| {
+            AgentError::new(ErrorCode::InternalError, "missing artifact.created record")
+        })?;
+        assert_eq!(records.len(), 1);
+        assert_eq!(record.kind, "artifact.created");
+        assert_eq!(record.data["artifact"]["artifactId"], artifact.artifact_id);
+        let artifact_path = state
+            .join("sessions/session-input-image/artifacts")
+            .join(&artifact.artifact_id);
+        assert_eq!(fs::read(&artifact_path)?, png);
+        let journal = fs::read_to_string(state.join("sessions/session-input-image/journal.jsonl"))?;
+        assert!(!journal.contains("fixture"));
+        assert!(!journal.contains(artifact_path.to_string_lossy().as_ref()));
         Ok(())
     }
 
