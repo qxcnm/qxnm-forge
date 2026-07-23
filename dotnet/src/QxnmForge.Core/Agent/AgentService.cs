@@ -170,6 +170,9 @@ public sealed class AcceptedRun
 public sealed class AgentService
 {
     private const long MaxArtifactBytes = 1_073_741_824;
+    private const int MaxProviderInputImages = 8;
+    private const long MaxCustomInputImageBytes = 524_288;
+    private const long MaxCustomTotalInputImageBytes = 4_194_304;
     private static readonly TimeSpan DefaultApprovalTimeout = TimeSpan.FromMinutes(5);
 
     private readonly SessionRepository sessions;
@@ -944,7 +947,7 @@ public sealed class AgentService
                 switch (signal)
                 {
                     case ProviderTextSignal textSignal:
-                        if (run.ProviderAdapter.ApiFamily == "openrouter-images" || imageCompletion is not null)
+                        if (run.ProviderAdapter.SupportsImageOutput || imageCompletion is not null)
                         {
                             throw new ProviderOperationException(new PortableError(
                                 -32005,
@@ -1030,25 +1033,50 @@ public sealed class AgentService
 
             var finishReason = toolCalls.Count == 0 ? "stop" : "tool_use";
             var content = new List<object>();
+            IReadOnlyList<ArtifactReference>? imageArtifacts = null;
             if (imageCompletion is not null)
             {
+                if (!run.ProviderAdapter.SupportsImageOutput ||
+                    imageCompletion.FinishReason is not ("stop" or "length" or "error") ||
+                    (imageCompletion.Images.Count > 0 && imageCompletion.FinishReason != "stop") ||
+                    (imageCompletion.Images.Count == 0 && string.IsNullOrEmpty(imageCompletion.Text)))
+                {
+                    throw new ProviderOperationException(new PortableError(
+                        -32005,
+                        "provider returned an invalid image completion",
+                        false,
+                        new ErrorDetails("provider_protocol_error", ProviderId: run.Provider.Id)));
+                }
+
+                finishReason = imageCompletion.FinishReason;
                 if (!string.IsNullOrEmpty(imageCompletion.Text))
                 {
                     content.Add(new TextContent(imageCompletion.Text));
                 }
 
-                foreach (var image in imageCompletion.Images)
+                try
                 {
-                    var artifact = await SessionArtifactStore.PublishImageAsync(
+                    imageArtifacts = await SessionArtifactStore.PublishImageBatchAsync(
                         journal.DirectoryPath,
-                        image.MediaType,
-                        image.Bytes,
+                        imageCompletion.Images
+                            .Select(static image => (
+                                image.MediaType,
+                                (ReadOnlyMemory<byte>)image.Bytes))
+                            .ToArray(),
                         MaxArtifactBytes,
                         cancellationToken).ConfigureAwait(false);
-                    await journal.AppendAsync(
-                        "artifact.created",
-                        new { Artifact = artifact },
-                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (ArtifactValidationException)
+                {
+                    throw new ProviderOperationException(new PortableError(
+                        -32005,
+                        "provider returned an invalid image batch",
+                        false,
+                        new ErrorDetails("provider_protocol_error", ProviderId: run.Provider.Id)));
+                }
+
+                foreach (var artifact in imageArtifacts)
+                {
                     content.Add(new ImageReferenceContent(artifact));
                 }
             }
@@ -1080,14 +1108,47 @@ public sealed class AgentService
                     Time = DateTimeOffset.UtcNow,
                 },
                 JsonDefaults.Options);
-            await journal.AppendAsync(
-                "message.appended",
-                new { Message = assistantMessage, run.RunId, TurnId = turnId },
-                cancellationToken).ConfigureAwait(false);
+            var imageBatchCommitted = false;
+            if (imageArtifacts is { Count: > 0 })
+            {
+                try
+                {
+                    _ = await journal.AppendImageCompletionBatchAsync(
+                        imageArtifacts,
+                        assistantMessage,
+                        run.RunId,
+                        turnId,
+                        cancellationToken).ConfigureAwait(false);
+                    imageBatchCommitted = true;
+                }
+                catch (JournalBatchAppendException exception) when (!exception.RollbackCompleted)
+                {
+                    throw;
+                }
+                catch
+                {
+                    SessionArtifactStore.DeleteUncommittedImageBatch(
+                        journal.DirectoryPath,
+                        imageArtifacts,
+                        MaxArtifactBytes);
+                    throw;
+                }
+            }
+            else
+            {
+                await journal.AppendAsync(
+                    "message.appended",
+                    new { Message = assistantMessage, run.RunId, TurnId = turnId },
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            var completionCancellation = imageBatchCommitted
+                ? CancellationToken.None
+                : cancellationToken;
             await journal.AppendAsync(
                 "provider.attempt",
                 new { run.RunId, TurnId = turnId, Attempt = attempt, Status = "completed" },
-                cancellationToken).ConfigureAwait(false);
+                completionCancellation).ConfigureAwait(false);
             providerAttemptOpen = false;
             await EmitAsync(
                 journal,
@@ -1096,7 +1157,7 @@ public sealed class AgentService
                 turnId,
                 "message.completed",
                 new { MessageId = assistantMessageId, FinishReason = finishReason },
-                cancellationToken).ConfigureAwait(false);
+                completionCancellation).ConfigureAwait(false);
             return (assistantMessage.Clone(), toolCalls, turnUsage, finishReason);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -2109,7 +2170,7 @@ public sealed class AgentService
         CancellationToken cancellationToken)
     {
         var imageContent = input.Content.OfType<ImageReferenceContent>().ToArray();
-        if (provider.ApiFamily != "openrouter-images")
+        if (!provider.SupportsImageInput)
         {
             if (imageContent.Length > 0)
             {
@@ -2125,8 +2186,14 @@ public sealed class AgentService
             textBytes = AddBounded(textBytes, Encoding.UTF8.GetByteCount(text.Text!));
         }
 
+        var singleImageLimit = provider.ApiFamily == "openrouter-images"
+            ? OpenRouterImagesProvider.MaxInputImageBytes
+            : MaxCustomInputImageBytes;
+        var totalImageLimit = provider.ApiFamily == "openrouter-images"
+            ? OpenRouterImagesProvider.MaxInputImageBytes
+            : MaxCustomTotalInputImageBytes;
         if (textBytes > OpenRouterImagesProvider.MaxTextBytes ||
-            imageContent.Length > OpenRouterImagesProvider.MaxInputImages)
+            imageContent.Length > MaxProviderInputImages)
         {
             throw new ArgumentException("OpenRouter image input exceeded a limit", nameof(input));
         }
@@ -2137,7 +2204,7 @@ public sealed class AgentService
         {
             var reference = image.Artifact!;
             imageBytes = AddBounded(imageBytes, reference.ByteLength);
-            if (imageBytes > OpenRouterImagesProvider.MaxInputImageBytes)
+            if (imageBytes > totalImageLimit)
             {
                 throw new ArgumentException("OpenRouter image input exceeded a limit", nameof(input));
             }
@@ -2158,7 +2225,7 @@ public sealed class AgentService
             {
                 _ = await journal.ReadImageArtifactAsync(
                     reference,
-                    OpenRouterImagesProvider.MaxInputImageBytes,
+                    singleImageLimit,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (ArtifactValidationException)
@@ -2169,7 +2236,7 @@ public sealed class AgentService
     }
 
     /// <summary>
-    /// 功能：为图像 family 从 selected context 收集、去重并重新复核全部 image_ref 输入。
+    /// 功能：为图像 family 从 selected context 的 user 消息收集、去重并重新复核 image_ref 输入。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -2177,8 +2244,8 @@ public sealed class AgentService
     /// <param name="messages">本轮将发送的完整 selected context。</param>
     /// <param name="provider">已选择 Provider adapter。</param>
     /// <param name="cancellationToken">artifact 文件读取取消信号。</param>
-    /// <returns>按首次引用顺序排列、每个 artifact ID 唯一的已验证输入。</returns>
-    /// <remarks>不变量：仅图像 family读取 artifact；bytes 不进入 message、journal、event 或日志。</remarks>
+    /// <returns>按首次 user 引用顺序排列、每个 artifact ID 唯一的已验证输入。</returns>
+    /// <remarks>不变量：仅图像 family 读取 user artifact；assistant 图片只用于历史展示；bytes 不进入 message、journal、event 或日志。</remarks>
     /// <exception cref="ProviderOperationException">引用数量/累计大小、元数据或文件绑定无效。</exception>
     private static async Task<IReadOnlyList<ProviderResolvedImage>> ResolveProviderImagesAsync(
         PortableSessionJournal journal,
@@ -2186,7 +2253,7 @@ public sealed class AgentService
         IProvider provider,
         CancellationToken cancellationToken)
     {
-        if (provider.ApiFamily != "openrouter-images")
+        if (!provider.SupportsImageInput)
         {
             return [];
         }
@@ -2195,7 +2262,11 @@ public sealed class AgentService
         long totalBytes = 0;
         foreach (var message in messages)
         {
-            if (!message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+            if (!message.TryGetProperty("role", out var role) ||
+                role.ValueKind != JsonValueKind.String ||
+                role.GetString() != "user" ||
+                !message.TryGetProperty("content", out var content) ||
+                content.ValueKind != JsonValueKind.Array)
             {
                 continue;
             }
@@ -2210,11 +2281,17 @@ public sealed class AgentService
                     continue;
                 }
 
-                var reference = ParseContextArtifactReference(block);
+                var singleImageLimit = provider.ApiFamily == "openrouter-images"
+                    ? OpenRouterImagesProvider.MaxInputImageBytes
+                    : MaxCustomInputImageBytes;
+                var totalImageLimit = provider.ApiFamily == "openrouter-images"
+                    ? OpenRouterImagesProvider.MaxInputImageBytes
+                    : MaxCustomTotalInputImageBytes;
+                var reference = ParseContextArtifactReference(block, singleImageLimit);
                 references.Add(reference);
                 totalBytes = AddBounded(totalBytes, reference.ByteLength);
-                if (references.Count > OpenRouterImagesProvider.MaxInputImages ||
-                    totalBytes > OpenRouterImagesProvider.MaxInputImageBytes)
+                if (references.Count > MaxProviderInputImages ||
+                    totalBytes > totalImageLimit)
                 {
                     throw ImageInputFailure("provider_input_limit", provider.Id);
                 }
@@ -2240,7 +2317,9 @@ public sealed class AgentService
             {
                 var bytes = await journal.ReadImageArtifactAsync(
                     reference,
-                    OpenRouterImagesProvider.MaxInputImageBytes,
+                    provider.ApiFamily == "openrouter-images"
+                        ? OpenRouterImagesProvider.MaxInputImageBytes
+                        : MaxCustomInputImageBytes,
                     cancellationToken).ConfigureAwait(false);
                 resolved.Add(new ProviderResolvedImage(reference, bytes));
             }
@@ -2261,7 +2340,9 @@ public sealed class AgentService
     /// <param name="block">selected Session context 中的 image_ref。</param>
     /// <returns>不含路径和字节的 portable 引用。</returns>
     /// <exception cref="ProviderOperationException">artifact 对象缺失、类型、长度或安全语法无效。</exception>
-    private static ArtifactReference ParseContextArtifactReference(JsonElement block)
+    private static ArtifactReference ParseContextArtifactReference(
+        JsonElement block,
+        long maximumBytes)
     {
         if (!block.TryGetProperty("artifact", out var artifact) ||
             artifact.ValueKind != JsonValueKind.Object ||
@@ -2284,7 +2365,7 @@ public sealed class AgentService
             hash.GetString()!);
         try
         {
-            ImageArtifactValidation.ValidateReference(reference, OpenRouterImagesProvider.MaxInputImageBytes);
+            ImageArtifactValidation.ValidateReference(reference, maximumBytes);
         }
         catch (ArgumentException)
         {

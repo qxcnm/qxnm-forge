@@ -16,6 +16,8 @@ mod vertex;
 use std::pin::Pin;
 
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -38,7 +40,9 @@ pub use sse::{SseDecoder, SseEvent};
 pub use vertex::GoogleVertexProvider;
 
 use crate::commercial_state::ProviderCredentialStore;
-use crate::domain::{Message, ProviderEvent, ToolDefinition};
+use crate::domain::{
+    ArtifactRef, Message, ProviderEvent, ProviderImage, ToolDefinition, validate_image_signature,
+};
 use crate::error::AgentError;
 
 /// Provider adapter 只保存来源身份、并在最终请求边界解析 credential 的统一来源。
@@ -105,6 +109,157 @@ impl ProviderCredentialSource {
 pub type ProviderStream =
     Pin<Box<dyn Stream<Item = Result<ProviderEvent, AgentError>> + Send + 'static>>;
 
+/// 已从同一 Session selected chain 安全复核的请求期图片。
+#[derive(Debug, Clone)]
+pub(crate) struct ProviderResolvedImage {
+    pub reference: ArtifactRef,
+    pub bytes: Vec<u8>,
+}
+
+pub(crate) const CUSTOM_MAX_IMAGE_COUNT: usize = 8;
+pub(crate) const CUSTOM_MAX_IMAGE_BYTES: usize = 524_288;
+pub(crate) const CUSTOM_MAX_TOTAL_IMAGE_BYTES: usize = 4_194_304;
+pub(crate) const CUSTOM_MAX_JSON_RESPONSE_BYTES: usize = 6_291_456;
+
+/// 功能：把已复核请求期图片转换为 canonical Base64 data URL。
+///
+/// 输入：完整 Provider 请求与 portable artifact 引用。
+/// 输出：MIME 与请求期字节组合的 `data:<mime>;base64,...`。
+/// 不变量：只接受 ID、MIME、长度、摘要及扩展都与 Agent 复核结果相同的引用；不读取文件或路径。
+/// 失败：缺少或不一致的请求期图片返回脱敏 Provider 输入错误，不回显字节、hash 或路径。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+pub(crate) fn resolved_image_data_url(
+    request: &ProviderRequest,
+    artifact: &ArtifactRef,
+) -> Result<String, AgentError> {
+    let image = request
+        .resolved_images
+        .iter()
+        .find(|image| image.reference == *artifact)
+        .ok_or_else(|| {
+            AgentError::new(
+                crate::error::ErrorCode::ProviderError,
+                "provider image input artifact is invalid",
+            )
+            .with_details(serde_json::json!({"kind":"provider_input_artifact_invalid"}))
+        })?;
+    Ok(format!(
+        "data:{};base64,{}",
+        artifact.media_type,
+        BASE64_STANDARD.encode(&image.bytes)
+    ))
+}
+
+/// 功能：严格解码一个自定义 Provider 返回的 Base64 图片。
+///
+/// 输入：无空白的 canonical Base64、受支持 MIME 与单图字节上限。
+/// 输出：通过 MIME、长度及魔数复核的内存图片候选。
+/// 不变量：解码后重新编码必须逐字节相同；字节不进入错误、日志或 wire event。
+/// 失败：编码、MIME、空内容、大小或魔数无效时返回脱敏 Provider 协议错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+pub(crate) fn decode_custom_base64_image(
+    encoded: &str,
+    media_type: &str,
+) -> Result<ProviderImage, AgentError> {
+    if !matches!(
+        media_type,
+        "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+    ) || encoded.is_empty()
+        || encoded.bytes().any(|byte| byte.is_ascii_whitespace())
+    {
+        return Err(custom_image_protocol_error());
+    }
+    let bytes = BASE64_STANDARD
+        .decode(encoded)
+        .map_err(|_| custom_image_protocol_error())?;
+    if bytes.is_empty()
+        || bytes.len() > CUSTOM_MAX_IMAGE_BYTES
+        || BASE64_STANDARD.encode(&bytes) != encoded
+        || validate_image_signature(media_type, &bytes).is_err()
+    {
+        return Err(custom_image_protocol_error());
+    }
+    Ok(ProviderImage {
+        media_type: media_type.to_owned(),
+        bytes,
+    })
+}
+
+/// 功能：严格解析自定义 Chat Provider 的 Base64 图片 data URL。
+///
+/// 输入：`data:<supported-mime>;base64,<canonical-payload>` 字符串。
+/// 输出：完整验证的图片候选。
+/// 不变量：拒绝参数、转义、外部 URL、大小写变体和非 canonical Base64。
+/// 失败：形状、MIME、编码、大小或魔数无效时返回固定脱敏错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+pub(crate) fn decode_custom_image_data_url(value: &str) -> Result<ProviderImage, AgentError> {
+    let value = value
+        .strip_prefix("data:")
+        .ok_or_else(custom_image_protocol_error)?;
+    let (media_type, encoded) = value
+        .split_once(";base64,")
+        .ok_or_else(custom_image_protocol_error)?;
+    decode_custom_base64_image(encoded, media_type)
+}
+
+/// 功能：在取消和总字节边界下完整读取自定义 Provider 的非流式 JSON 响应。
+///
+/// 输入：成功 HTTP response、运行取消令牌和硬上限。
+/// 输出：不超过上限的原始响应字节。
+/// 不变量：正文、endpoint 与底层诊断不进入错误；Content-Length 和逐 chunk 均检查。
+/// 失败：取消、断流或大小超限返回稳定结构化错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+pub(crate) async fn read_bounded_json_response(
+    response: &mut reqwest::Response,
+    cancellation: &CancellationToken,
+    max_bytes: usize,
+) -> Result<Vec<u8>, AgentError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(custom_image_output_limit_error());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = sse::next_response_chunk(response, cancellation).await? {
+        let length = bytes
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(custom_image_output_limit_error)?;
+        if length > max_bytes {
+            return Err(custom_image_output_limit_error());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+/// 功能：构造不泄漏 Provider 图片正文的统一协议错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn custom_image_protocol_error() -> AgentError {
+    AgentError::new(
+        crate::error::ErrorCode::ProviderError,
+        "provider image response is invalid",
+    )
+    .with_details(serde_json::json!({"kind":"provider_protocol_error"}))
+}
+
+/// 功能：构造自定义 Provider 图片响应超过硬上限的统一错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn custom_image_output_limit_error() -> AgentError {
+    AgentError::new(
+        crate::error::ErrorCode::OutputLimitExceeded,
+        "provider image response exceeded the byte limit",
+    )
+    .with_details(serde_json::json!({"kind":"provider_output_limit"}))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderRequest {
@@ -120,6 +275,8 @@ pub struct ProviderRequest {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    #[serde(skip)]
+    pub(crate) resolved_images: Vec<ProviderResolvedImage>,
 }
 
 #[async_trait]
@@ -168,6 +325,30 @@ pub trait Provider: Send + Sync {
     /// 邮箱：18272669457@163.com
     fn supports_tools(&self) -> bool {
         true
+    }
+
+    /// 功能：声明当前 route 是否接受 portable `image_ref` 输入。
+    ///
+    /// 输入：当前 Provider 实例。
+    /// 输出：Agent 可以安全解析图片并交给 adapter 时为 true。
+    /// 不变量：默认关闭；自定义连接只能由显式持久化能力开启。
+    /// 失败：本方法不执行 I/O 且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn supports_image_input(&self) -> bool {
+        false
+    }
+
+    /// 功能：声明当前 route 是否会产生 durable 图片完成结果。
+    ///
+    /// 输入：当前 Provider 实例。
+    /// 输出：adapter 已实现并严格验证图片结果时为 true。
+    /// 不变量：默认关闭；声明为 true 的 route 必须先整批验证再产生 `ImageCompletion`。
+    /// 失败：本方法不执行 I/O 且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn supports_image_output(&self) -> bool {
+        false
     }
 
     /// 功能：在创建 Session 前判断当前 route 的运行时依赖是否仍可用。

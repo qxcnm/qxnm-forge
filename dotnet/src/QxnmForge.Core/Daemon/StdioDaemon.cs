@@ -20,6 +20,10 @@ public sealed class StdioDaemon
     public const int MaxEventBytes = 262_144;
     public const long MaxArtifactBytes = 1_073_741_824;
 
+    private const int MaximumReadImageBytes = 32 * 1024 * 1024;
+    private const int ArtifactReadChunkBytes = 512 * 1024;
+    private const int MaximumArtifactReadCursors = 2;
+
     private readonly SessionRepository sessions;
     private readonly AgentService agent;
     private readonly AgentProfileService? profiles;
@@ -28,6 +32,24 @@ public sealed class StdioDaemon
     private readonly SessionLifecycleService? sessionLifecycle;
     private readonly bool conformanceMode;
     private readonly ConcurrentBag<Task> activeTasks = [];
+    private readonly List<ArtifactReadCursor> artifactReadCursors = [];
+
+    /// <summary>
+    /// 功能：保存单连接内一个已经完整验证的图片分块读取游标。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="SessionId">游标绑定的 Session。</param>
+    /// <param name="ArtifactId">游标绑定的 artifact。</param>
+    /// <param name="Artifact">journal 中的完整 portable 引用。</param>
+    /// <param name="Bytes">最多 32 MiB 且已完整验证的图片字节。</param>
+    /// <param name="NextOffset">下一请求必须精确携带的连续 offset。</param>
+    private sealed record ArtifactReadCursor(
+        string SessionId,
+        string ArtifactId,
+        ArtifactReference Artifact,
+        byte[] Bytes,
+        int NextOffset);
 
     /// <summary>
     /// 功能：创建绑定独立 .NET session/agent 实现的 stdio daemon。
@@ -77,6 +99,7 @@ public sealed class StdioDaemon
         Stream output,
         CancellationToken cancellationToken = default)
     {
+        artifactReadCursors.Clear();
         var frameReader = new NdjsonFrameReader(MaxFrameBytes);
         using var writer = new ProtocolWriter(output, MaxFrameBytes, MaxEventBytes);
         var initialized = false;
@@ -147,6 +170,7 @@ public sealed class StdioDaemon
         }
         finally
         {
+            artifactReadCursors.Clear();
             foreach (var acceptedRun in acceptedRuns)
             {
                 await AgentService.DenyPendingApprovalsAsync(acceptedRun, "disconnect").ConfigureAwait(false);
@@ -258,6 +282,9 @@ public sealed class StdioDaemon
                     break;
                 case "artifacts/create":
                     await CreateArtifactAsync(request, writer, cancellationToken).ConfigureAwait(false);
+                    break;
+                case "artifacts/read":
+                    await ReadArtifactAsync(request, writer, cancellationToken).ConfigureAwait(false);
                     break;
                 case "run/start":
                     acceptedRuns.Add(await StartRunAsync(
@@ -389,6 +416,106 @@ public sealed class StdioDaemon
         await writer.WriteSuccessAsync(
             request.Id,
             new ArtifactCreateResult(artifact),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 功能：按严格连续 offset 返回已完整验证图片 artifact 的有界 Base64 分块。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="request">artifacts/read 请求；首块 offset 必须为零。</param>
+    /// <param name="writer">协议专用 writer。</param>
+    /// <param name="cancellationToken">完整验证、分块编码和响应写入取消信号。</param>
+    /// <returns>最多 512 KiB 原始字节及连续 nextOffset 写出后的任务。</returns>
+    /// <remarks>不变量：连接内最多保留两个按 Session/artifact 隔离的完整已验证游标；末块立即释放，第三个不同图片的首块拒绝且不破坏已有读取。</remarks>
+    private async Task ReadArtifactAsync(
+        JsonRpcRequest request,
+        ProtocolWriter writer,
+        CancellationToken cancellationToken)
+    {
+        var (sessionId, artifactId, offset) = ProtocolCodec.ParseArtifactRead(request.Params);
+        if (offset > int.MaxValue)
+        {
+            throw InvalidArtifactRead();
+        }
+
+        var requestedOffset = (int)offset;
+        ArtifactReadCursor cursor;
+        if (requestedOffset == 0)
+        {
+            artifactReadCursors.RemoveAll(item =>
+                string.Equals(item.SessionId, sessionId, StringComparison.Ordinal) &&
+                string.Equals(item.ArtifactId, artifactId, StringComparison.Ordinal));
+            if (artifactReadCursors.Count >= MaximumArtifactReadCursors)
+            {
+                throw InvalidArtifactRead();
+            }
+
+            try
+            {
+                var verified = await sessions.ReadImageArtifactByIdAsync(
+                    sessionId,
+                    artifactId,
+                    MaximumReadImageBytes,
+                    cancellationToken).ConfigureAwait(false);
+                cursor = new ArtifactReadCursor(
+                    sessionId,
+                    artifactId,
+                    verified.Artifact,
+                    verified.Bytes,
+                    0);
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or InvalidOperationException or IOException or
+                JournalCorruptException or JournalIncompatibleException or SessionMutationException)
+            {
+                throw InvalidArtifactRead();
+            }
+        }
+        else
+        {
+            var cursorIndex = artifactReadCursors.FindIndex(item =>
+                string.Equals(item.SessionId, sessionId, StringComparison.Ordinal) &&
+                string.Equals(item.ArtifactId, artifactId, StringComparison.Ordinal));
+            if (cursorIndex < 0)
+            {
+                throw InvalidArtifactRead();
+            }
+
+            cursor = artifactReadCursors[cursorIndex];
+            artifactReadCursors.RemoveAt(cursorIndex);
+            if (cursor.NextOffset != requestedOffset)
+            {
+                throw InvalidArtifactRead();
+            }
+        }
+
+        if (requestedOffset != cursor.NextOffset || requestedOffset >= cursor.Bytes.Length)
+        {
+            throw InvalidArtifactRead();
+        }
+
+        var end = Math.Min(requestedOffset + ArtifactReadChunkBytes, cursor.Bytes.Length);
+        var dataBase64 = Convert.ToBase64String(
+            cursor.Bytes,
+            requestedOffset,
+            end - requestedOffset);
+        long? nextOffset = end < cursor.Bytes.Length ? end : null;
+        if (nextOffset.HasValue)
+        {
+            artifactReadCursors.Add(cursor with { NextOffset = end });
+        }
+
+        await writer.WriteSuccessAsync(
+            request.Id,
+            new
+            {
+                Artifact = cursor.Artifact,
+                Offset = offset,
+                DataBase64 = dataBase64,
+                NextOffset = nextOffset,
+            },
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -1103,7 +1230,7 @@ public sealed class StdioDaemon
 
         methods.AddRange(
             [
-                "artifacts/create", "run/start", "run/cancel", "approval/respond", "session/get",
+                "artifacts/create", "artifacts/read", "run/start", "run/cancel", "approval/respond", "session/get",
                 "session/branch/select", "session/compact", "models/list", "providerCatalog/list",
             ]);
         return new InitializeResult(
@@ -1124,6 +1251,21 @@ public sealed class StdioDaemon
                 ["stdio"],
                 agent.HardSandboxCapability),
             new ProtocolLimits(MaxFrameBytes, MaxEventBytes, MaxArtifactBytes, 1));
+    }
+
+    /// <summary>
+    /// 功能：创建不区分 Session/artifact 存在性、游标状态或文件验证阶段的分块读取错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>不含请求 ID、路径、hash、图片正文或持久化存在性的统一 portable 错误。</returns>
+    private static ProtocolRequestException InvalidArtifactRead()
+    {
+        return new ProtocolRequestException(new PortableError(
+            -32602,
+            "artifact read request is invalid",
+            false,
+            new ErrorDetails("invalid_artifact_read")));
     }
 
     /// <summary>

@@ -231,6 +231,25 @@ public static class ProtocolCodec
     }
 
     /// <summary>
+    /// 功能：严格解析 artifacts/read 的同 Session 连续分块读取参数。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="parameters">只含 sessionId、artifactId 与非负安全整数 offset 的对象。</param>
+    /// <returns>两个 opaque ID 与客户端请求的原始字节 offset。</returns>
+    /// <remarks>不变量：不接受路径、URL、浮点、负数、未知字段或省略 offset。</remarks>
+    /// <exception cref="ProtocolRequestException">字段、ID 或 offset 不符合公共协议。</exception>
+    public static (string SessionId, string ArtifactId, long Offset) ParseArtifactRead(
+        JsonElement parameters)
+    {
+        EnsureOnlyProperties(parameters, "sessionId", "artifactId", "offset");
+        return (
+            RequireOpaqueId(parameters, "sessionId"),
+            RequireOpaqueId(parameters, "artifactId"),
+            RequireNonNegativeSafeInteger(parameters, "offset"));
+    }
+
+    /// <summary>
     /// 功能：解析支持显式 family 与 portable image_ref 的 run/start 参数。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -849,6 +868,8 @@ public static class ProtocolCodec
             "modelsUrl",
             "modelIds",
             "supportsTools",
+            "supportsImageInput",
+            "supportsImageOutput",
             "logoAssetId",
             "enabled");
         var modelIdsElement = RequireProperty(element, "modelIds");
@@ -892,6 +913,8 @@ public static class ProtocolCodec
             RequireString(element, "modelsUrl"),
             modelIds,
             RequireBoolean(element, "supportsTools"),
+            RequireBoolean(element, "supportsImageInput"),
+            RequireBoolean(element, "supportsImageOutput"),
             logoAssetId,
             RequireBoolean(element, "enabled"));
     }

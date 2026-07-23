@@ -207,36 +207,32 @@ public sealed class CustomProviderConnectionTests
     }
 
     /// <summary>
-    /// 功能：确认 128 个满长 credential 的合法文档可超过 2 MiB 并在 16 MiB 上限内发布。
+    /// 功能：确认 128 个满长 credential 以独立叶发布，且第 129 个条目失败关闭。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     [Fact]
-    public void CredentialStoreAcceptsMaximumShapeLargerThanTwoMib()
+    public void CredentialStoreAcceptsMaximumIndependentEntrySet()
     {
         using var temporary = new TemporaryDirectory();
         var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
         var stateRoot = Path.Combine(temporary.Path, "state");
         var store = new ProviderCredentialStore(stateRoot, workspace);
         var maximumCredential = new string('x', 16_384);
-        var initialDocument = new ProviderCredentialDocument(
-            "0.1",
-            Enumerable.Range(0, 127)
-                .Select(index => new StoredProviderCredential(
-                    $"bulk.{index:D3}",
-                    maximumCredential))
-                .ToArray());
-        var initialBytes = JsonSerializer.SerializeToUtf8Bytes(
-            initialDocument,
-            JsonDefaults.Options);
-        Assert.True(initialBytes.Length < 2 * 1024 * 1024);
-        var documentPath = Path.Combine(stateRoot, "credentials", "provider-credentials.json");
-        CommercialFileSafety.AtomicWrite(documentPath, initialBytes, sensitive: true);
 
-        store.Set("bulk.127", maximumCredential);
+        foreach (var index in Enumerable.Range(0, 128))
+        {
+            store.Set($"bulk.{index:D3}", maximumCredential);
+        }
 
-        Assert.True(new FileInfo(documentPath).Length > 2 * 1024 * 1024);
         Assert.Equal(128, store.List().Count);
+        var entryRoot = Path.Combine(stateRoot, "credentials", "provider-credentials.d");
+        Assert.Equal(128, Directory.EnumerateFiles(entryRoot, "*.credential").Count());
+        Assert.True(Directory.EnumerateFiles(entryRoot, "*.credential")
+            .Sum(static path => new FileInfo(path).Length) >= 2L * 1024 * 1024);
+        var exception = Assert.Throws<ProviderCommercialStateException>(() =>
+            store.Set("bulk.128", maximumCredential));
+        Assert.Equal("credential_shape", exception.Kind);
     }
 
     /// <summary>
@@ -516,7 +512,7 @@ public sealed class CustomProviderConnectionTests
             connections);
         var initialize = InitializeRequest("init");
         const string connection =
-            "{\"displayName\":\"New API\",\"providerId\":\"newapi\",\"apiFamily\":\"openai-completions\",\"baseUrl\":\"https://example.invalid/v1\",\"modelsUrl\":\"https://example.invalid/catalog/models\",\"modelIds\":[\"model-a\",\"model-b\"],\"supportsTools\":true,\"logoAssetId\":\"newapi-logo\",\"enabled\":true}";
+            "{\"displayName\":\"New API\",\"providerId\":\"newapi\",\"apiFamily\":\"openai-completions\",\"baseUrl\":\"https://example.invalid/v1\",\"modelsUrl\":\"https://example.invalid/catalog/models\",\"modelIds\":[\"model-a\",\"model-b\"],\"supportsTools\":true,\"supportsImageInput\":false,\"supportsImageOutput\":false,\"logoAssetId\":\"newapi-logo\",\"enabled\":true}";
         var createFrames = await ExchangeAsync(
             daemon,
             initialize + "\n" +
@@ -631,6 +627,47 @@ public sealed class CustomProviderConnectionTests
         Assert.Equal(
             "https://example.invalid/v1/chat/completions",
             CreateRequestEndpoint(provider, "model-a").AbsoluteUri);
+    }
+
+    /// <summary>
+    /// 功能：确认自定义 adapter 的启动与 IsAvailable 只检查两个叶的 presence，不提前读取损坏正文。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="apiFamily">待验证的 Chat 或 Responses family。</param>
+    /// <returns>异步测试 Task。</returns>
+    [Theory]
+    [InlineData("openai-completions")]
+    [InlineData("openai-responses")]
+    public async Task AvailabilityChecksCredentialPresenceWithoutReadingBodies(string apiFamily)
+    {
+        using var temporary = new TemporaryDirectory();
+        var workspace = Directory.CreateDirectory(Path.Combine(temporary.Path, "workspace")).FullName;
+        var stateRoot = Path.Combine(temporary.Path, "state");
+        var providerId = "presence-" + apiFamily;
+        var service = new CustomProviderConnectionService(stateRoot, workspace);
+        var created = service.Create(CreateInput(providerId, "Presence") with
+        {
+            ApiFamily = apiFamily,
+            SupportsImageOutput = true,
+        });
+        service.SetCredential(providerId, "responses", Credential);
+        service.SetCredential(providerId, "image", "image-presence-key");
+        var imageCredentialId = created.ConnectionId + ".image";
+        File.WriteAllBytes(CredentialEntryPath(stateRoot, providerId), [0xff]);
+        File.WriteAllBytes(CredentialEntryPath(stateRoot, imageCredentialId), [0xff]);
+
+        using var environment = new ProviderEnvironmentIsolation();
+        await using var registry = ProviderRegistryFactory.CreateFromEnvironment(
+            stateRoot: stateRoot,
+            workspace: workspace);
+        var provider = Assert.Single(registry.Providers, item => item.Id == providerId);
+        var store = new ProviderCredentialStore(stateRoot, workspace);
+
+        Assert.True(provider.IsAvailable());
+        Assert.True(provider.SupportsImageOutput);
+        Assert.False(store.TryReadForRequest(providerId, out _));
+        Assert.False(store.TryReadForRequest(imageCredentialId, out _));
     }
 
     /// <summary>
@@ -808,6 +845,8 @@ public sealed class CustomProviderConnectionTests
             "https://example.invalid/v1/models",
             ["model-a"],
             SupportsTools: false,
+            SupportsImageInput: false,
+            SupportsImageOutput: false,
             null,
             Enabled: true);
     }
@@ -871,6 +910,27 @@ public sealed class CustomProviderConnectionTests
             null);
         return (Uri)(method.Invoke(provider, [request])
             ?? throw new InvalidOperationException("provider endpoint was null"));
+    }
+
+    /// <summary>
+    /// 功能：按 canonical base64url 合同构造隔离测试 credential 叶路径。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="stateRoot">测试 state root。</param>
+    /// <param name="providerId">合法 Provider ID。</param>
+    /// <returns>对应 `.credential` 叶路径。</returns>
+    private static string CredentialEntryPath(string stateRoot, string providerId)
+    {
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(providerId))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+        return Path.Combine(
+            stateRoot,
+            "credentials",
+            "provider-credentials.d",
+            encoded + ".credential");
     }
 
     /// <summary>

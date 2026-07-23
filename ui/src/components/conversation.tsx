@@ -23,6 +23,28 @@ export interface SubmittedMessage {
     readonly key: string;
     readonly values?: Readonly<Record<string, string | number>>;
   };
+  readonly images?: readonly SubmittedMessageImage[];
+}
+
+/** Session 消息中经过 artifact 边界验证的图片展示状态。 */
+export interface SubmittedMessageImage {
+  readonly artifactId: string;
+  readonly alt: string;
+  readonly status: "loading" | "ready" | "error";
+  readonly dataUrl?: string;
+}
+
+/**
+ * 在最终渲染边界再次限制图片 data URL 的 MIME 与纯 Base64 形态。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function isVerifiedImageDataUrl(value: string | undefined): value is string {
+  return value !== undefined &&
+    /^data:image\/(?:png|jpeg|webp|gif);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      value,
+    );
 }
 
 interface ConversationProps {
@@ -223,22 +245,53 @@ export function Conversation({
 
           {messages.length > 0 ? (
             <section className="mt-8 space-y-5" aria-label={t("conversation.newMessages")}>
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={
-                    message.role === "user"
-                      ? "ml-auto max-w-[86%] rounded-lg bg-muted px-3 py-2.5 text-[13px] leading-5 text-foreground"
-                      : message.role === "status"
-                        ? "text-[11px] text-muted-foreground"
-                        : "text-[13px] leading-5 text-foreground/90"
-                  }
-                >
-                  {message.translation
-                    ? t(message.translation.key, message.translation.values)
-                    : message.content}
-                </div>
-              ))}
+              {messages.map((message) => {
+                const text = message.translation
+                  ? t(message.translation.key, message.translation.values)
+                  : message.content;
+                return (
+                  <div
+                    key={message.id}
+                    className={
+                      message.role === "user"
+                        ? "ml-auto max-w-[86%] rounded-lg bg-muted px-3 py-2.5 text-[13px] leading-5 text-foreground"
+                        : message.role === "status"
+                          ? "text-[11px] text-muted-foreground"
+                          : "text-[13px] leading-5 text-foreground/90"
+                    }
+                  >
+                    {text ? <p className="whitespace-pre-wrap">{text}</p> : null}
+                    {message.images && message.images.length > 0 ? (
+                      <div className={text ? "mt-2 space-y-2" : "space-y-2"}>
+                        {message.images.map((image) => {
+                          const ready =
+                            image.status === "ready" &&
+                            isVerifiedImageDataUrl(image.dataUrl);
+                          return ready ? (
+                            <figure key={image.artifactId} className="overflow-hidden rounded-md border bg-background/70">
+                              <img
+                                src={image.dataUrl}
+                                alt={image.alt}
+                                className="max-h-[28rem] w-full object-contain"
+                              />
+                            </figure>
+                          ) : (
+                            <div
+                              key={image.artifactId}
+                              className="rounded-md border border-dashed px-3 py-4 text-[11px] text-muted-foreground"
+                              role="status"
+                            >
+                              {image.status === "loading"
+                                ? t("conversation.imageLoading")
+                                : t("conversation.imageLoadFailed")}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </section>
           ) : null}
 

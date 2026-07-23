@@ -193,14 +193,34 @@ prompts, session journals, approval payloads, fixtures, golden traces, telemetry
 or normal logs. Provider adapters inject credentials at the final native request
 boundary.
 
-The v0.1 local `ProviderCredentialStore` is a permission-restricted file backend,
-not an OS-encrypted keychain. It MUST live outside the canonical workspace, read
-new secrets only from redirected stdin or an equivalent write-only local management boundary,
-reject symlink/reparse files, use an exclusive writer
-lock and atomic replacement, and require Unix mode `0600`. A stored source that
-is missing, corrupt, or unsafe MUST fail closed and MUST NOT silently fall back
-to environment credentials. Windows DPAPI/Credential Manager protection is not
-claimed until a separate platform gate passes.
+The v0.2 local `ProviderCredentialStore` is a permission-restricted per-credential
+file backend, not an OS-encrypted keychain. It MUST live outside the canonical
+workspace at `credentials/provider-credentials.d/`. Each direct leaf name is the
+canonical unpadded base64url encoding of the Provider ID UTF-8 bytes plus
+`.credential`; each body is a raw UTF-8 key of 1..16384 bytes with no CR, LF, or
+NUL, and the store holds at most 128 leaves. It reads new secrets only from
+redirected stdin or an equivalent write-only local management boundary, rejects
+symlink/reparse files, devices, unknown leaves, unsafe ownership or permissions,
+and uses an exclusive writer lock, a controlled create-new temporary leaf under
+the `credentials/` root, durable atomic movement into the final directory, and
+both final-directory and root sync. Crash cleanup may remove only the fixed
+temporary-name pattern after no-follow metadata validation; unknown entries fail
+closed. Unix directories MUST be exactly `0700`, leaves exactly `0600`, and both
+owned by the effective user. Presence/list/capability queries inspect only
+canonical names and no-follow metadata; only final native request-header
+construction opens the exact target leaf once. A stored source that is missing,
+corrupt, or unsafe MUST fail closed and MUST NOT silently fall back to environment
+credentials. Windows DPAPI/Credential Manager protection is not claimed until a
+separate platform gate passes.
+
+The old `credentials/provider-credentials.json` and its bundled v0.1 schema are
+legacy migration input only. Under the same exclusive lock, and only while the
+final directory is absent, an implementation may strictly read that bounded
+aggregate once, write and sync the fixed
+`credentials/.provider-credentials.d.migrating/` staging directory, atomically
+rename it, sync the parent, then remove the legacy file by safe metadata. Once
+the final directory exists, the legacy body is never parsed again. Crash recovery
+may clean only canonical, metadata-safe leaves from that fixed staging directory.
 
 自定义 Provider connection 遵循 ADR 0029。通用 WebView RPC allowlist 不得包含
 `providerCredentials/set|remove`；桌面 host 只能把受限 Provider ID 与本次密码输入转发给固定
@@ -212,6 +232,17 @@ mutation 后必须重建启动期 Provider/model capability 快照。
 Responses credential，并只请求持久化的精确 `modelsUrl`。实现必须禁止 redirect，设置 20 秒总时限和 1 MiB 响应上限，拒绝空目录、畸形
 JSON、超过 512 项的模型目录及 CAS 冲突；失败信息不得回显 URL、认证 header、响应正文或
 credential。`models/list` 继续是零网络、零 credential 读取的启动快照查询。
+
+自定义连接的图片能力必须逐方向显式声明。图片输入只解析同 Session durable `image_ref`，在发送
+前复核普通文件身份、MIME、魔数、长度与 SHA-256，并只在请求内构造 data URL；artifact 路径、
+display name 和 Provider 返回的远程 URL 都不能成为读取依据。图片输出必须同时存在独立 Image
+credential；缺失时从 `models/list.capabilities.output` 移除 `image`，但不得尝试 Responses key、
+环境变量或其它 Provider secret 作为回退。有效输出期间必须把工具能力和 Agent function-tool 集合
+强制收窄为空；该收窄不改写持久化 `supportsTools`，Image credential 移除并重启后必须恢复原工具
+声明。Responses 只能发送 `stream:false` 与单一 `image_generation` tool，Chat 只能发送
+`stream:false` 与 `modalities:["text","image"]`，均不得夹带 function-tool 定义。启用输出时使用禁重定向的有界非流式响应，strict JSON
+整批解析后才产生图片完成信号；远程 URL、未知 MIME、坏/非 canonical Base64、魔数错配、超过
+八张或总计 4 MiB 的结果全部失败关闭。原始响应、data URL 与图片正文不得进入日志或错误。
 
 Session 列表、归档和永久删除遵循 ADR 0030。Web UI 只能接收脱敏摘要，不能直接访问
 journal、归档文件、SQLite 或宿主 Session 目录。Session 固定隔离在 `stateRoot/sessions`，
@@ -225,6 +256,18 @@ Desktop capture PNG 是可能直接包含 credential 和其他屏幕秘密的
 封闭 `org.agentprotocol.computer` extension 绑定 active `runId` 与
 `retention:session_lifecycle`；不得持久化 backend/display ID、原始 `DISPLAY`、窗口标题、
 宿主路径或内联像素。Session 归档保留截图，永久删除必须连同截图删除。
+
+通用 `artifacts/read` 不是任意文件下载接口。它只接受 opaque Session/artifact ID 与连续 offset，
+只解析同 Session journal 中先前发布的 PNG/JPEG/WebP/GIF，逐次最多 512 KiB、单图最多 32 MiB、
+每连接最多两个完整验证的读取游标。
+服务在读取时重新拒绝 symlink、reparse point、device、目录、跨 Session 引用与文件身份变化；
+每块回显不可变元数据，客户端在最终展示前复核总长度、MIME/魔数和 SHA-256。响应和错误不含路径，
+该方法不跟随 URL、不读取普通 artifact，并且只有完整实现这些边界时才可广告。UI 的 Session 图片
+预算还限制为 32 张/64 MiB、并发 2，超额只显示占位，不能通过无限回读耗尽 WebView 内存。
+
+桌面图片粘贴的原生兜底只授予 `clipboard-manager:allow-read-image`；不得授予读文本、写入或清空
+剪贴板。RGBA 在 PNG 编码和进入 React 状态前必须检查尺寸、乘法溢出与字节上限。粘贴监听不得
+截获其它输入控件，busy 状态不得修改附件；测试使用合成图片，禁止读取真实剪贴板正文。
 
 Provider conformance uses a freshly generated in-memory canary credential. The
 runner removes inherited real credential variables before process creation, and
@@ -268,6 +311,10 @@ attempts, concurrent runs/tools/processes, frame sizes, and execution time all
 have finite limits. Limits are enforced while streaming, not after buffering.
 ANSI/control sequences in tool/model output are escaped or sanitized for a
 plain-text terminal; raw bytes, when retained, are artifacts.
+
+自定义 Provider 图片响应先以 6 MiB 有界 HTTP JSON 读取，再按八张/4 MiB 解码图片总量收窄；Session
+artifact 回读独立遵守 1 MiB `maxFrameBytes`，因此使用 512 KiB 原始字节分块，不能把 32 MiB 图片
+编码进单个 JSON-RPC frame。任何层的上限都不能被下一层更大的配额替代。
 
 Desktop capture 还必须在请求 root image 和分配缓冲之前限制单边 16,384 pixels、总计
 16,777,216 pixels 与预计 64 MiB raw bytes，并在持久化前限制 PNG 为 33,554,432 bytes。

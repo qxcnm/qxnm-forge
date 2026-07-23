@@ -36,7 +36,7 @@ public sealed record ProviderToolCallSignal(ProviderToolCall ToolCall) : Provide
 public sealed record ProviderUsageSignal(Usage Usage) : ProviderSignal;
 
 /// <summary>
-/// 功能：表示 OpenRouter Images 已完整验证的一张解码图像，仅在 Provider/Agent 内存边界流转。
+/// 功能：表示图片输出 Provider 已完整验证的一张解码图像，仅在 Provider/Agent 内存边界流转。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
@@ -50,12 +50,14 @@ internal sealed record ProviderImagePayload(string MediaType, byte[] Bytes);
 /// 邮箱：18272669457@163.com
 /// </summary>
 /// <param name="Text">可选最终文字；不得作为 delta 发送。</param>
-/// <param name="Images">按 Provider source 顺序完成全批验证的图像。</param>
+/// <param name="Images">按 Provider source 顺序完成全批验证的图像；合法纯文本非流式完成时为空。</param>
 /// <param name="Usage">严格归一化的可选 Provider usage；缺失为零值。</param>
+/// <param name="FinishReason">完整响应携带并已规范化的结束原因。</param>
 internal sealed record ProviderImageCompletionSignal(
     string? Text,
     IReadOnlyList<ProviderImagePayload> Images,
-    Usage Usage) : ProviderSignal;
+    Usage Usage,
+    string FinishReason = "stop") : ProviderSignal;
 
 /// <summary>
 /// 功能：表示在下一 HTTP attempt 前已决定的有界重试。
@@ -190,6 +192,22 @@ public interface IProvider
     /// </summary>
     /// <remarks>返回 false 时 Agent 必须发送空工具集合；默认保持已有原生 Provider 行为。</remarks>
     bool SupportsTools => true;
+
+    /// <summary>
+    /// 功能：取得当前 route 是否接受 portable image_ref 输入。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <remarks>默认关闭；自定义连接只能由显式持久化声明开启。</remarks>
+    bool SupportsImageInput => false;
+
+    /// <summary>
+    /// 功能：取得当前 route 是否产生经过严格验证的 durable 图片结果。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <remarks>默认关闭；true 要求 adapter 先验证完整图片批次再产生完成信号。</remarks>
+    bool SupportsImageOutput => false;
 
     /// <summary>
     /// 功能：原生执行一次 Provider 请求并产生文本、工具、用量或重试信号。

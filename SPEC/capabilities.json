@@ -6,7 +6,7 @@
     "name": "高宏顺",
     "email": "18272669457@163.com"
   },
-  "updatedAt": "2026-07-22T16:30:00Z",
+  "updatedAt": "2026-07-23T05:17:53Z",
   "defaultStatus": "unsupported",
   "implementations": [
     "dotnet",
@@ -20,6 +20,7 @@
     "agent.follow_up",
     "session.journal",
     "session.get",
+    "session.artifact_read",
     "session.lifecycle",
     "session.linear_continuation",
     "session.cross_language",
@@ -185,6 +186,23 @@
       "implementation": "rust",
       "target": {
         "kind": "foundation",
+        "id": "session.artifact_read"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/daemon.rs",
+        "rust/src/session.rs",
+        "SPEC/protocol.md",
+        "SPEC/security.md",
+        "SPEC/schemas/protocol/jsonrpc.schema.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": "已实现仅限同 Session 图片 artifact 的两路连续游标、512 KiB 分块、32 MiB 单图上限，以及 MIME、长度、魔数、SHA-256 和 canonical Base64 边界；尚无 Rust/.NET 共同动态 daemon runner，因此保持 implemented。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "foundation",
         "id": "session.lifecycle"
       },
       "status": "conformant",
@@ -292,7 +310,7 @@
         "CONFORMANCE/fixtures/computer/computer-cases.json",
         "CONFORMANCE/tests/test_spec_schemas.py"
       ],
-      "notes": "Rust 已实现双环境门、本地 Unix DISPLAY allowlist 后的 Linux X11 observe/screenshot 原型、捕获边界与本语言聚焦测试；但 x11rb 0.13 会在适配层校验前按服务端 reply header 分配 transport buffer，当前没有恶意本地 X server 下的 hard allocation cap。共同证据仅覆盖静态 Schema、合成 fixture 和 claim 一致性；真实 daemon 动态门禁、Provider image_ref 续接与 UI artifact 读取/渲染视觉闭环也未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
+      "notes": "Rust 已实现双环境门、本地 Unix DISPLAY allowlist 后的 Linux X11 observe/screenshot 原型、捕获边界与本语言聚焦测试；但 x11rb 0.13 会在适配层校验前按服务端 reply header 分配 transport buffer，当前没有恶意本地 X server 下的 hard allocation cap。共同证据仅覆盖静态 Schema、合成 fixture 和 claim 一致性；真实 daemon 动态门禁与 Provider image_ref 续接也未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
     },
     {
       "implementation": "rust",
@@ -311,7 +329,7 @@
         "CONFORMANCE/fixtures/computer/computer-cases.json",
         "CONFORMANCE/tests/test_spec_schemas.py"
       ],
-      "notes": "Rust 已实现双环境门、本地 Unix DISPLAY allowlist 后的 Linux XTEST 四动作原型、critical 逐次审批与本语言聚焦测试；共同证据当前不证明阻塞调用强取消、恶意 reply 的 transport 分配硬上限、X11 服务端错误、Wayland/XWayland 拒绝或跨平台行为。Provider/UI 视觉闭环也未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
+      "notes": "Rust 已实现双环境门、本地 Unix DISPLAY allowlist 后的 Linux XTEST 四动作原型、critical 逐次审批与本语言聚焦测试；共同证据当前不证明阻塞调用强取消、恶意 reply 的 transport 分配硬上限、X11 服务端错误、Wayland/XWayland 拒绝或跨平台行为。Provider image_ref 续接共同门禁也未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
     },
 
     {
@@ -510,6 +528,40 @@
       "target": {
         "kind": "api_family",
         "id": "openai-completions",
+        "feature": "image_input"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/provider/openai_chat.rs",
+        "rust/src/provider_connection.rs",
+        "rust/src/agent.rs",
+        "rust/src/session.rs",
+        "SPEC/adr/0029-custom-provider-connections.md"
+      ],
+      "notes": "仅声明 ADR 0029 自定义连接的显式图片输入映射及本语言测试；尚无 Rust/.NET 共同动态 runner，不扩展 canonical Provider route，也不得标为 conformant。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "image_output"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/provider/openai_chat.rs",
+        "rust/src/provider_connection.rs",
+        "rust/src/agent.rs",
+        "rust/src/session.rs",
+        "SPEC/adr/0029-custom-provider-connections.md"
+      ],
+      "notes": "仅声明 ADR 0029 自定义连接的独立 Image credential、有界非流式图片输出及本语言测试；尚无 Rust/.NET 共同动态 runner，不扩展 canonical Provider route，也不得标为 conformant。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
         "feature": "retry"
       },
       "status": "conformant",
@@ -576,6 +628,40 @@
         "CONFORMANCE/fixtures/provider/mock-cases.json"
       ],
       "notes": "共同 runner 已验证非空 family-native file.read Schema、partial arguments、唯一工具生命周期、固定成功 ToolResult 回注第二次真实 HTTP、最终文本、累计 usage 与 durable 顺序。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "image_input"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/provider/openai_responses.rs",
+        "rust/src/provider_connection.rs",
+        "rust/src/agent.rs",
+        "rust/src/session.rs",
+        "SPEC/adr/0029-custom-provider-connections.md"
+      ],
+      "notes": "仅声明 ADR 0029 自定义连接的显式图片输入映射及本语言测试；尚无 Rust/.NET 共同动态 runner，不扩展 canonical Provider route，也不得标为 conformant。"
+    },
+    {
+      "implementation": "rust",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "image_output"
+      },
+      "status": "implemented",
+      "evidence": [
+        "rust/src/provider/openai_responses.rs",
+        "rust/src/provider_connection.rs",
+        "rust/src/agent.rs",
+        "rust/src/session.rs",
+        "SPEC/adr/0029-custom-provider-connections.md"
+      ],
+      "notes": "仅声明 ADR 0029 自定义连接的独立 Image credential、image_generation tool 与本语言测试；尚无 Rust/.NET 共同动态 runner，不扩展 canonical Provider route，也不得标为 conformant。"
     },
     {
       "implementation": "rust",
@@ -748,6 +834,24 @@
       "implementation": "dotnet",
       "target": {
         "kind": "foundation",
+        "id": "session.artifact_read"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "dotnet/src/QxnmForge.Core/Protocol/ProtocolCodec.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionArtifactStore.cs",
+        "SPEC/protocol.md",
+        "SPEC/security.md",
+        "SPEC/schemas/protocol/jsonrpc.schema.json",
+        "CONFORMANCE/tests/test_spec_schemas.py"
+      ],
+      "notes": "已实现仅限同 Session 图片 artifact 的两路连续游标、512 KiB 分块、32 MiB 单图上限，以及 MIME、长度、魔数、SHA-256 和 canonical Base64 边界；尚无 Rust/.NET 共同动态 daemon runner，因此保持 implemented。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "foundation",
         "id": "session.lifecycle"
       },
       "status": "conformant",
@@ -857,7 +961,7 @@
         "CONFORMANCE/fixtures/computer/computer-cases.json",
         "CONFORMANCE/tests/test_spec_schemas.py"
       ],
-      "notes": ".NET 已实现双环境门后的 Linux X11 observe/screenshot 原型、捕获边界与本语言聚焦测试；但本地 X server 断连仍可能触发 Xlib 进程级 XIO 默认处理、终止 daemon 并输出诊断，当前没有进程级故障隔离。共同证据当前仅覆盖静态 Schema、合成 fixture 和 claim 一致性。默认广告关闭，Wayland/XWayland、跨平台、真实 daemon 动态门禁、Provider image_ref 续接与 UI artifact 读取/渲染视觉闭环均未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
+      "notes": ".NET 已实现双环境门后的 Linux X11 observe/screenshot 原型、捕获边界与本语言聚焦测试；但本地 X server 断连仍可能触发 Xlib 进程级 XIO 默认处理、终止 daemon 并输出诊断，当前没有进程级故障隔离。共同证据当前仅覆盖静态 Schema、合成 fixture 和 claim 一致性。默认广告关闭，Wayland/XWayland、跨平台、真实 daemon 动态门禁与 Provider image_ref 续接均未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
     },
     {
       "implementation": "dotnet",
@@ -877,7 +981,7 @@
         "CONFORMANCE/fixtures/computer/computer-cases.json",
         "CONFORMANCE/tests/test_spec_schemas.py"
       ],
-      "notes": ".NET 已实现双环境门后的 Linux XTEST 四动作原型、critical 逐次审批与本语言聚焦测试；但本地 X server 断连仍可能触发 Xlib 进程级 XIO 默认处理、终止 daemon 并输出诊断，当前没有进程级故障隔离。共同证据当前不证明阻塞调用强取消、部分输入释放、X11 服务端错误、Wayland/XWayland 拒绝或跨平台行为。Provider/UI 视觉闭环也未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
+      "notes": ".NET 已实现双环境门后的 Linux XTEST 四动作原型、critical 逐次审批与本语言聚焦测试；但本地 X server 断连仍可能触发 Xlib 进程级 XIO 默认处理、终止 daemon 并输出诊断，当前没有进程级故障隔离。共同证据当前不证明阻塞调用强取消、部分输入释放、X11 服务端错误、Wayland/XWayland 拒绝或跨平台行为。Provider image_ref 续接共同门禁也未完成，因此保持 experimental/implemented，不构成公开支持，也不得标为 conformant。"
     },
 
     {
@@ -1074,6 +1178,42 @@
       "target": {
         "kind": "api_family",
         "id": "openai-completions",
+        "feature": "image_input"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/CustomProviderConnections.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionArtifactStore.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/CustomProviderConnectionTests.cs",
+        "SPEC/adr/0029-custom-provider-connections.md"
+      ],
+      "notes": "仅声明 ADR 0029 自定义连接的显式图片输入映射及本语言测试；尚无 Rust/.NET 共同动态 runner，不扩展 canonical Provider route，也不得标为 conformant。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
+        "feature": "image_output"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/CustomProviderConnections.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionArtifactStore.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/CustomProviderConnectionTests.cs",
+        "SPEC/adr/0029-custom-provider-connections.md"
+      ],
+      "notes": "仅声明 ADR 0029 自定义连接的独立 Image credential、有界非流式图片输出及本语言测试；尚无 Rust/.NET 共同动态 runner，不扩展 canonical Provider route，也不得标为 conformant。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-completions",
         "feature": "retry"
       },
       "status": "conformant",
@@ -1138,6 +1278,42 @@
         "CONFORMANCE/provider_runner.py"
       ],
       "notes": "共同 runner 已验证非空 family-native file.read Schema、partial arguments、唯一工具生命周期、固定成功 ToolResult 回注第二次真实 HTTP、最终文本、累计 usage 与 durable 顺序。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "image_input"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/CustomProviderConnections.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionArtifactStore.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/CustomProviderConnectionTests.cs",
+        "SPEC/adr/0029-custom-provider-connections.md"
+      ],
+      "notes": "仅声明 ADR 0029 自定义连接的显式图片输入映射及本语言测试；尚无 Rust/.NET 共同动态 runner，不扩展 canonical Provider route，也不得标为 conformant。"
+    },
+    {
+      "implementation": "dotnet",
+      "target": {
+        "kind": "api_family",
+        "id": "openai-responses",
+        "feature": "image_output"
+      },
+      "status": "implemented",
+      "evidence": [
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/CustomProviderConnections.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionArtifactStore.cs",
+        "dotnet/tests/QxnmForge.Core.Tests/CustomProviderConnectionTests.cs",
+        "SPEC/adr/0029-custom-provider-connections.md"
+      ],
+      "notes": "仅声明 ADR 0029 自定义连接的独立 Image credential、image_generation tool 与本语言测试；尚无 Rust/.NET 共同动态 runner，不扩展 canonical Provider route，也不得标为 conformant。"
     },
     {
       "implementation": "dotnet",
@@ -3518,11 +3694,15 @@
         "rust/src/provider_identity.rs",
         "rust/src/daemon.rs",
         "rust/src/main.rs",
+        "rust/src/provider/openai_chat.rs",
+        "rust/src/provider/openai_responses.rs",
+        "rust/src/agent.rs",
+        "rust/src/session.rs",
         "SPEC/adr/0029-custom-provider-connections.md",
         "SPEC/schemas/custom-provider-connection.schema.json",
         "ui/src/features/settings/provider-settings.tsx"
       ],
-      "notes": "已实现严格非敏感 CRUD、revision CAS、独立 CredentialStore、固定锁顺序、保留 Provider 命名空间、启动快照、模型 allowlist、显式有界 /models 发现与脱敏 RPC；未知模型只保守广告 text/streaming。尚无 Rust/.NET 共同动态 CRUD/credential/HTTP mock runner，Windows ACL/keychain 与真实兼容服务也未验证，因此保持 implemented。"
+      "notes": "已实现 v0.3 严格非敏感 CRUD、revision CAS、Responses/Image 独立 CredentialStore、固定锁顺序、启动快照、模型 allowlist、显式有界 /models 发现，以及两种 OpenAI-compatible family 的图片输入/输出映射与整批验证；有效图片输出强制关闭 function tools，Image credential 移除后恢复持久化 `supportsTools` 声明。现有证据为静态 Schema 与本语言聚焦/loopback 测试；尚无 Rust/.NET 共同动态 CRUD、credential 与图片 HTTP runner，Windows ACL/keychain 和真实兼容服务也未验证，因此保持 implemented。"
     },
     {
       "implementation": "dotnet",
@@ -3535,12 +3715,16 @@
         "dotnet/src/QxnmForge.Core/Provider/CustomProviderConnections.cs",
         "dotnet/src/QxnmForge.Core/Provider/ProviderRegistryFactory.cs",
         "dotnet/src/QxnmForge.Core/Daemon/StdioDaemon.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiChatProvider.cs",
+        "dotnet/src/QxnmForge.Core/Provider/OpenAiResponsesProvider.cs",
+        "dotnet/src/QxnmForge.Core/Agent/AgentService.cs",
+        "dotnet/src/QxnmForge.Core/Session/SessionArtifactStore.cs",
         "dotnet/tests/QxnmForge.Core.Tests/CustomProviderConnectionTests.cs",
         "SPEC/adr/0029-custom-provider-connections.md",
         "SPEC/schemas/custom-provider-connection.schema.json",
         "ui/src/features/settings/provider-settings.tsx"
       ],
-      "notes": "已实现严格非敏感 CRUD、revision CAS、独立 CredentialStore、固定锁顺序、保留 Provider 命名空间、启动快照、模型 allowlist、显式有界 /models 发现与脱敏 RPC；未知模型只保守广告 text/streaming。尚无 Rust/.NET 共同动态 CRUD/credential/HTTP mock runner，Windows ACL/keychain 与真实兼容服务也未验证，因此保持 implemented。"
+      "notes": "已实现 v0.3 严格非敏感 CRUD、revision CAS、Responses/Image 独立 CredentialStore、固定锁顺序、启动快照、模型 allowlist、显式有界 /models 发现，以及两种 OpenAI-compatible family 的图片输入/输出映射与整批验证；有效图片输出强制关闭 function tools，Image credential 移除后恢复持久化 `supportsTools` 声明。现有证据为静态 Schema 与本语言聚焦/loopback 测试；尚无 Rust/.NET 共同动态 CRUD、credential 与图片 HTTP runner，Windows ACL/keychain 和真实兼容服务也未验证，因此保持 implemented。"
     },
     {
       "implementation": "rust",
@@ -3712,8 +3896,11 @@
         "ui/src/App.tsx",
         "ui/src/App.fail-closed.test.tsx",
         "ui/src/components/composer.tsx",
+        "ui/src/components/composer.test.tsx",
         "ui/src/components/conversation.tsx",
         "ui/src/components/conversation.test.tsx",
+        "ui/src/lib/native-clipboard-image.ts",
+        "ui/src/lib/native-clipboard-image.test.ts",
         "ui/src/types/application-service.ts",
         "ui/src/lib/tauri-application-service.ts",
         "ui/src/lib/tauri-application-service.test.ts",
@@ -3724,6 +3911,7 @@
         "ui/src/lib/model-route.ts",
         "ui/src/lib/model-route.test.ts",
         "ui/src-tauri/src/application_service_bridge.rs",
+        "ui/src-tauri/capabilities/default.json",
         "ui/src/features/approvals/approval-request-card.tsx",
         "ui/src/features/approvals/approval-request-card.test.tsx",
         "ui/src/features/approvals/pending-approvals.ts",
@@ -3739,7 +3927,7 @@
         "SPEC/ui.md",
         "ui/README.md"
       ],
-      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，ADR 0032 Computer Use 仅为默认关闭的 Community experimental/implemented 能力；当前没有同一路由的 tools + image_input conformant 证据，也没有 artifact 读取/渲染视觉闭环，插件不得标为就绪。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
+      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，ADR 0032 Computer Use 仅为默认关闭的 Community experimental/implemented 能力；图片选择/粘贴、仅图片原生剪贴板兜底、压缩与 `artifacts/create` 输入、能力失败关闭、草稿保留，以及 `artifacts/read` durable 图片重载、严格字节校验、渲染与坏图占位视觉闭环已完成。当前仍没有同一路由的 tools + image_input 共同 conformant 证据，插件不得标为就绪。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
     },
     {
       "implementation": "dotnet",
@@ -3754,8 +3942,11 @@
         "ui/src/App.tsx",
         "ui/src/App.fail-closed.test.tsx",
         "ui/src/components/composer.tsx",
+        "ui/src/components/composer.test.tsx",
         "ui/src/components/conversation.tsx",
         "ui/src/components/conversation.test.tsx",
+        "ui/src/lib/native-clipboard-image.ts",
+        "ui/src/lib/native-clipboard-image.test.ts",
         "ui/src/types/application-service.ts",
         "ui/src/lib/tauri-application-service.ts",
         "ui/src/lib/tauri-application-service.test.ts",
@@ -3766,6 +3957,7 @@
         "ui/src/lib/model-route.ts",
         "ui/src/lib/model-route.test.ts",
         "ui/src-tauri/src/application_service_bridge.rs",
+        "ui/src-tauri/capabilities/default.json",
         "ui/src/features/approvals/approval-request-card.tsx",
         "ui/src/features/approvals/approval-request-card.test.tsx",
         "ui/src/features/approvals/pending-approvals.ts",
@@ -3781,7 +3973,7 @@
         "SPEC/ui.md",
         "ui/README.md"
       ],
-      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，ADR 0032 Computer Use 仅为默认关闭的 Community experimental/implemented 能力；当前没有同一路由的 tools + image_input conformant 证据，也没有 artifact 读取/渲染视觉闭环，插件不得标为就绪。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
+      "notes": "React/Vite/shadcn 工作台、initialize 后按完整 providerId/modelId/apiFamily 路由选择、跨同后端重新握手保留并在新代际稳定后校验选择、从 session/get durable events 重建并通过 capability 门禁响应的交互审批、审批快照读取重试、严格校验 Tauri event 后刷新 Session 投影、固定有界插件市场、本地安装/启用偏好、light/dark/system 主题、zh-CN/en-US 界面语言与 Tauri desktop-local bridge 已实现；浏览器 faux 模型只投影固定路由及当前后端已启用且已配置 credential 状态的 Provider，不连接远程模型；审批只提交请求自身 choices，插件按 initialize 的工具、方法与事件交集显示能力且不下载或执行远程代码，ADR 0032 Computer Use 仅为默认关闭的 Community experimental/implemented 能力；图片选择/粘贴、仅图片原生剪贴板兜底、压缩与 `artifacts/create` 输入、能力失败关闭、草稿保留，以及 `artifacts/read` durable 图片重载、严格字节校验、渲染与坏图占位视觉闭环已完成。当前仍没有同一路由的 tools + image_input 共同 conformant 证据，插件不得标为就绪。WebView 只能通过固定 allowlist 的品牌中立 NDJSON application service 选择独立 Rust/.NET daemon。发布 sidecar staging、签名安装包、Windows/macOS 实机门禁、可执行插件 runtime 与 Android authenticated HTTPS/WebSocket transport 尚未完成，因此保持 implemented，不构成跨平台发布或 conformant 声明。"
     }
   ]
 }

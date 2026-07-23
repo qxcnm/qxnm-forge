@@ -576,6 +576,7 @@ fn allowed_method(method: &str) -> bool {
         method,
         "models/list"
             | "artifacts/create"
+            | "artifacts/read"
             | "run/start"
             | "run/cancel"
             | "run/steer"
@@ -861,6 +862,7 @@ mod tests {
         assert!(allowed_method("session/archive"));
         assert!(allowed_method("run/start"));
         assert!(allowed_method("artifacts/create"));
+        assert!(allowed_method("artifacts/read"));
         assert!(!allowed_method("providerCredentials/set"));
         assert!(!allowed_method("faux/configure"));
         assert!(!allowed_method("terminal/open"));

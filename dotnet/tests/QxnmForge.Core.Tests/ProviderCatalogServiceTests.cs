@@ -96,6 +96,8 @@ public sealed class ProviderCatalogServiceTests
                         "/models").AbsoluteUri,
                     [],
                     SupportsTools: false,
+                    SupportsImageInput: false,
+                    SupportsImageOutput: false,
                     template.LogoAssetId,
                     Enabled: true),
                 allowLoopbackHttp: false);

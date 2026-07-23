@@ -6,6 +6,8 @@ import type {
   ApplicationServiceClient,
   ArtifactCreateInput,
   ArtifactCreateResult,
+  ArtifactReadInput,
+  ArtifactReadResult,
   BackendKind,
   InitializeResult,
   ModelDescriptor,
@@ -19,6 +21,7 @@ import type {
   ProviderModelDiscoveryResult,
   RunStartInput,
   RunStartResult,
+  SessionArtifactReference,
   SessionSnapshot,
   SessionSummary,
 } from "@/types/application-service";
@@ -30,6 +33,15 @@ const TOOL_ID_PATTERN = /^[a-z][a-z0-9_.-]*$/;
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const SESSION_LIST_PAGE_LIMIT = 128;
 const MAX_SESSION_LIST_PAGES = 256;
+const MAX_IMAGE_ARTIFACT_BYTES = 32 * 1_024 * 1_024;
+const MAX_IMAGE_ARTIFACT_CHUNK_BYTES = 512 * 1_024;
+const MAX_IMAGE_ARTIFACT_CHUNKS = 64;
+const SUPPORTED_IMAGE_MEDIA_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+] as const;
 
 /**
  * 判断 wire 数组是否不存在重复值，用于执行共同 Schema 的 uniqueItems 约束。
@@ -60,6 +72,94 @@ function isSafeProviderBaseUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * 将严格 Base64 图片正文解码为有界字节。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function decodeImageBase64(value: string, maximumBytes: number): Uint8Array {
+  let binary: string;
+  try {
+    binary = atob(value);
+  } catch {
+    throw new Error("Artifact image data is not valid Base64");
+  }
+  if (
+    binary.length === 0 ||
+    binary.length > maximumBytes ||
+    btoa(binary) !== value
+  ) {
+    throw new Error("Artifact image data exceeds the bounded read contract");
+  }
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+/**
+ * 将完整图片字节编码为规范 Base64，避免直接展开大数组导致调用栈溢出。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function encodeImageBase64(bytes: Uint8Array): string {
+  const parts: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    parts.push(String.fromCharCode(...bytes.subarray(offset, offset + 32_768)));
+  }
+  return btoa(parts.join(""));
+}
+
+/**
+ * 比较分块响应的 immutable artifact 元数据，拒绝同 ID 中途替换。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function hasSameArtifactMetadata(
+  left: SessionArtifactReference,
+  right: SessionArtifactReference,
+): boolean {
+  return left.artifactId === right.artifactId &&
+    left.mediaType === right.mediaType &&
+    left.byteLength === right.byteLength &&
+    left.sha256 === right.sha256 &&
+    left.displayName === right.displayName &&
+    JSON.stringify(left.extensions ?? {}) === JSON.stringify(right.extensions ?? {});
+}
+
+/**
+ * 校验图片字节签名与声明 MIME 一致，避免把未知字节送入 WebView 解码器。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function hasMatchingImageSignature(mediaType: string, bytes: Uint8Array): boolean {
+  if (mediaType === "image/png") {
+    return [137, 80, 78, 71, 13, 10, 26, 10].every(
+      (value, index) => bytes[index] === value,
+    );
+  }
+  if (mediaType === "image/jpeg") {
+    return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  const prefix = String.fromCharCode(...bytes.slice(0, 12));
+  if (mediaType === "image/gif") {
+    return prefix.startsWith("GIF87a") || prefix.startsWith("GIF89a");
+  }
+  return mediaType === "image/webp" && prefix.startsWith("RIFF") && prefix.slice(8) === "WEBP";
+}
+
+/**
+ * 计算图片字节的规范小写 SHA-256，用于绑定 artifact 元数据与正文。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+async function hashImageBytes(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 const modelSelectionSchema = z
@@ -126,6 +226,8 @@ const modelsListSchema = z.object({
       apiFamily: z.string().min(1).max(128),
       displayName: z.string().min(1).max(256),
       capabilities: z.object({
+        input: z.array(z.enum(["text", "image"])).min(1).max(2).refine(hasUniqueValues),
+        output: z.array(z.enum(["text", "image"])).min(1).max(2).refine(hasUniqueValues),
         reasoning: z.boolean(),
         tools: z.boolean(),
       }),
@@ -149,6 +251,8 @@ const providerConnectionInputSchema = z
     apiFamily: z.enum(["openai-responses", "openai-completions"]),
     modelIds: z.array(z.string().min(1).max(256)).max(512).refine(hasUniqueValues),
     supportsTools: z.boolean(),
+    supportsImageInput: z.boolean(),
+    supportsImageOutput: z.boolean(),
     logoAssetId: z.string().min(1).max(128).regex(PROVIDER_ID_PATTERN).nullable(),
     enabled: z.boolean(),
   })
@@ -243,6 +347,21 @@ const artifactCreateInputSchema = z
   .strict();
 const artifactCreateResultSchema = z
   .object({ artifact: artifactReferenceSchema })
+  .strict();
+const artifactReadInputSchema = z
+  .object({ sessionId: opaqueIdSchema, artifactId: opaqueIdSchema })
+  .strict();
+const artifactReadChunkResultSchema = z
+  .object({
+    artifact: artifactReferenceSchema,
+    offset: nonNegativeSafeIntegerSchema,
+    dataBase64: z
+      .string()
+      .min(4)
+      .max(699_052)
+      .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+    nextOffset: nonNegativeSafeIntegerSchema.nullable(),
+  })
   .strict();
 const textContentSchema = z
   .object({ type: z.literal("text"), text: z.string(), ...optionalExtensions })
@@ -768,8 +887,14 @@ export class TauriApplicationServiceClient implements ApplicationServiceClient {
       modelId: model.modelId,
       apiFamily: model.apiFamily,
       displayName: model.displayName,
+      capabilities: {
+        input: model.capabilities.input,
+        output: model.capabilities.output,
+      },
       supportsReasoning: model.capabilities.reasoning,
       supportsTools: model.capabilities.tools,
+      supportsImageInput: model.capabilities.input.includes("image"),
+      supportsImageOutput: model.capabilities.output.includes("image"),
     }));
   }
 
@@ -884,6 +1009,65 @@ export class TauriApplicationServiceClient implements ApplicationServiceClient {
     return artifactCreateResultSchema.parse(
       await this.#request("artifacts/create", parameters),
     );
+  }
+
+  /**
+   * 读取并验证一张有界 Session 图片，不把宿主路径暴露给 React。
+   *
+   * 输入：稳定 Session ID 与 opaque artifact ID；输出：严格元数据和 Base64 字节。
+   * 不变量：响应 ID 必须匹配请求，MIME、长度、文件签名与 SHA-256 全部一致。
+   * 失败：RPC、Schema、身份或字节完整性不满足时拒绝，调用方只能显示失败占位。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public async readArtifact(input: ArtifactReadInput): Promise<ArtifactReadResult> {
+    const parameters = artifactReadInputSchema.parse(input);
+    let artifact: SessionArtifactReference | undefined;
+    let bytes: Uint8Array | undefined;
+    let offset = 0;
+    for (let chunkIndex = 0; chunkIndex < MAX_IMAGE_ARTIFACT_CHUNKS; chunkIndex += 1) {
+      const chunk = artifactReadChunkResultSchema.parse(
+        await this.#request("artifacts/read", { ...parameters, offset }),
+      );
+      if (
+        chunk.offset !== offset ||
+        chunk.artifact.artifactId !== parameters.artifactId ||
+        !SUPPORTED_IMAGE_MEDIA_TYPES.some(
+          (mediaType) => mediaType === chunk.artifact.mediaType,
+        ) ||
+        chunk.artifact.byteLength === 0 ||
+        chunk.artifact.byteLength > MAX_IMAGE_ARTIFACT_BYTES ||
+        (artifact !== undefined && !hasSameArtifactMetadata(artifact, chunk.artifact))
+      ) {
+        throw new Error("Artifact chunk does not match the requested image");
+      }
+      artifact ??= chunk.artifact;
+      bytes ??= new Uint8Array(artifact.byteLength);
+      const chunkBytes = decodeImageBase64(
+        chunk.dataBase64,
+        MAX_IMAGE_ARTIFACT_CHUNK_BYTES,
+      );
+      const expectedNextOffset = offset + chunkBytes.length;
+      if (
+        expectedNextOffset > artifact.byteLength ||
+        (chunk.nextOffset !== null && chunk.nextOffset !== expectedNextOffset) ||
+        (chunk.nextOffset === null && expectedNextOffset !== artifact.byteLength)
+      ) {
+        throw new Error("Artifact chunk offsets are not contiguous");
+      }
+      bytes.set(chunkBytes, offset);
+      if (chunk.nextOffset === null) {
+        if (
+          !hasMatchingImageSignature(artifact.mediaType, bytes) ||
+          (await hashImageBytes(bytes)) !== artifact.sha256
+        ) {
+          throw new Error("Artifact image bytes do not match the validated reference");
+        }
+        return { artifact, dataBase64: encodeImageBase64(bytes) };
+      }
+      offset = chunk.nextOffset;
+    }
+    throw new Error("Artifact image exceeded the bounded chunk count");
   }
 
   /**

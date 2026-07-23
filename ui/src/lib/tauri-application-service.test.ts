@@ -75,6 +75,54 @@ describe("TauriApplicationServiceClient", () => {
   });
 
   /**
+   * 验证 models/list 同时保留原始图片输入输出媒介，并派生便于界面判断的布尔能力。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("preserves model image input and output capabilities", async () => {
+    invokeMock.mockResolvedValue({
+      models: [
+        {
+          providerId: "custom.multimodal",
+          modelId: "multimodal-v1",
+          apiFamily: "openai-responses",
+          displayName: "Multimodal v1",
+          capabilities: {
+            input: ["text", "image"],
+            output: ["text", "image"],
+            reasoning: true,
+            tools: true,
+          },
+        },
+      ],
+    });
+    const client = new TauriApplicationServiceClient("rust");
+
+    await expect(client.listModels()).resolves.toEqual([
+      {
+        providerId: "custom.multimodal",
+        modelId: "multimodal-v1",
+        apiFamily: "openai-responses",
+        displayName: "Multimodal v1",
+        capabilities: {
+          input: ["text", "image"],
+          output: ["text", "image"],
+        },
+        supportsReasoning: true,
+        supportsTools: true,
+        supportsImageInput: true,
+        supportsImageOutput: true,
+      },
+    ]);
+    expect(invokeMock).toHaveBeenCalledWith("application_service_request", {
+      backend: "rust",
+      method: "models/list",
+      params: {},
+    });
+  });
+
+  /**
    * 验证输入图片只通过品牌中立 artifacts/create 发布，并严格解析脱敏引用。
    *
    * 作者：高宏顺
@@ -106,6 +154,110 @@ describe("TauriApplicationServiceClient", () => {
         dataBase64: "iVBORw0KGgo=",
       },
     });
+  });
+
+  /**
+   * 验证 artifacts/read 只按连续 offset 读取，并把两块图片字节重新拼为规范 Base64。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("reads and validates contiguous image artifact chunks", async () => {
+    const artifact = {
+      artifactId: "artifact-output-1",
+      mediaType: "image/png",
+      byteLength: 12,
+      sha256: "1b56b50ac4e976f488f128cabdcdffb2fc9331d6974bb9968131a415d14ade24",
+    };
+    invokeMock
+      .mockResolvedValueOnce({
+        artifact,
+        offset: 0,
+        dataBase64: "iVBORw0KGgo=",
+        nextOffset: 8,
+      })
+      .mockResolvedValueOnce({
+        artifact,
+        offset: 8,
+        dataBase64: "AAAAAA==",
+        nextOffset: null,
+      });
+    const client = new TauriApplicationServiceClient("dotnet");
+
+    await expect(
+      client.readArtifact({
+        sessionId: "session-output-1",
+        artifactId: artifact.artifactId,
+      }),
+    ).resolves.toEqual({ artifact, dataBase64: "iVBORw0KGgoAAAAA" });
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "application_service_request", {
+      backend: "dotnet",
+      method: "artifacts/read",
+      params: {
+        sessionId: "session-output-1",
+        artifactId: "artifact-output-1",
+        offset: 0,
+      },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "application_service_request", {
+      backend: "dotnet",
+      method: "artifacts/read",
+      params: {
+        sessionId: "session-output-1",
+        artifactId: "artifact-output-1",
+        offset: 8,
+      },
+    });
+  });
+
+  /**
+   * 验证 artifacts/read 在后续分块 offset 或 immutable 元数据分叉时失败关闭。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects divergent image artifact chunks", async () => {
+    const artifact = {
+      artifactId: "artifact-output-1",
+      mediaType: "image/png",
+      byteLength: 12,
+      sha256: "1b56b50ac4e976f488f128cabdcdffb2fc9331d6974bb9968131a415d14ade24",
+    };
+    const divergentChunks = [
+      {
+        artifact,
+        offset: 7,
+        dataBase64: "AAAAAA==",
+        nextOffset: null,
+      },
+      {
+        artifact: { ...artifact, sha256: "2".repeat(64) },
+        offset: 8,
+        dataBase64: "AAAAAA==",
+        nextOffset: null,
+      },
+    ];
+
+    for (const divergentChunk of divergentChunks) {
+      invokeMock.mockReset();
+      invokeMock
+        .mockResolvedValueOnce({
+          artifact,
+          offset: 0,
+          dataBase64: "iVBORw0KGgo=",
+          nextOffset: 8,
+        })
+        .mockResolvedValueOnce(divergentChunk);
+      const client = new TauriApplicationServiceClient("rust");
+
+      await expect(
+        client.readArtifact({
+          sessionId: "session-output-1",
+          artifactId: artifact.artifactId,
+        }),
+      ).rejects.toThrow();
+      expect(invokeMock).toHaveBeenCalledTimes(2);
+    }
   });
 
   /**
@@ -182,6 +334,8 @@ describe("TauriApplicationServiceClient", () => {
       apiFamily: "openai-completions",
       modelIds: ["model-a"],
       supportsTools: true,
+      supportsImageInput: true,
+      supportsImageOutput: true,
       logoAssetId: "custom.brand.dark",
       enabled: true,
     } as const;
@@ -201,7 +355,11 @@ describe("TauriApplicationServiceClient", () => {
 
     const result = await client.createProviderConnection(connectionInput);
 
-    expect(result.connection.logoAssetId).toBe("custom.brand.dark");
+    expect(result.connection).toMatchObject({
+      logoAssetId: "custom.brand.dark",
+      supportsImageInput: true,
+      supportsImageOutput: true,
+    });
     expect(invokeMock).toHaveBeenCalledWith("application_service_request", {
       backend: "rust",
       method: "providerConnections/create",
@@ -227,6 +385,8 @@ describe("TauriApplicationServiceClient", () => {
         apiFamily: "openai-completions",
         modelIds: ["model-a", "model-b"],
         supportsTools: false,
+        supportsImageInput: false,
+        supportsImageOutput: false,
         logoAssetId: null,
         enabled: true,
         credentialConfigured: true,

@@ -75,6 +75,7 @@
               "providerCredentials/set",
               "providerCredentials/remove",
               "artifacts/create",
+              "artifacts/read",
               "run/start",
               "run/cancel",
               "run/steer",
@@ -205,7 +206,7 @@
       "properties": {
         "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
         "mediaType": { "enum": ["image/png", "image/jpeg", "image/webp", "image/gif"] },
-        "dataBase64": { "type": "string", "minLength": 4, "maxLength": 699052, "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$" }
+        "dataBase64": { "type": "string", "minLength": 4, "maxLength": 699052, "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$" }
       },
       "additionalProperties": false
     },
@@ -214,6 +215,58 @@
       "required": ["artifact"],
       "properties": {
         "artifact": { "$ref": "../domain/artifact.schema.json#/$defs/artifactReference" }
+      },
+      "additionalProperties": false
+    },
+    "artifactReadParams": {
+      "type": "object",
+      "required": ["sessionId", "artifactId", "offset"],
+      "properties": {
+        "sessionId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "artifactId": { "$ref": "../common.schema.json#/$defs/opaqueId" },
+        "offset": {
+          "allOf": [
+            { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+            { "maximum": 33554431 }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifactReadResult": {
+      "type": "object",
+      "required": ["artifact", "offset", "dataBase64", "nextOffset"],
+      "properties": {
+        "artifact": {
+          "$ref": "../domain/artifact.schema.json#/$defs/artifactReference",
+          "properties": {
+            "mediaType": { "enum": ["image/png", "image/jpeg", "image/webp", "image/gif"] },
+            "byteLength": {
+              "allOf": [
+                { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+                { "minimum": 1, "maximum": 33554432 }
+              ]
+            }
+          }
+        },
+        "offset": {
+          "allOf": [
+            { "$ref": "../common.schema.json#/$defs/nonNegativeSafeInteger" },
+            { "maximum": 33554431 }
+          ]
+        },
+        "dataBase64": { "type": "string", "minLength": 4, "maxLength": 699052, "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$" },
+        "nextOffset": {
+          "oneOf": [
+            {
+              "allOf": [
+                { "$ref": "../common.schema.json#/$defs/positiveSafeInteger" },
+                { "maximum": 33554432 }
+              ]
+            },
+            { "type": "null" }
+          ]
+        }
       },
       "additionalProperties": false
     },
@@ -499,7 +552,7 @@
       "properties": {
         "connections": {
           "type": "array",
-          "items": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/custom-provider-connection.schema.json#/$defs/connection" },
+          "items": { "$ref": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json#/$defs/connection" },
           "maxItems": 128
         }
       },
@@ -509,7 +562,7 @@
       "type": "object",
       "required": ["connection", "restartRequired"],
       "properties": {
-        "connection": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/custom-provider-connection.schema.json#/$defs/connection" },
+        "connection": { "$ref": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json#/$defs/connection" },
         "restartRequired": { "const": true }
       },
       "additionalProperties": false
@@ -633,6 +686,13 @@
         "params": { "$ref": "#/$defs/artifactCreateParams" }
       }
     },
+    "artifactReadRequest": {
+      "$ref": "#/$defs/baseRequest",
+      "properties": {
+        "method": { "const": "artifacts/read" },
+        "params": { "$ref": "#/$defs/artifactReadParams" }
+      }
+    },
     "agentProfilesListRequest": {
       "$ref": "#/$defs/baseRequest",
       "properties": {
@@ -672,35 +732,35 @@
       "$ref": "#/$defs/baseRequest",
       "properties": {
         "method": { "const": "providerConnections/list" },
-        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/custom-provider-connection.schema.json#/$defs/listParams" }
+        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json#/$defs/listParams" }
       }
     },
     "providerConnectionsCreateRequest": {
       "$ref": "#/$defs/baseRequest",
       "properties": {
         "method": { "const": "providerConnections/create" },
-        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/custom-provider-connection.schema.json#/$defs/createParams" }
+        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json#/$defs/createParams" }
       }
     },
     "providerConnectionsUpdateRequest": {
       "$ref": "#/$defs/baseRequest",
       "properties": {
         "method": { "const": "providerConnections/update" },
-        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/custom-provider-connection.schema.json#/$defs/updateParams" }
+        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json#/$defs/updateParams" }
       }
     },
     "providerConnectionsDeleteRequest": {
       "$ref": "#/$defs/baseRequest",
       "properties": {
         "method": { "const": "providerConnections/delete" },
-        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/custom-provider-connection.schema.json#/$defs/deleteParams" }
+        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json#/$defs/deleteParams" }
       }
     },
     "providerConnectionsDiscoverModelsRequest": {
       "$ref": "#/$defs/baseRequest",
       "properties": {
         "method": { "const": "providerConnections/discoverModels" },
-        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/custom-provider-connection.schema.json#/$defs/discoverModelsParams" }
+        "params": { "$ref": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json#/$defs/discoverModelsParams" }
       }
     },
     "providerCredentialsSetRequest": {
@@ -836,6 +896,7 @@
         { "$ref": "#/$defs/providerCredentialsSetRequest" },
         { "$ref": "#/$defs/providerCredentialsRemoveRequest" },
         { "$ref": "#/$defs/artifactCreateRequest" },
+        { "$ref": "#/$defs/artifactReadRequest" },
         { "$ref": "#/$defs/runStartRequest" },
         { "$ref": "#/$defs/runCancelRequest" },
         { "$ref": "#/$defs/runSteerRequest" },
@@ -869,8 +930,10 @@
         { "$ref": "#/$defs/providerConnectionsListResult" },
         { "$ref": "#/$defs/providerConnectionResult" },
         { "$ref": "#/$defs/providerConnectionDeleteResult" },
-        { "$ref": "https://schemas.agentprotocol.local/spec/0.2/schemas/custom-provider-connection.schema.json#/$defs/credentialStatus" },
+        { "$ref": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json#/$defs/discoverModelsResult" },
+        { "$ref": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json#/$defs/credentialStatus" },
         { "$ref": "#/$defs/artifactCreateResult" },
+        { "$ref": "#/$defs/artifactReadResult" },
         { "$ref": "#/$defs/runStartResult" },
         { "$ref": "#/$defs/acceptedResult" },
         { "$ref": "#/$defs/cancelResult" },

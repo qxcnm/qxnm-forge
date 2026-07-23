@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type ClipboardEvent, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import {
   ArrowUp,
   Bot,
@@ -46,6 +46,37 @@ interface PreparedImage {
   readonly name: string;
 }
 
+interface DecodedImage {
+  readonly source: CanvasImageSource;
+  readonly width: number;
+  readonly height: number;
+  readonly release: () => void;
+}
+
+interface ClipboardFileCollection {
+  readonly files: readonly File[];
+  readonly confirmedImageIntent: boolean;
+  readonly textOnly: boolean;
+}
+
+interface ClipboardImageReadResult {
+  readonly file: File | null;
+  readonly confirmedImageIntent: boolean;
+}
+
+/**
+ * 以窄权限读取当前剪贴板图片，供浏览器标准 API 不可用时注入原生实现。
+ *
+ * 输入：无，不接受文本读取或剪贴板写入能力。
+ * 输出：一份图片 File；剪贴板没有图片时返回 null。
+ * 不变量：实现不得读取或返回剪贴板文本。
+ * 失败条件：权限拒绝或平台读取失败时可以拒绝 Promise，Composer 会安全降级。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+export type ComposerNativeClipboardImageReader = () => Promise<File | null>;
+
 /**
  * 判断 MIME 是否属于协议允许的输入图片类型。
  *
@@ -57,54 +88,344 @@ function isSupportedImageMediaType(value: string): value is SupportedImageMediaT
 }
 
 /**
+ * 规范化 MIME 并仅返回协议允许的图片类型。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function parseSupportedImageMediaType(value: string): SupportedImageMediaType | null {
+  const normalized = value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return isSupportedImageMediaType(normalized) ? normalized : null;
+}
+
+/**
+ * 在剪贴板未提供 MIME 时，根据安全白名单扩展名推断图片类型。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function inferImageMediaTypeFromName(name: string): SupportedImageMediaType | null {
+  const extension = name.trim().toLowerCase().match(/\.([^.]+)$/)?.[1];
+  switch (extension) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    default:
+      return null;
+  }
+}
+
+/**
+ * 解析文件及剪贴板项声明的图片类型；只有两者均为空时才使用扩展名兜底。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function resolveImageMediaType(file: File, fallbackMediaType = ""): SupportedImageMediaType | null {
+  const fileMediaType = file.type.trim();
+  const fallback = fallbackMediaType.trim();
+  const declared = parseSupportedImageMediaType(fileMediaType) ??
+    parseSupportedImageMediaType(fallback);
+  if (declared) {
+    return declared;
+  }
+  return fileMediaType.length === 0 && fallback.length === 0
+    ? inferImageMediaTypeFromName(file.name)
+    : null;
+}
+
+/**
+ * 为 MIME 缺失或不一致的受支持剪贴板图片补齐稳定文件名与类型。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function normalizeClipboardFile(file: File, fallbackMediaType = ""): File {
+  const mediaType = resolveImageMediaType(file, fallbackMediaType);
+  if (!mediaType) {
+    return file;
+  }
+  const extension = mediaType === "image/jpeg" ? "jpg" : mediaType.slice("image/".length);
+  const name = file.name || `pasted.${extension}`;
+  if (file.type.length === 0 && fallbackMediaType.length === 0 && file.name.length > 0) {
+    return file;
+  }
+  if (file.type === mediaType && file.name === name) {
+    return file;
+  }
+  return new File([file], name, {
+    type: mediaType,
+    lastModified: file.lastModified,
+  });
+}
+
+/**
+ * 在读取字节前判断文件是否属于允许的 UTF-8 文本附件候选。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function isSupportedTextFile(file: File): boolean {
+  return file.type.trim().toLowerCase().startsWith("text/") ||
+    /\.(?:txt|md|markdown|json|jsonl|csv|tsv|xml|ya?ml|toml|log|rs|cs|ts|tsx|js|jsx|css|html|sql)$/i.test(file.name);
+}
+
+/**
  * 从标准 files 与 WebKitGTK 常用的 items 两条剪贴板路径收集文件并去重。
  *
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
-function collectClipboardFiles(clipboardData: DataTransfer): File[] {
+function collectClipboardFiles(clipboardData: DataTransfer | null): ClipboardFileCollection {
   const files: File[] = [];
-  const seen = new Set<string>();
-  const append = (file: File, fallbackMediaType = "") => {
-    const mediaType = file.type || fallbackMediaType;
-    const signature = `${file.name}\0${mediaType}\0${file.size}\0${file.lastModified}`;
-    if (seen.has(signature)) {
+  const seenObjects = new WeakSet<File>();
+  const fileListSignatures = new Set<string>();
+  let confirmedImageIntent = false;
+  let hasFileIntent = false;
+  let hasTextIntent = false;
+  const append = (file: File, fallbackMediaType = "", fromItem = false) => {
+    if (seenObjects.has(file)) {
       return;
     }
-    seen.add(signature);
-    if (file.type || !isSupportedImageMediaType(mediaType)) {
-      files.push(file);
+    const normalized = normalizeClipboardFile(file, fallbackMediaType);
+    const mediaType = resolveImageMediaType(normalized, fallbackMediaType) ??
+      (normalized.type.trim().toLowerCase() || fallbackMediaType.trim().toLowerCase());
+    const signature = `${normalized.name}\0${mediaType}\0${normalized.size}\0${normalized.lastModified}`;
+    if (fromItem && fileListSignatures.has(signature)) {
+      seenObjects.add(file);
       return;
     }
-    const extension = mediaType === "image/jpeg" ? "jpg" : mediaType.slice("image/".length);
-    files.push(new File([file], file.name || `pasted.${extension}`, {
-      type: mediaType,
-      lastModified: file.lastModified,
-    }));
+    seenObjects.add(file);
+    if (!fromItem) {
+      fileListSignatures.add(signature);
+    }
+    files.push(normalized);
+    hasFileIntent = true;
+    if (resolveImageMediaType(normalized, fallbackMediaType)) {
+      confirmedImageIntent = true;
+    }
   };
 
-  const clipboardFiles = clipboardData.files;
-  for (let index = 0; index < (clipboardFiles?.length ?? 0); index += 1) {
-    const file = clipboardFiles[index];
-    if (file) {
-      append(file);
+  if (!clipboardData) {
+    return { files, confirmedImageIntent, textOnly: false };
+  }
+
+  try {
+    const clipboardFiles = clipboardData.files;
+    for (let index = 0; index < (clipboardFiles?.length ?? 0); index += 1) {
+      const file = clipboardFiles[index];
+      if (file) {
+        append(file);
+      }
+    }
+  } catch {
+    // 某些 WebKitGTK 版本会在 files 投影不可用时抛错，继续尝试 items。
+  }
+
+  try {
+    const clipboardItems = clipboardData.items;
+    for (let index = 0; index < (clipboardItems?.length ?? 0); index += 1) {
+      const item = clipboardItems[index];
+      if (!item) {
+        continue;
+      }
+      if (item.kind === "string") {
+        hasTextIntent = true;
+        continue;
+      }
+      if (item.kind !== "file") {
+        continue;
+      }
+      hasFileIntent = true;
+      const itemMediaType = item.type.trim().toLowerCase();
+      if (itemMediaType.startsWith("image/")) {
+        confirmedImageIntent = true;
+      }
+      if (itemMediaType.length > 0 && !parseSupportedImageMediaType(itemMediaType)) {
+        continue;
+      }
+      try {
+        const file = item.getAsFile();
+        if (file) {
+          append(file, itemMediaType, true);
+        }
+      } catch {
+        // getAsFile 在部分 WebKitGTK/Wayland 组合中会抛错，交由异步图片路径兜底。
+      }
+    }
+  } catch {
+    // items 投影本身不可用时继续使用 types 和异步图片路径。
+  }
+
+  try {
+    const clipboardTypes = clipboardData.types;
+    for (let index = 0; index < (clipboardTypes?.length ?? 0); index += 1) {
+      const clipboardType = clipboardTypes[index]?.trim().toLowerCase() ?? "";
+      if (clipboardType === "files") {
+        hasFileIntent = true;
+      } else if (clipboardType.startsWith("image/")) {
+        hasFileIntent = true;
+        confirmedImageIntent = true;
+      } else if (clipboardType.startsWith("text/")) {
+        hasTextIntent = true;
+      }
+    }
+  } catch {
+    // types 仅用于判定是否为纯文本粘贴，不影响图片兜底读取。
+  }
+
+  return {
+    files,
+    confirmedImageIntent,
+    textOnly: hasTextIntent && !hasFileIntent && !confirmedImageIntent,
+  };
+}
+
+/**
+ * 通过 HTMLImageElement 与 object URL 解码图片，并提供确定性的资源释放回调。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function decodeImageElement(file: File): Promise<DecodedImage> {
+  return new Promise((resolve, reject) => {
+    if (typeof globalThis.Image !== "function" ||
+      typeof URL.createObjectURL !== "function" ||
+      typeof URL.revokeObjectURL !== "function") {
+      reject(new Error("unsupported"));
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    let released = false;
+    const release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      image.onload = null;
+      image.onerror = null;
+      image.src = "";
+      URL.revokeObjectURL(objectUrl);
+    };
+    image.onload = () => {
+      const width = image.naturalWidth;
+      const height = image.naturalHeight;
+      if (width === 0 || height === 0) {
+        release();
+        reject(new Error("unsupported"));
+        return;
+      }
+      resolve({ source: image, width, height, release });
+    };
+    image.onerror = () => {
+      release();
+      reject(new Error("unsupported"));
+    };
+    image.src = objectUrl;
+  });
+}
+
+/**
+ * 优先使用 createImageBitmap 解码；不可用或失败时退回 WebKitGTK 兼容路径。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+async function decodeImage(file: File): Promise<DecodedImage> {
+  if (typeof globalThis.createImageBitmap === "function") {
+    try {
+      const bitmap = await globalThis.createImageBitmap(file);
+      return {
+        source: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+        release: () => bitmap.close(),
+      };
+    } catch {
+      // WebKitGTK 可能暴露 createImageBitmap 却无法解码特定图片，继续使用元素解码。
     }
   }
-  const clipboardItems = clipboardData.items;
-  for (let index = 0; index < (clipboardItems?.length ?? 0); index += 1) {
-    const item = clipboardItems[index];
-    if (!item) {
+  return decodeImageElement(file);
+}
+
+/**
+ * 从浏览器异步剪贴板 API 读取第一份受支持图片，不读取文字或未知二进制内容。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+async function readBrowserClipboardImage(): Promise<ClipboardImageReadResult> {
+  let clipboard: Clipboard | undefined;
+  try {
+    clipboard = navigator.clipboard;
+  } catch {
+    return { file: null, confirmedImageIntent: false };
+  }
+  if (!clipboard || typeof clipboard.read !== "function") {
+    return { file: null, confirmedImageIntent: false };
+  }
+
+  let items: readonly ClipboardItem[];
+  try {
+    items = await clipboard.read();
+  } catch {
+    return { file: null, confirmedImageIntent: false };
+  }
+
+  let confirmedImageIntent = false;
+  for (const item of items) {
+    let itemTypes: readonly string[] = [];
+    try {
+      itemTypes = [...item.types];
+    } catch {
       continue;
     }
-    if (item.kind !== "file") {
+    if (itemTypes.some((type) => type.trim().toLowerCase().startsWith("image/"))) {
+      confirmedImageIntent = true;
+    }
+    const mediaType = itemTypes
+      .map((type) => parseSupportedImageMediaType(type))
+      .find((type): type is SupportedImageMediaType => type !== null);
+    if (!mediaType || typeof item.getType !== "function") {
       continue;
     }
-    const file = item.getAsFile();
-    if (file) {
-      append(file, item.type);
+    try {
+      const blob = await item.getType(mediaType);
+      const extension = mediaType === "image/jpeg" ? "jpg" : mediaType.slice("image/".length);
+      return {
+        file: new File([blob], `pasted.${extension}`, { type: mediaType }),
+        confirmedImageIntent: true,
+      };
+    } catch {
+      // 同一剪贴板可能暴露多个表示；当前表示失败时继续尝试下一项。
     }
   }
-  return files;
+  return { file: null, confirmedImageIntent };
+}
+
+/**
+ * 判断文档级 paste 是否属于当前 Composer，避免截获其他输入控件的粘贴。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function shouldHandlePasteTarget(target: EventTarget | null, composer: HTMLFormElement): boolean {
+  if (target instanceof Node && composer.contains(target)) {
+    return true;
+  }
+  if (!(target instanceof Element)) {
+    return true;
+  }
+  return !target.closest(
+    'input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="searchbox"]',
+  );
 }
 
 /**
@@ -126,6 +447,30 @@ function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<B
 }
 
 /**
+ * 读取已验证 Blob 的字节；旧版 WebKit 缺少 arrayBuffer 时使用 FileReader 兼容。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function readBlobArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  if (typeof blob.arrayBuffer === "function") {
+    return blob.arrayBuffer();
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (reader.result instanceof ArrayBuffer) {
+        resolve(reader.result);
+      } else {
+        reject(new Error("unsupported"));
+      }
+    };
+    reader.onerror = () => reject(new Error("unsupported"));
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
+/**
  * 解码超过协议上限的静态图片并压缩到 512 KiB 内。
  *
  * 输入：受支持且不超过 20 MiB 的浏览器 File。
@@ -140,17 +485,17 @@ async function compressImage(file: File): Promise<PreparedImage> {
   if (file.size === 0 || file.size > MAX_SOURCE_IMAGE_BYTES || file.type === "image/gif") {
     throw new Error("too-large");
   }
-  const bitmap = await createImageBitmap(file);
+  const decoded = await decodeImage(file);
   try {
-    if (bitmap.width === 0 || bitmap.height === 0) {
+    if (decoded.width === 0 || decoded.height === 0) {
       throw new Error("unsupported");
     }
     const initialScale = Math.min(
       1,
-      MAX_COMPRESSED_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height),
+      MAX_COMPRESSED_IMAGE_EDGE / Math.max(decoded.width, decoded.height),
     );
-    let width = Math.max(1, Math.round(bitmap.width * initialScale));
-    let height = Math.max(1, Math.round(bitmap.height * initialScale));
+    let width = Math.max(1, Math.round(decoded.width * initialScale));
+    let height = Math.max(1, Math.round(decoded.height * initialScale));
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) {
@@ -162,11 +507,11 @@ async function compressImage(file: File): Promise<PreparedImage> {
       canvas.height = height;
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, width, height);
-      context.drawImage(bitmap, 0, 0, width, height);
+      context.drawImage(decoded.source, 0, 0, width, height);
       for (const quality of qualities) {
         const blob = await canvasToJpegBlob(canvas, quality);
         if (blob.size > 0 && blob.size <= MAX_INPUT_IMAGE_BYTES) {
-          const bytes = new Uint8Array(await blob.arrayBuffer());
+          const bytes = new Uint8Array(await readBlobArrayBuffer(blob));
           const baseName = file.name.replace(/\.[^.]+$/, "") || "pasted";
           return { bytes, mediaType: "image/jpeg", name: `${baseName}.jpg` };
         }
@@ -176,7 +521,7 @@ async function compressImage(file: File): Promise<PreparedImage> {
     }
     throw new Error("too-large");
   } finally {
-    bitmap.close();
+    decoded.release();
   }
 }
 
@@ -217,6 +562,7 @@ interface ComposerProps {
   readonly busy: boolean;
   readonly attachments: readonly ComposerAttachment[];
   readonly submissionError?: string | null;
+  readonly readNativeClipboardImage?: ComposerNativeClipboardImageReader;
   readonly onValueChange: (value: string) => void;
   readonly onModelChange: (modelRouteKey: string) => void;
   readonly onRetryModels: () => void;
@@ -243,6 +589,7 @@ export function Composer({
   busy,
   attachments,
   submissionError,
+  readNativeClipboardImage,
   onValueChange,
   onModelChange,
   onRetryModels,
@@ -251,7 +598,13 @@ export function Composer({
   onSubmit,
 }: ComposerProps) {
   const { t } = useTranslation();
+  const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const busyRef = useRef(busy);
+  const attachmentsRef = useRef(attachments);
+  const pasteInFlightRef = useRef(false);
+  busyRef.current = busy;
+  attachmentsRef.current = attachments;
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const selectedAgent = agentProfiles.find(
     (profile) => profile.profileId === selectedAgentProfileId,
@@ -303,22 +656,41 @@ export function Composer({
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  const addFiles = async (files: readonly File[]) => {
+  const addFiles = useCallback(async (files: readonly File[]): Promise<boolean> => {
+    if (busyRef.current || files.length === 0) {
+      return false;
+    }
     setAttachmentError(null);
-    if (attachments.length + files.length > 8) {
+    if (attachmentsRef.current.length + files.length > 8) {
       setAttachmentError(t("composer.attachmentTooMany"));
-      return;
+      return false;
     }
     const added: ComposerAttachment[] = [];
     try {
-      for (const file of files) {
-        const buffer = await file.arrayBuffer();
-        if (isSupportedImageMediaType(file.type)) {
+      for (const sourceFile of files) {
+        const file = normalizeClipboardFile(sourceFile);
+        const imageMediaType = resolveImageMediaType(file);
+        const isText = isSupportedTextFile(file);
+        if (!imageMediaType && !isText) {
+          throw new Error("unsupported");
+        }
+        if (imageMediaType &&
+          (file.size === 0 || file.size > MAX_SOURCE_IMAGE_BYTES)) {
+          throw new Error("too-large");
+        }
+        if (!imageMediaType && (file.size === 0 || file.size > 262_144)) {
+          throw new Error("too-large");
+        }
+        const buffer = await readBlobArrayBuffer(file);
+        if (busyRef.current) {
+          return false;
+        }
+        if (imageMediaType) {
           if (buffer.byteLength === 0 || buffer.byteLength > MAX_SOURCE_IMAGE_BYTES) {
             throw new Error("too-large");
           }
           const prepared = buffer.byteLength <= MAX_INPUT_IMAGE_BYTES
-            ? { bytes: new Uint8Array(buffer), mediaType: file.type, name: file.name }
+            ? { bytes: new Uint8Array(buffer), mediaType: imageMediaType, name: file.name }
             : await compressImage(file);
           const { bytes } = prepared;
           let binary = "";
@@ -334,11 +706,6 @@ export function Composer({
             dataBase64: btoa(binary),
           });
           continue;
-        }
-        const isText = file.type.startsWith("text/") ||
-          /\.(?:txt|md|markdown|json|jsonl|csv|tsv|xml|ya?ml|toml|log|rs|cs|ts|tsx|js|jsx|css|html|sql)$/i.test(file.name);
-        if (!isText) {
-          throw new Error("unsupported");
         }
         if (buffer.byteLength === 0 || buffer.byteLength > 262_144) {
           throw new Error("too-large");
@@ -356,29 +723,98 @@ export function Composer({
           text,
         });
       }
-      onAttachmentsChange([...attachments, ...added]);
+      if (busyRef.current) {
+        return false;
+      }
+      onAttachmentsChange([...attachmentsRef.current, ...added]);
+      return true;
     } catch (error) {
       setAttachmentError(
         error instanceof Error && error.message === "too-large"
           ? t("composer.attachmentTooLarge")
           : t("composer.attachmentUnsupported"),
       );
+      return false;
     }
-  };
+  }, [onAttachmentsChange, t]);
 
   /**
-   * 优先消费剪贴板文件项；纯文本粘贴继续交给 Textarea 默认行为。
+   * 串行尝试浏览器与窄权限原生图片读取器，确保同一次粘贴只添加一份图片。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
-  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = collectClipboardFiles(event.clipboardData);
-    if (files.length > 0) {
-      event.preventDefault();
-      void addFiles(files);
+  const addClipboardImageFromFallback = useCallback(async (initiallyConfirmed: boolean) => {
+    if (pasteInFlightRef.current || busyRef.current) {
+      return;
     }
-  };
+    pasteInFlightRef.current = true;
+    let confirmedImageIntent = initiallyConfirmed;
+    try {
+      const browserResult = await readBrowserClipboardImage();
+      confirmedImageIntent ||= browserResult.confirmedImageIntent;
+      if (busyRef.current) {
+        return;
+      }
+      let file = browserResult.file;
+      if (!file && readNativeClipboardImage) {
+        try {
+          file = await readNativeClipboardImage();
+        } catch {
+          file = null;
+        }
+      }
+      if (busyRef.current) {
+        return;
+      }
+      if (file) {
+        await addFiles([file]);
+      } else if (confirmedImageIntent) {
+        setAttachmentError(t("composer.clipboardImageUnavailable"));
+      }
+    } finally {
+      pasteInFlightRef.current = false;
+    }
+  }, [addFiles, readNativeClipboardImage, t]);
+
+  /**
+   * 处理 Composer 内及非编辑区域的文档级粘贴；外部输入控件保持浏览器默认行为。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  const handlePaste = useCallback((event: globalThis.ClipboardEvent) => {
+    const composer = formRef.current;
+    if (!composer || !shouldHandlePasteTarget(event.target, composer)) {
+      return;
+    }
+    let clipboardData: DataTransfer | null = null;
+    try {
+      clipboardData = event.clipboardData;
+    } catch {
+      clipboardData = null;
+    }
+    const collection = collectClipboardFiles(clipboardData);
+    if (collection.files.length > 0 || collection.confirmedImageIntent) {
+      event.preventDefault();
+    }
+    if (busyRef.current) {
+      return;
+    }
+    if (collection.files.length > 0) {
+      void addFiles(collection.files);
+      return;
+    }
+    if (collection.textOnly) {
+      return;
+    }
+    void addClipboardImageFromFallback(collection.confirmedImageIntent);
+  }, [addClipboardImageFromFallback, addFiles]);
+
+  useEffect(() => {
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [handlePaste]);
 
   /**
    * 消费隐藏文件输入并允许再次选择同一文件。
@@ -394,6 +830,7 @@ export function Composer({
   return (
     <div className="shrink-0 bg-background px-3 pb-2 pt-2 sm:px-6 sm:pb-3 sm:pt-0">
       <form
+        ref={formRef}
         onSubmit={handleSubmit}
         className="mx-auto w-full max-w-[760px] rounded-2xl border bg-background p-2 shadow-sm focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/20"
       >
@@ -417,6 +854,7 @@ export function Composer({
                   type="button"
                   className="self-start rounded p-0.5 text-muted-foreground hover:text-foreground"
                   onClick={() => onAttachmentsChange(attachments.filter((item) => item.id !== attachment.id))}
+                  disabled={busy}
                   aria-label={t("composer.removeAttachment", { name: attachment.name })}
                 >
                   <X className="size-3" aria-hidden="true" />
@@ -429,7 +867,6 @@ export function Composer({
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
           placeholder={t("composer.placeholder")}
           aria-label={t("composer.messageLabel")}
           className="min-h-[54px] resize-none border-0 px-2 py-1 text-[13px] leading-5 shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
@@ -456,6 +893,7 @@ export function Composer({
             ref={fileInputRef}
             type="file"
             multiple
+            disabled={busy}
             className="hidden"
             accept="image/png,image/jpeg,image/webp,image/gif,text/*,.md,.markdown,.json,.jsonl,.csv,.tsv,.xml,.yaml,.yml,.toml,.log,.rs,.cs,.ts,.tsx,.js,.jsx,.css,.html,.sql"
             onChange={handleFileSelection}
@@ -503,7 +941,11 @@ export function Composer({
             <SelectContent align="start">
               {models.map((model) => (
                 <SelectItem key={getModelRouteKey(model)} value={getModelRouteKey(model)}>
-                  {model.displayName} · {model.providerId}/{model.apiFamily}
+                  {model.displayName} · {model.providerId}/{model.apiFamily} · {[
+                    model.supportsImageInput ? t("composer.modelImageInput") : null,
+                    model.supportsImageOutput ? t("composer.modelImageOutput") : null,
+                  ].filter((label): label is string => label !== null).join(" / ") ||
+                    t("composer.modelTextOnly")}
                 </SelectItem>
               ))}
             </SelectContent>

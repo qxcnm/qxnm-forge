@@ -142,7 +142,7 @@ internal sealed class ProviderCredentialSource
     {
         if (credentialStore is not null)
         {
-            return credentialStore.TryReadForRequest(storedProviderId!, out _);
+            return credentialStore.ContainsAll(storedProviderId!);
         }
 
         if (environmentName is null)
@@ -443,6 +443,20 @@ public abstract class HttpSseProviderBase : IProvider, IDisposable
     /// </summary>
     /// <remarks>原生 family 默认支持；自定义连接必须按启动快照中的显式声明覆盖。</remarks>
     public virtual bool SupportsTools => true;
+
+    /// <summary>
+    /// 功能：默认声明通用 SSE route 不接受图片输入。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public virtual bool SupportsImageInput => false;
+
+    /// <summary>
+    /// 功能：默认声明通用 SSE route 不产生图片输出。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public virtual bool SupportsImageOutput => false;
 
     /// <summary>
     /// 功能：执行有总时限的 HTTP attempts，并把 retry 决策作为规范化信号返回 Agent。

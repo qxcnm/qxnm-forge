@@ -384,6 +384,36 @@ public sealed class SessionRepository : IAsyncDisposable
     }
 
     /// <summary>
+    /// 功能：从指定 Session 当前 selected chain 按 ID 读取并完整验证一个 durable 图片 artifact。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionId">目标 opaque Session ID。</param>
+    /// <param name="artifactId">journal 已发布的 opaque artifact ID。</param>
+    /// <param name="maximumBytes">单图片读取上限。</param>
+    /// <param name="cancellationToken">打开 Session、等待状态门禁与读取文件的取消信号。</param>
+    /// <returns>完整 portable 引用和已验证字节；不含任何主机路径。</returns>
+    /// <remarks>不变量：StateGate 与 journal append gate 共同冻结 selected chain；文件只由 journal 自持目录和安全 ID 派生。</remarks>
+    /// <exception cref="ArtifactValidationException">归属、引用、文件身份或内容无效。</exception>
+    /// <exception cref="JournalCorruptException">Session journal 基础结构损坏。</exception>
+    /// <exception cref="JournalIncompatibleException">selected tree 不能安全解释。</exception>
+    internal async Task<(ArtifactReference Artifact, byte[] Bytes)> ReadImageArtifactByIdAsync(
+        string sessionId,
+        string artifactId,
+        long maximumBytes,
+        CancellationToken cancellationToken = default)
+    {
+        using var runtimeUse = await AcquireRuntimeUseAsync(
+            sessionId,
+            waitForStateGate: true,
+            cancellationToken).ConfigureAwait(false);
+        return await runtimeUse.Runtime.Journal.ReadImageArtifactByIdAsync(
+            artifactId,
+            maximumBytes,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// 功能：在指定 active run 内 durable 发布 computer 工具生成的 PNG artifact。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com

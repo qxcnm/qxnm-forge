@@ -197,9 +197,14 @@ public static class ProviderRegistryFactory
                 continue;
             }
 
-            providers.Add(CustomProviderConnectionAdapterFactory.Create(connection, credentials, options));
+            var effectiveConnection = connection with
+            {
+                SupportsImageOutput = connection.SupportsImageOutput &&
+                    configured.Contains(CustomProviderConnectionService.ImageCredentialId(connection.ConnectionId)),
+            };
+            providers.Add(CustomProviderConnectionAdapterFactory.Create(effectiveConnection, credentials, options));
             models.AddRange(
-                CustomProviderConnectionAdapterFactory.CreateModelDescriptors(connection));
+                CustomProviderConnectionAdapterFactory.CreateModelDescriptors(effectiveConnection));
         }
     }
 
@@ -231,7 +236,7 @@ public static class ProviderRegistryFactory
         foreach (var route in routeStore.List())
         {
             providers.Add(SponsoredProviderAdapterFactory.Create(route, credentials, options));
-            if (credentials.TryReadForRequest(route.ProviderId, out _))
+            if (credentials.ContainsAll(route.ProviderId))
             {
                 models.AddRange(InstalledSponsoredRouteStore.CreateModelDescriptors(route));
             }

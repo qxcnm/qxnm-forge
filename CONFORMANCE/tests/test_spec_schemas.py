@@ -441,7 +441,12 @@ class SpecSchemaTests(unittest.TestCase):
                 self.assertTrue((ROOT / evidence).is_file(), evidence)
 
     def test_sponsored_installation_and_credential_store_schemas(self) -> None:
-        """功能：验证非敏感安装 fixture，并拒绝 route/credential 未知字段和危险 family。
+        """功能：验证非敏感安装 fixture 与仅供迁移的 legacy credential schema。
+
+        输入：v0.1 推广 route、v0.1 聚合 credential migration input 与 v0.2 规范文本。
+        输出：旧输入仍可升级，未知字段、危险 family 及伪造 v0.2 JSON 文档被拒绝。
+        不变量：当前 CredentialStore 是逐叶目录，旧 schema 不得冒充现行存储格式。
+        失败：schema ID/用途或目录、叶名、字节/权限、presence 边界说明漂移时测试失败。
 
         作者：高宏顺
         邮箱：18272669457@163.com
@@ -466,6 +471,17 @@ class SpecSchemaTests(unittest.TestCase):
         with self.assertRaises(jsonschema.ValidationError):
             installation_validator.validate(changed)
 
+        credential_schema = json.loads(
+            (SCHEMAS / "provider-credential-store.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            "https://schemas.agentprotocol.local/spec/0.1/schemas/provider-credential-store.schema.json",
+            credential_schema["$id"],
+        )
+        self.assertIn("Legacy v0.1", credential_schema["title"])
+        self.assertIn("migration input only", credential_schema["$comment"])
         credential_validator = self.validator(
             "provider-credential-store.schema.json", ""
         )
@@ -488,6 +504,29 @@ class SpecSchemaTests(unittest.TestCase):
                     ],
                 }
             )
+        with self.assertRaises(jsonschema.ValidationError):
+            credential_validator.validate(
+                {"schemaVersion": "0.2", "credentials": []}
+            )
+
+        commercial_contract = (
+            ROOT / "SPEC/provider-commercial-state.md"
+        ).read_text(encoding="utf-8")
+        for required_text in (
+            "CredentialStore v0.2",
+            "`credentials/provider-credentials.d/`",
+            "base64url_no_padding(UTF8(providerId))",
+            "`1..16384` bytes",
+            "最多 128 条",
+            "no-follow 元数据",
+            "最终 HTTP 认证 header",
+            "`0700`",
+            "`0600`",
+            "`credentials/.provider-credentials.d.migrating/`",
+            "legacy v0.1 migration input",
+            "唯一迁移例外",
+        ):
+            self.assertIn(required_text, commercial_contract)
 
     def test_storage_configuration_schema_closes_provider_and_secret_fields(
         self,
@@ -570,6 +609,8 @@ class SpecSchemaTests(unittest.TestCase):
             "modelsUrl": "https://api.example/v1/models",
             "modelIds": ["gpt-5"],
             "supportsTools": True,
+            "supportsImageInput": True,
+            "supportsImageOutput": True,
             "logoAssetId": "new-api",
             "enabled": True,
             "credentialConfigured": False,
@@ -578,6 +619,14 @@ class SpecSchemaTests(unittest.TestCase):
             "updatedAt": "2026-07-21T00:00:00Z",
         }
         validator.validate(connection)
+        for endpoint in (
+            "https://api.example:65535/v1/%E4%B8%AD",
+            "https://[2001:db8::1]:443/v1",
+        ):
+            bounded_endpoint = deepcopy(connection)
+            bounded_endpoint["baseUrl"] = endpoint
+            bounded_endpoint["modelsUrl"] = endpoint
+            validator.validate(bounded_endpoint)
         pending_discovery = deepcopy(connection)
         pending_discovery["modelIds"] = []
         validator.validate(pending_discovery)
@@ -588,7 +637,7 @@ class SpecSchemaTests(unittest.TestCase):
         }
         self.validator(
             "custom-provider-connection.schema.json", "#/$defs/document"
-        ).validate({"schemaVersion": "0.2", "connections": [configuration]})
+        ).validate({"schemaVersion": "0.3", "connections": [configuration]})
         projected_fields = {
             "connectionId",
             "revision",
@@ -654,13 +703,21 @@ class SpecSchemaTests(unittest.TestCase):
                 self.validator(
                     "protocol/jsonrpc.schema.json", f"#/$defs/{definition}"
                 ).validate(request)
+        discovery_result = {
+            "connection": connection,
+            "discoveredCount": 1,
+            "restartRequired": True,
+        }
         self.validator(
             "custom-provider-connection.schema.json", "#/$defs/discoverModelsResult"
+        ).validate(discovery_result)
+        self.validator(
+            "protocol/jsonrpc.schema.json", "#/$defs/successResponse"
         ).validate(
             {
-                "connection": connection,
-                "discoveredCount": 1,
-                "restartRequired": True,
+                "jsonrpc": "2.0",
+                "id": "providerConnections/discoverModels",
+                "result": discovery_result,
             }
         )
         for field, value in (
@@ -676,6 +733,174 @@ class SpecSchemaTests(unittest.TestCase):
             with self.subTest(field=field, value=value):
                 with self.assertRaises(jsonschema.ValidationError):
                     validator.validate(invalid)
+
+        unsafe_https_urls = (
+            "https://api.example:abc/v1",
+            "https://api.example:65536/v1",
+            "https://api.example:99999/v1",
+            "https://api example/v1",
+            "https://api..example/v1",
+            "https://api.example/%zz",
+            "https://api.example/%2",
+        )
+        for field in ("baseUrl", "modelsUrl"):
+            for value in unsafe_https_urls:
+                invalid = deepcopy(connection)
+                invalid[field] = value
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(jsonschema.ValidationError):
+                        validator.validate(invalid)
+
+    def test_artifact_read_contract_is_chunked_and_path_free(self) -> None:
+        """功能：验证 Session 图片 artifact 只能通过有界、连续分块 RPC 回读。
+
+        输入：opaque Session/artifact ID、显式 offset 与不超过 512 KiB 的规范 Base64 分块。
+        输出：合法请求和响应通过，负 offset、空分块、路径及未知字段全部拒绝。
+        不变量：wire 只携带不可变 artifact 元数据和字节，不暴露宿主路径或远程 URL。
+        失败：artifacts/read 方法、分块边界或封闭对象约束漂移时测试失败。
+        作者：高宏顺
+        邮箱：18272669457@163.com
+        """
+
+        request = {
+            "jsonrpc": "2.0",
+            "id": "artifact-read-1",
+            "method": "artifacts/read",
+            "params": {
+                "sessionId": "session-example",
+                "artifactId": "image-example",
+                "offset": 0,
+            },
+        }
+        self.validator(
+            "protocol/jsonrpc.schema.json", "#/$defs/artifactReadRequest"
+        ).validate(request)
+        artifact = {
+            "artifactId": "image-example",
+            "mediaType": "image/png",
+            "byteLength": 16,
+            "sha256": "a" * 64,
+        }
+        result = {
+            "artifact": artifact,
+            "offset": 0,
+            "dataBase64": "iVBORw0KGgo=",
+            "nextOffset": 8,
+        }
+        result_validator = self.validator(
+            "protocol/jsonrpc.schema.json", "#/$defs/artifactReadResult"
+        )
+        result_validator.validate(result)
+        self.validator(
+            "protocol/jsonrpc.schema.json", "#/$defs/successResponse"
+        ).validate(
+            {
+                "jsonrpc": "2.0",
+                "id": "artifact-read-1",
+                "result": result,
+            }
+        )
+        for invalid in (
+            {**request, "params": {**request["params"], "offset": -1}},
+            {**request, "params": {**request["params"], "offset": 33_554_432}},
+            {**request, "params": {**request["params"], "path": "/tmp/image.png"}},
+        ):
+            with self.assertRaises(jsonschema.ValidationError):
+                self.validator(
+                    "protocol/jsonrpc.schema.json", "#/$defs/artifactReadRequest"
+                ).validate(invalid)
+        for invalid in (
+            {**result, "dataBase64": ""},
+            {**result, "dataBase64": "AB=="},
+            {**result, "artifact": {**artifact, "mediaType": "application/pdf"}},
+            {**result, "artifact": {**artifact, "byteLength": 33_554_433}},
+            {**result, "nextOffset": 33_554_433},
+            {**result, "path": "/tmp/image.png"},
+            {**result, "remoteUrl": "https://example.test/image.png"},
+        ):
+            with self.assertRaises(jsonschema.ValidationError):
+                result_validator.validate(invalid)
+
+    def test_custom_image_and_artifact_read_claims_remain_implemented(self) -> None:
+        """功能：验证图片闭环能力只登记已有双实现证据，不越级声明共同符合性。
+
+        输入：共享 capability matrix、两种自定义 OpenAI-compatible family 与 UI/foundation claims。
+        输出：双实现 artifact read、八个 family/实现图片 cell、连接和 UI 证据均完整且状态为 implemented。
+        不变量：没有共同动态 runner 时不把新增图片能力登记为 conformant。
+        失败：claim 缺失、重复、状态升级、证据路径失效或陈旧 UI 说明回归时测试失败。
+        作者：高宏顺
+        邮箱：18272669457@163.com
+        """
+
+        matrix = json.loads(
+            (ROOT / "SPEC/capabilities.json").read_text(encoding="utf-8")
+        )
+        self.validator("capability-matrix.schema.json", "").validate(matrix)
+        identities = [
+            (claim["implementation"], tuple(sorted(claim["target"].items())))
+            for claim in matrix["claims"]
+        ]
+        self.assertEqual(len(identities), len(set(identities)))
+
+        artifact_claims = [
+            claim
+            for claim in matrix["claims"]
+            if claim["target"] == {"kind": "foundation", "id": "session.artifact_read"}
+        ]
+        self.assertEqual(
+            {"rust", "dotnet"},
+            {claim["implementation"] for claim in artifact_claims},
+        )
+        self.assertEqual(2, len(artifact_claims))
+
+        image_claims = [
+            claim
+            for claim in matrix["claims"]
+            if claim["target"]["kind"] == "api_family"
+            and claim["target"]["id"] in {"openai-responses", "openai-completions"}
+            and claim["target"]["feature"] in {"image_input", "image_output"}
+        ]
+        expected_image_cells = {
+            (implementation, family, feature)
+            for implementation in ("rust", "dotnet")
+            for family in ("openai-responses", "openai-completions")
+            for feature in ("image_input", "image_output")
+        }
+        self.assertEqual(
+            expected_image_cells,
+            {
+                (
+                    claim["implementation"],
+                    claim["target"]["id"],
+                    claim["target"]["feature"],
+                )
+                for claim in image_claims
+            },
+        )
+        for claim in artifact_claims + image_claims:
+            self.assertEqual("implemented", claim["status"])
+            self.assertIn("共同动态", claim["notes"])
+            for evidence in claim["evidence"]:
+                self.assertTrue((ROOT / evidence).is_file(), evidence)
+
+        for feature in ("provider.custom_connection", "ui.headless_contract"):
+            claims = [
+                claim
+                for claim in matrix["claims"]
+                if claim["target"] == {"kind": "foundation", "id": feature}
+            ]
+            self.assertEqual(2, len(claims))
+            self.assertTrue(all(claim["status"] == "implemented" for claim in claims))
+            for claim in claims:
+                for evidence in claim["evidence"]:
+                    self.assertTrue((ROOT / evidence).is_file(), evidence)
+        ui_notes = " ".join(
+            claim["notes"]
+            for claim in matrix["claims"]
+            if claim["target"] == {"kind": "foundation", "id": "ui.headless_contract"}
+        )
+        self.assertIn("视觉闭环已完成", ui_notes)
+        self.assertNotIn("没有 artifact 读取/渲染视觉闭环", ui_notes)
 
     def test_session_lifecycle_contract_is_closed_and_redacted(self) -> None:
         """功能：验证 Session 生命周期分页、摘要、mutation 与归档文档的共同契约。
@@ -1342,7 +1567,7 @@ class SpecSchemaTests(unittest.TestCase):
         for claim in computer_claims:
             self.assertEqual("implemented", claim["status"])
             self.assertIn("不构成公开支持", claim["notes"])
-            self.assertIn("视觉闭环", claim["notes"])
+            self.assertIn("Provider image_ref 续接", claim["notes"])
             for evidence in claim["evidence"]:
                 self.assertTrue((ROOT / evidence).is_file(), evidence)
 

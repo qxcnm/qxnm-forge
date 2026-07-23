@@ -5,6 +5,7 @@ Protocol version: `0.1`
 Session format version: `0.1`  
 Application database logical version: `0.2`
 Agent Profile contract version: `0.2`
+Custom Provider connection contract version: `0.3`
 Author: 高宏顺 `<18272669457@163.com>`  
 Reference snapshot: PI commit `3f9aa5d10b35223abf6146f960ff5cb5c68053ee` (MIT, evidence only)
 
@@ -91,15 +92,16 @@ v0.2，portable Session 格式版本仍独立保持 0.1。
 
 Provider 设置边界由 [ADR 0029](adr/0029-custom-provider-connections.md) 与
 [ADR 0031](adr/0031-brand-neutral-provider-template-catalog.md) 共同约束：连接配置与 credential
-分离，`providerCatalog/list` 只返回 20 项冻结派生模板和 3 项 ADR 封闭列出的官方兼容模板。
+分离，v0.3 连接显式声明图片输入/输出且图片输出使用独立 Image credential；
+`providerCatalog/list` 只返回 20 项冻结派生模板和 3 项 ADR 封闭列出的官方兼容模板。
 这些非敏感配置建议不构成已配置、可执行或远端验证声明；只有重启后真实出现在 `models/list` 的
 完整路由才能用于 `run/start`。
 
 实验性桌面工具由 [ADR 0032](adr/0032-experimental-desktop-computer.md) 约束。它是 Open/Pro
 共同的 Community 行为，默认不广告，只有两个精确环境门、明确原生 X11、本地 Unix `DISPLAY`
 allowlist 和真实 backend 探测同时满足后才可进入实验路径。当前没有同一条
-`tools + image_input` conformant Provider route，也没有 Provider
-`image_ref` 续接或 UI artifact 读取/渲染闭环；相关 foundation claim 因此只能是
+`tools + image_input` conformant Provider route；通用 Provider `image_ref` 与 UI artifact
+读取/渲染闭环不等于桌面截图工具已经 conformant，相关 foundation claim 因此只能是
 `implemented`，不能作为公开 Computer Use 支持声明。
 
 ## Conformance contract

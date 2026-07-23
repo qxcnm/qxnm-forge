@@ -1431,6 +1431,7 @@ mod tests {
             max_output_tokens: None,
             session_id: Some(session_id.to_owned()),
             run_id: Some("run-test".to_owned()),
+            resolved_images: Vec::new(),
         }
     }
 

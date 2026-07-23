@@ -13,7 +13,7 @@ use tokio::task;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::domain::{ArtifactRef, validate_image_signature};
+use crate::domain::{ArtifactRef, ProviderImage, validate_image_signature};
 use crate::error::{AgentError, ErrorCode};
 use crate::protocol::parse_strict_value;
 
@@ -1268,6 +1268,57 @@ impl SessionStore {
         Ok(artifact)
     }
 
+    /// 功能：把 Provider 输出图片及其 assistant 消息作为一个连续 journal 批次发布。
+    ///
+    /// 输入：Session ID、已经由 Provider adapter 解码但仍视为不可信的完整图片批次，以及只根据最终引用构造消息记录 data 的闭包。
+    /// 输出：保持源顺序的 portable artifact 引用；成功时所有文件、`artifact.created` 和 assistant `message.appended` 均已同步。
+    /// 不变量：任一图片的 MIME、魔数、空内容或引用候选无效时，在第一项文件/记录发布前失败；
+    /// assistant data 在文件发布前构造并随全部 artifact 记录一起验证；文件全部发布成功后才以一个预编码缓冲批次追加；
+    /// 确认 journal 已回退时尽力清理本批文件，回退状态不确定时保留文件以免可见引用悬空。
+    /// 失败：空批次、图片验证、assistant data、路径、锁、文件发布或 journal 批次追加失败时返回脱敏错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub(crate) async fn store_image_completion<F>(
+        &self,
+        session_id: &str,
+        images: &[ProviderImage],
+        message_data_builder: F,
+    ) -> Result<Vec<ArtifactRef>, AgentError>
+    where
+        F: FnOnce(&[ArtifactRef]) -> Value + Send + 'static,
+    {
+        validate_id(session_id, "session")?;
+        if images.is_empty() {
+            return Err(invalid_image_artifact_error());
+        }
+        for image in images {
+            if image.bytes.is_empty() {
+                return Err(invalid_image_artifact_error());
+            }
+            validate_image_signature(&image.media_type, &image.bytes)
+                .map_err(|_| invalid_image_artifact_error())?;
+        }
+        let directory = self.session_dir(session_id)?;
+        let session_id = session_id.to_owned();
+        let images = images.to_vec();
+        task::spawn_blocking(move || {
+            store_image_completion_sync(
+                &directory,
+                &session_id,
+                &images,
+                message_data_builder,
+                append_records_unlocked,
+            )
+        })
+        .await
+        .map_err(|_| {
+            AgentError::new(
+                ErrorCode::InternalError,
+                "image completion batch publication worker failed",
+            )
+        })?
+    }
+
     /// 功能：把 active Agent run 捕获的敏感桌面 PNG 原子发布并追加带双重扩展的 `artifact.created`。
     ///
     /// 输入：Session ID、来自 Agent 调用链的可信 run ID、完整 PNG 字节与同一 run 的取消令牌。
@@ -1348,6 +1399,40 @@ impl SessionStore {
         })?
     }
 
+    /// 功能：按 artifact ID 从当前 selected Session chain 解析引用并完整复核图片字节。
+    ///
+    /// 输入：Session ID、opaque artifact ID 与单 artifact 最大 32 MiB 类调用上限。
+    /// 输出：durable portable 引用及一次性完成 length/hash/MIME/魔数验证的完整字节。
+    /// 不变量：引用只能来自同 Session selected chain；路径 no-follow，返回值不含主机路径。
+    /// 失败：归属、journal、ID、文件形状、长度、hash、MIME、魔数或上限无效时返回脱敏错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub async fn read_verified_image_artifact_by_id(
+        &self,
+        session_id: &str,
+        artifact_id: &str,
+        max_bytes: usize,
+    ) -> Result<(ArtifactRef, Vec<u8>), AgentError> {
+        validate_id(session_id, "session")?;
+        validate_id(artifact_id, "artifact")?;
+        let directory = self.session_dir(session_id)?;
+        let session_id = session_id.to_owned();
+        let artifact_id = artifact_id.to_owned();
+        task::spawn_blocking(move || {
+            let artifact = durable_image_reference_sync(&directory, &session_id, &artifact_id)?;
+            validate_image_reference_shape(&artifact, max_bytes)?;
+            let bytes = read_verified_image_bytes_sync(&directory, &artifact, max_bytes)?;
+            Ok((artifact, bytes))
+        })
+        .await
+        .map_err(|_| {
+            AgentError::new(
+                ErrorCode::InternalError,
+                "artifact verification worker failed",
+            )
+        })?
+    }
+
     /// 功能：验证 Session ID 并返回其固定目录。
     ///
     /// 作者：高宏顺
@@ -1356,6 +1441,117 @@ impl SessionStore {
         validate_id(session_id, "session")?;
         Ok(self.root.join("sessions").join(session_id))
     }
+}
+
+/// 功能：在 Session append lock 内预构造并连续发布一批已验证图片、引用记录与 assistant 消息。
+///
+/// 输入：固定 Session 目录/身份、不可变图片批次、assistant data builder 与可替换的批次 append 边界。
+/// 输出：与图片顺序一致、文件及全部记录均 durable 的引用集合。
+/// 不变量：先构造并验证完整 artifact/message 候选 journal，再发布全部唯一文件，最后追加一个预编码记录缓冲；
+/// 文件失败或已确认 journal 回退时尽力清理本批唯一 ID。append 边界参数仅用于确定性故障测试，生产固定传入标准实现。
+/// 失败：journal、候选、assistant data、路径、发布、同步或批次追加失败时返回结构化错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn store_image_completion_sync<F, A>(
+    directory: &Path,
+    session_id: &str,
+    images: &[ProviderImage],
+    message_data_builder: F,
+    append_records: A,
+) -> Result<Vec<ArtifactRef>, AgentError>
+where
+    F: FnOnce(&[ArtifactRef]) -> Value,
+    A: FnOnce(&Path, &[JournalRecord]) -> Result<(), (AgentError, bool)>,
+{
+    let lock = open_append_lock(directory)?;
+    lock.lock_exclusive()?;
+    let result = (|| {
+        let path = directory.join("journal.jsonl");
+        let journal = read_journal(&path)?;
+        validate_journal_semantics(&journal.records)?;
+        let artifact_directory = directory.join("artifacts");
+        let mut candidate = journal.records;
+        let mut artifacts = Vec::with_capacity(images.len());
+        let mut records = Vec::with_capacity(images.len());
+
+        for image in images {
+            let artifact_id = loop {
+                let candidate_id = format!("artifact-{}", Uuid::new_v4());
+                match std::fs::symlink_metadata(artifact_directory.join(&candidate_id)) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        break candidate_id;
+                    }
+                    Ok(_) => continue,
+                    Err(_) => return Err(artifact_io_error()),
+                }
+            };
+            let artifact = ArtifactRef {
+                artifact_id,
+                media_type: image.media_type.clone(),
+                byte_length: u64::try_from(image.bytes.len())
+                    .map_err(|_| invalid_image_artifact_error())?,
+                sha256: format!("{:x}", Sha256::digest(&image.bytes)),
+                display_name: None,
+                extensions: BTreeMap::new(),
+            };
+            let record = JournalRecord::new(
+                session_id.to_owned(),
+                next_record_sequence(&candidate)?,
+                candidate.last().map(|record| record.record_id.clone()),
+                "artifact.created",
+                serde_json::json!({"artifact":artifact}),
+            );
+            candidate.push(record.clone());
+            artifacts.push(artifact);
+            records.push(record);
+        }
+        let message_data = message_data_builder(&artifacts);
+        if !message_data.is_object() {
+            return Err(AgentError::new(
+                ErrorCode::InvalidParams,
+                "image completion message data must be an object",
+            ));
+        }
+        let message_record = JournalRecord::new(
+            session_id.to_owned(),
+            next_record_sequence(&candidate)?,
+            candidate.last().map(|record| record.record_id.clone()),
+            "message.appended",
+            message_data,
+        );
+        candidate.push(message_record.clone());
+        records.push(message_record);
+        validate_journal_semantics(&candidate)?;
+
+        let mut published = Vec::with_capacity(images.len());
+        for (artifact, image) in artifacts.iter().zip(images) {
+            if let Err(error) = publish_artifact_no_replace(
+                &artifact_directory,
+                &artifact.artifact_id,
+                &image.bytes,
+            ) {
+                let _ = std::fs::remove_file(artifact_directory.join(&artifact.artifact_id));
+                for artifact_id in &published {
+                    let _ = std::fs::remove_file(artifact_directory.join(artifact_id));
+                }
+                let _ = sync_directory(&artifact_directory);
+                return Err(error);
+            }
+            published.push(artifact.artifact_id.clone());
+        }
+        if let Err((error, journal_unchanged)) = append_records(&path, &records) {
+            if journal_unchanged {
+                for artifact_id in &published {
+                    let _ = std::fs::remove_file(artifact_directory.join(artifact_id));
+                }
+                let _ = sync_directory(&artifact_directory);
+            }
+            return Err(error);
+        }
+        Ok(artifacts)
+    })();
+    let unlock = FileExt::unlock(&lock);
+    result.and_then(|artifacts| unlock.map(|()| artifacts).map_err(AgentError::from))
 }
 
 /// 功能：在阻塞 worker 内把敏感桌面 PNG 发布与 `artifact.created` 线性化到 Session append lock。
@@ -1528,6 +1724,26 @@ fn read_verified_image_artifact_sync(
     artifact: &ArtifactRef,
     max_bytes: usize,
 ) -> Result<Vec<u8>, AgentError> {
+    let durable = durable_image_reference_sync(directory, session_id, &artifact.artifact_id)?;
+    if &durable != artifact {
+        return Err(invalid_image_artifact_error());
+    }
+    read_verified_image_bytes_sync(directory, artifact, max_bytes)
+}
+
+/// 功能：从当前 selected parent chain 按 ID 解析唯一 durable 图片引用。
+///
+/// 输入：固定 Session 目录、期望 Session ID 与安全 artifact ID。
+/// 输出：journal 中完整 portable artifact 引用。
+/// 不变量：只搜索 selected chain 上的 `artifact.created`，不读取 artifact 文件。
+/// 失败：journal、拓扑、归属、重复/缺失或引用 JSON 无效时返回脱敏错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn durable_image_reference_sync(
+    directory: &Path,
+    session_id: &str,
+    artifact_id: &str,
+) -> Result<ArtifactRef, AgentError> {
     let journal = read_journal_shared(directory, session_id)?;
     if journal.header.session_id != session_id {
         return Err(invalid_image_artifact_error());
@@ -1547,16 +1763,26 @@ fn read_verified_image_artifact_sync(
                 .then(|| record.data.get("artifact"))
                 .flatten()
         })
-        .find(|value| {
-            value.get("artifactId").and_then(Value::as_str) == Some(artifact.artifact_id.as_str())
-        })
+        .find(|value| value.get("artifactId").and_then(Value::as_str) == Some(artifact_id))
         .ok_or_else(invalid_image_artifact_error)?;
     let durable: ArtifactRef = serde_json::from_value(durable_reference.clone())
         .map_err(|_| invalid_image_artifact_error())?;
-    if &durable != artifact {
-        return Err(invalid_image_artifact_error());
-    }
+    Ok(durable)
+}
 
+/// 功能：no-follow 读取并复核一个已由 journal 绑定的图片文件。
+///
+/// 输入：固定 Session 目录、完整 durable 引用和调用上限。
+/// 输出：长度、SHA-256、MIME 魔数全部匹配的完整字节。
+/// 不变量：最终路径仅由安全 artifact ID 派生且必须是 regular file。
+/// 失败：目录、symlink、文件类型、长度、hash、MIME、魔数或 I/O 无效时返回脱敏错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn read_verified_image_bytes_sync(
+    directory: &Path,
+    artifact: &ArtifactRef,
+    max_bytes: usize,
+) -> Result<Vec<u8>, AgentError> {
     let artifacts_directory = directory.join("artifacts");
     validate_real_directory(directory)?;
     validate_real_directory(&artifacts_directory)?;
@@ -2091,6 +2317,75 @@ fn append_unlocked(path: &Path, record: &JournalRecord) -> Result<(), AgentError
     let mut file = OpenOptions::new().create(false).append(true).open(path)?;
     write_line(&mut file, record)?;
     file.sync_data()?;
+    Ok(())
+}
+
+/// 功能：把一组已经完整验证的连续记录编码为一个缓冲后追加并同步。
+///
+/// 输入：现有 journal 路径及至少一条父链连续的记录。
+/// 输出：全部记录 durable 后成功；失败返回错误与“已确认 journal 未改变/已回退”的布尔证据。
+/// 不变量：序列化在打开写边界前完成；`write_all` 可能包含多个系统调用，失败后只在 `set_len+sync` 全部成功时声明可安全清理 artifact 文件。
+/// 失败：序列化、打开、写入、同步或尽力回退失败时返回 I/O 错误；不回显记录正文。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn append_records_unlocked(
+    path: &Path,
+    records: &[JournalRecord],
+) -> Result<(), (AgentError, bool)> {
+    append_records_unlocked_with_writer(path, records, |file, encoded| {
+        file.write_all(encoded)?;
+        file.sync_data()
+    })
+}
+
+/// 功能：以可替换的单次写入边界批量追加记录，并在部分写入或同步失败后尝试 durable 回滚。
+///
+/// 输入：现有 journal、连续记录和必须完成“写入全部编码字节并同步”的闭包。
+/// 输出：成功时整批 durable；失败时同时报告是否已确认恢复原长度。
+/// 不变量：原长度在调用写入闭包前取得；闭包失败后只有 `set_len` 与 `sync_data` 均成功才返回可安全清理证据。
+/// 失败：空批次、编码、打开、元数据、注入写入或回滚失败时返回脱敏 I/O 错误；生产调用方固定使用完整 `write_all+sync_data`。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn append_records_unlocked_with_writer<F>(
+    path: &Path,
+    records: &[JournalRecord],
+    write_and_sync: F,
+) -> Result<(), (AgentError, bool)>
+where
+    F: FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
+{
+    if records.is_empty() {
+        return Err((
+            AgentError::new(ErrorCode::InternalError, "journal record batch is empty"),
+            true,
+        ));
+    }
+    let mut encoded = Vec::new();
+    for record in records {
+        serde_json::to_writer(&mut encoded, record).map_err(|_| {
+            (
+                AgentError::new(ErrorCode::IoError, "journal encoding failed"),
+                true,
+            )
+        })?;
+        encoded.push(b'\n');
+    }
+    let mut file = OpenOptions::new()
+        .create(false)
+        .append(true)
+        .open(path)
+        .map_err(|error| (AgentError::from(error), true))?;
+    let original_length = file
+        .metadata()
+        .map_err(|error| (AgentError::from(error), true))?
+        .len();
+    if let Err(error) = write_and_sync(&mut file, &encoded) {
+        let journal_unchanged = file
+            .set_len(original_length)
+            .and_then(|()| file.sync_data())
+            .is_ok();
+        return Err((AgentError::from(error), journal_unchanged));
+    }
     Ok(())
 }
 
@@ -3303,6 +3598,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
+    use chrono::Utc;
     use fs2::FileExt;
     use serde_json::json;
     use sha2::{Digest, Sha256};
@@ -3310,9 +3606,11 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        ContextCompactionInput, JournalRecord, SessionStore, open_append_lock,
-        publish_artifact_no_replace, store_computer_screenshot_artifact_sync,
+        ContextCompactionInput, JournalRecord, SessionStore, append_records_unlocked_with_writer,
+        open_append_lock, publish_artifact_no_replace, store_computer_screenshot_artifact_sync,
+        store_image_completion_sync,
     };
+    use crate::domain::ProviderImage;
     use crate::error::ErrorCode;
 
     /// 功能：把只读静态 JSONL fixture 安装到临时 SessionStore 目录而不改写内容。
@@ -3741,6 +4039,149 @@ mod tests {
                 .await
                 .is_err()
         );
+        Ok(())
+    }
+
+    /// 功能：验证图片批次会先全量校验，合法批次再按顺序一次发布全部 durable 引用。
+    ///
+    /// 不变量：第二张无效时第一张也不会留下文件或 `artifact.created`；测试只使用 synthetic 图片。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn image_artifact_batch_prevalidates_before_publication()
+    -> Result<(), crate::error::AgentError> {
+        let directory = tempdir()?;
+        let store = SessionStore::new(directory.path(), 4).await?;
+        let session_id = "s-image-batch";
+        store.create_session(session_id, directory.path()).await?;
+        let valid = ProviderImage {
+            media_type: "image/png".to_owned(),
+            bytes: b"\x89PNG\r\n\x1a\nfirst".to_vec(),
+        };
+        let invalid = ProviderImage {
+            media_type: "image/jpeg".to_owned(),
+            bytes: b"\x89PNG\r\n\x1a\nwrong-mime".to_vec(),
+        };
+        assert!(
+            store
+                .store_image_completion(
+                    session_id,
+                    &[valid.clone(), invalid],
+                    |_| serde_json::json!({"message":{}}),
+                )
+                .await
+                .is_err()
+        );
+        let artifacts_directory = directory
+            .path()
+            .join("sessions")
+            .join(session_id)
+            .join("artifacts");
+        assert_eq!(fs::read_dir(&artifacts_directory)?.count(), 0);
+        assert!(store.load(session_id).await?.is_empty());
+
+        let second = ProviderImage {
+            media_type: "image/png".to_owned(),
+            bytes: b"\x89PNG\r\n\x1a\nsecond".to_vec(),
+        };
+        let artifacts = store
+            .store_image_completion(session_id, &[valid, second], |artifacts| {
+                serde_json::json!({
+                    "runId":"run-image-batch",
+                    "turnId":"turn-image-batch",
+                    "message":{
+                        "messageId":"message-image-batch",
+                        "role":"assistant",
+                        "content":artifacts.iter().map(|artifact| {
+                            serde_json::json!({"type":"image_ref","artifact":artifact})
+                        }).collect::<Vec<_>>(),
+                        "provider":{"id":"faux","modelId":"faux-image"},
+                        "finishReason":"stop",
+                        "usage":{},
+                        "time":Utc::now()
+                    }
+                })
+            })
+            .await?;
+        assert_eq!(artifacts.len(), 2);
+        assert_ne!(artifacts[0].artifact_id, artifacts[1].artifact_id);
+        assert_eq!(fs::read_dir(artifacts_directory)?.count(), 2);
+        assert_eq!(
+            store
+                .load(session_id)
+                .await?
+                .iter()
+                .filter(|record| record.kind == "artifact.created")
+                .count(),
+            2
+        );
+        assert_eq!(
+            store
+                .load(session_id)
+                .await?
+                .iter()
+                .filter(|record| record.kind == "message.appended")
+                .count(),
+            1
+        );
+        Ok(())
+    }
+
+    /// 功能：确定性注入 journal 部分写入失败，验证 durable 回滚后清理图片且不留下孤立 assistant。
+    ///
+    /// 不变量：synthetic writer 只写入预编码批次前缀再报错；生产回滚逻辑确认原长度后，文件、`artifact.created` 与 assistant 消息均为零。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn image_artifact_batch_cleans_files_after_confirmed_append_failure()
+    -> Result<(), crate::error::AgentError> {
+        let directory = tempdir()?;
+        let store = SessionStore::new(directory.path(), 4).await?;
+        let session_id = "s-image-batch-append-failure";
+        store.create_session(session_id, directory.path()).await?;
+        let session_directory = directory.path().join("sessions").join(session_id);
+        let images = [ProviderImage {
+            media_type: "image/png".to_owned(),
+            bytes: b"\x89PNG\r\n\x1a\nappend-failure".to_vec(),
+        }];
+        let result = store_image_completion_sync(
+            &session_directory,
+            session_id,
+            &images,
+            |artifacts| {
+                serde_json::json!({
+                    "runId":"run-image-failure",
+                    "turnId":"turn-image-failure",
+                    "message":{
+                        "messageId":"message-image-failure",
+                        "role":"assistant",
+                        "content":artifacts.iter().map(|artifact| {
+                            serde_json::json!({"type":"image_ref","artifact":artifact})
+                        }).collect::<Vec<_>>(),
+                        "provider":{"id":"faux","modelId":"faux-image"},
+                        "finishReason":"stop",
+                        "usage":{},
+                        "time":Utc::now()
+                    }
+                })
+            },
+            |path, records| {
+                append_records_unlocked_with_writer(path, records, |file, encoded| {
+                    let prefix_length = (encoded.len() / 2).max(1);
+                    std::io::Write::write_all(file, &encoded[..prefix_length])?;
+                    Err(std::io::Error::other(
+                        "synthetic image completion batch failure",
+                    ))
+                })
+            },
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_dir(session_directory.join("artifacts"))?.count(),
+            0
+        );
+        assert!(store.load(session_id).await?.is_empty());
         Ok(())
     }
 

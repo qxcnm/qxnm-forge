@@ -538,6 +538,7 @@ mod tests {
             max_output_tokens: None,
             session_id: None,
             run_id: None,
+            resolved_images: Vec::new(),
         });
         assert_eq!(
             body["tools"][0]["functionDeclarations"][0]["name"],

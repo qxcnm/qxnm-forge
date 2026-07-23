@@ -207,6 +207,7 @@ mod tests {
             max_output_tokens: None,
             session_id: None,
             run_id: None,
+            resolved_images: Vec::new(),
         })?;
         assert_eq!(body["tools"][0]["function"]["name"], "file.read");
         assert_eq!(body["tools"][0]["function"]["strict"], false);

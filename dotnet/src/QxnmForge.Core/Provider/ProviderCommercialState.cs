@@ -1,4 +1,7 @@
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 using QxnmForge.Domain;
 using QxnmForge.Serialization;
 
@@ -96,8 +99,17 @@ internal sealed record InstalledSponsoredRouteDocument(
 public sealed class ProviderCredentialStore
 {
     private const string SchemaVersion = "0.1";
-    private const int MaximumDocumentBytes = 16 * 1024 * 1024;
+    private const int MaximumCredentialCount = 128;
+    private const int MaximumEntryBytes = 16_384;
+    private const int MaximumLegacyDocumentBytes = 16 * 1024 * 1024;
+    private const string CredentialSuffix = ".credential";
+    private static readonly UTF8Encoding StrictUtf8 = new(
+        encoderShouldEmitUTF8Identifier: false,
+        throwOnInvalidBytes: true);
     private readonly string root;
+    private readonly string entriesRoot;
+    private readonly string legacyDocumentPath;
+    private readonly string migrationRoot;
 
     /// <summary>
     /// 功能：创建或打开工作区外 CredentialStore，并建立私有目录。
@@ -115,11 +127,18 @@ public sealed class ProviderCredentialStore
         root = Path.GetFullPath(Path.Combine(stateRoot, "credentials"));
         CommercialFileSafety.CreatePrivateDirectory(root);
         CommercialFileSafety.RejectReparsePoint(root);
+        CommercialFileSafety.ValidatePrivateDirectoryMetadata(root);
+        entriesRoot = Path.Combine(root, "provider-credentials.d");
+        legacyDocumentPath = Path.Combine(root, "provider-credentials.json");
+        migrationRoot = Path.Combine(root, ".provider-credentials.d.migrating");
         var workspacePath = Path.GetFullPath(workspace);
         if (CommercialFileSafety.IsWithin(root, workspacePath))
         {
             throw Error("credential_workspace", "CredentialStore 必须位于 workspace 外");
         }
+
+        using var stateLock = AcquireLock();
+        InitializeOrMigrateStoreUnlocked();
     }
 
     /// <summary>
@@ -135,29 +154,33 @@ public sealed class ProviderCredentialStore
     {
         ValidateProviderId(providerId);
         ValidateApiKey(apiKey);
+        var bytes = EncodeCredential(apiKey);
         using var stateLock = AcquireLock();
-        var document = ReadDocumentUnlocked();
-        var credentials = document.Credentials
-            .Where(entry => !string.Equals(entry.ProviderId, providerId, StringComparison.Ordinal))
-            .Append(new StoredProviderCredential(providerId, apiKey))
-            .OrderBy(static entry => entry.ProviderId, StringComparer.Ordinal)
-            .ToArray();
-        WriteDocumentUnlocked(new ProviderCredentialDocument(SchemaVersion, credentials));
+        var configured = ReadPresenceIdsUnlocked();
+        if (!configured.Contains(providerId, StringComparer.Ordinal) &&
+            configured.Length >= MaximumCredentialCount)
+        {
+            throw Error("credential_shape", "CredentialStore 条目超过数量上限");
+        }
+
+        CommercialFileSafety.AtomicWriteCredentialLeaf(
+            root,
+            CredentialPath(providerId),
+            bytes);
     }
 
     /// <summary>
-    /// 功能：只列出拥有 stored credential 的 Provider ID。
+    /// 功能：只通过安全文件名与普通文件元数据列出 stored credential presence。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <returns>按 ordinal 升序且不含 API key 的数组。</returns>
-    /// <exception cref="ProviderCommercialStateException">锁、权限或文档验证失败。</exception>
+    /// <remarks>不变量：本方法不打开或反序列化任一 credential 条目正文。</remarks>
+    /// <exception cref="ProviderCommercialStateException">锁、目录、文件名、权限或大小无效。</exception>
     public IReadOnlyList<string> List()
     {
         using var stateLock = AcquireLock();
-        return ReadDocumentUnlocked().Credentials
-            .Select(static entry => entry.ProviderId)
-            .ToArray();
+        return ReadPresenceIdsUnlocked();
     }
 
     /// <summary>
@@ -172,17 +195,41 @@ public sealed class ProviderCredentialStore
     {
         ValidateProviderId(providerId);
         using var stateLock = AcquireLock();
-        var document = ReadDocumentUnlocked();
-        var credentials = document.Credentials
-            .Where(entry => !string.Equals(entry.ProviderId, providerId, StringComparison.Ordinal))
-            .ToArray();
-        if (credentials.Length == document.Credentials.Count)
+        return RemoveEntryUnlocked(providerId);
+    }
+
+    /// <summary>
+    /// 功能：只用文件名和安全元数据判断一组 credential presence。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="providerIds">当前 route 同时要求存在的一个或多个 Provider ID。</param>
+    /// <returns>所有条目均存在且 presence 目录安全时 true；任何失败为 false。</returns>
+    /// <remarks>不变量：本方法从不打开 credential 文件正文。</remarks>
+    internal bool ContainsAll(params string[] providerIds)
+    {
+        try
+        {
+            if (providerIds is null || providerIds.Length == 0)
+            {
+                return false;
+            }
+
+            foreach (var providerId in providerIds)
+            {
+                ValidateProviderId(providerId);
+            }
+
+            using var stateLock = AcquireLock();
+            var configured = new HashSet<string>(
+                ReadPresenceIdsUnlocked(),
+                StringComparer.Ordinal);
+            return providerIds.All(configured.Contains);
+        }
+        catch (ProviderCommercialStateException)
         {
             return false;
         }
-
-        WriteDocumentUnlocked(new ProviderCredentialDocument(SchemaVersion, credentials));
-        return true;
     }
 
     /// <summary>
@@ -201,12 +248,16 @@ public sealed class ProviderCredentialStore
         {
             ValidateProviderId(providerId);
             using var stateLock = AcquireLock();
-            credential = ReadDocumentUnlocked().Credentials
-                .FirstOrDefault(entry => string.Equals(entry.ProviderId, providerId, StringComparison.Ordinal))
-                ?.ApiKey;
-            return credential is not null;
+            var bytes = CommercialFileSafety.ReadBounded(
+                CredentialPath(providerId),
+                MaximumEntryBytes,
+                sensitive: true);
+            credential = StrictUtf8.GetString(bytes);
+            ValidateApiKey(credential);
+            return true;
         }
-        catch (ProviderCommercialStateException)
+        catch (Exception exception) when (
+            exception is ProviderCommercialStateException or DecoderFallbackException)
         {
             credential = null;
             return false;
@@ -240,61 +291,483 @@ public sealed class ProviderCredentialStore
     }
 
     /// <summary>
-    /// 功能：在独占锁内读取并验证完整 CredentialStore 文档。
+    /// 功能：枚举独立条目的安全文件名和元数据，不读取任何 secret 正文。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
-    /// <returns>不存在时返回空 v0.1 文档。</returns>
-    private ProviderCredentialDocument ReadDocumentUnlocked()
+    /// <returns>按 ordinal 排序的 Provider ID 快照。</returns>
+    private string[] ReadPresenceIdsUnlocked()
     {
-        var path = Path.Combine(root, "provider-credentials.json");
-        if (!File.Exists(path))
+        ValidateCredentialDirectory(entriesRoot);
+        try
         {
-            return new ProviderCredentialDocument(SchemaVersion, []);
-        }
+            var providerIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var path in Directory.EnumerateFileSystemEntries(
+                         entriesRoot,
+                         "*",
+                         SearchOption.TopDirectoryOnly))
+            {
+                ValidateEntryMetadata(path);
+                var fileName = Path.GetFileName(path);
+                if (!fileName.EndsWith(CredentialSuffix, StringComparison.Ordinal))
+                {
+                    throw Error("credential_shape", "CredentialStore 条目文件名无效");
+                }
 
-        var document = CommercialFileSafety.ParseStrict<ProviderCredentialDocument>(
-            CommercialFileSafety.ReadBounded(path, MaximumDocumentBytes, sensitive: true),
-            "credential_json");
-        ValidateDocument(document);
-        return document;
+                var providerId = DecodeProviderId(
+                    fileName[..^CredentialSuffix.Length]);
+                if (!providerIds.Add(providerId) || providerIds.Count > MaximumCredentialCount)
+                {
+                    throw Error("credential_shape", "CredentialStore 条目集合无效");
+                }
+            }
+
+            return providerIds.Order(StringComparer.Ordinal).ToArray();
+        }
+        catch (ProviderCommercialStateException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("credential_metadata", "CredentialStore presence 元数据读取失败");
+        }
     }
 
     /// <summary>
-    /// 功能：在独占锁内原子发布敏感 CredentialStore 文档。
+    /// 功能：在锁内删除一个已通过 presence 验证的普通条目文件。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
-    /// <param name="document">已排序的完整文档。</param>
-    private void WriteDocumentUnlocked(ProviderCredentialDocument document)
+    /// <param name="providerId">目标 Provider ID。</param>
+    /// <returns>存在并删除时 true，不存在时 false。</returns>
+    private bool RemoveEntryUnlocked(string providerId)
     {
-        ValidateDocument(document);
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(document, JsonDefaults.Options);
-        if (bytes.Length > MaximumDocumentBytes)
+        var configured = ReadPresenceIdsUnlocked();
+        if (!configured.Contains(providerId, StringComparer.Ordinal))
         {
-            throw Error("credential_shape", "CredentialStore 文档超过大小上限");
+            return false;
         }
 
-        CommercialFileSafety.AtomicWrite(
-            Path.Combine(root, "provider-credentials.json"),
-            bytes,
-            sensitive: true);
+        var path = CredentialPath(providerId);
+        CommercialFileSafety.RejectReparsePoint(path);
+        try
+        {
+            File.Delete(path);
+            CommercialFileSafety.FlushDirectory(entriesRoot);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("credential_remove", "CredentialStore 条目删除失败");
+        }
     }
 
     /// <summary>
-    /// 功能：验证版本、数量、唯一 Provider ID 和每个 API key 的 header 边界。
+    /// 功能：在构造期全局锁内初始化 v0.2 目录，或一次性迁移 v0.1 聚合文档。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
-    /// <param name="document">严格 DTO。</param>
-    private static void ValidateDocument(ProviderCredentialDocument document)
+    /// <remarks>不变量：完整 staging 文件与目录 fsync 后才同父 rename；最终目录存在时它是唯一权威。</remarks>
+    private void InitializeOrMigrateStoreUnlocked()
+    {
+        RemoveCredentialTemporaryFilesUnlocked();
+        if (PathEntryExistsUnlocked(entriesRoot))
+        {
+            ValidateCredentialDirectory(entriesRoot);
+            RemoveMigrationRootIfPresentUnlocked();
+            DeleteLegacyDocumentIfPresentUnlocked();
+            return;
+        }
+
+        RemoveMigrationRootIfPresentUnlocked();
+        ProviderCredentialDocument? legacy = null;
+        if (PathEntryExistsUnlocked(legacyDocumentPath))
+        {
+            CommercialFileSafety.RejectReparsePoint(legacyDocumentPath);
+            legacy = CommercialFileSafety.ParseStrict<ProviderCredentialDocument>(
+                CommercialFileSafety.ReadBounded(
+                    legacyDocumentPath,
+                    MaximumLegacyDocumentBytes,
+                    sensitive: true),
+                "credential_json");
+            ValidateLegacyDocument(legacy);
+        }
+
+        CommercialFileSafety.CreatePrivateDirectory(migrationRoot);
+        CommercialFileSafety.RejectReparsePoint(migrationRoot);
+        try
+        {
+            foreach (var entry in legacy?.Credentials ?? [])
+            {
+                CommercialFileSafety.WriteCreateNewSecure(
+                    Path.Combine(migrationRoot, CredentialFileName(entry.ProviderId)),
+                    EncodeCredential(entry.ApiKey));
+            }
+
+            CommercialFileSafety.FlushDirectory(migrationRoot);
+            Directory.Move(migrationRoot, entriesRoot);
+            CommercialFileSafety.FlushDirectory(root);
+        }
+        catch (ProviderCommercialStateException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("credential_migration", "CredentialStore 目录迁移未完成");
+        }
+
+        DeleteLegacyDocumentIfPresentUnlocked();
+    }
+
+    /// <summary>
+    /// 功能：清理已 fsync 但在原子移动前崩溃遗留于 CredentialStore 根的固定格式临时叶。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <remarks>不变量：只删除 `.provider-credential-`、32 位小写 hex 与 `.tmp` 精确组合的普通 0600 叶，不读正文。</remarks>
+    private void RemoveCredentialTemporaryFilesUnlocked()
+    {
+        var removed = false;
+        try
+        {
+            foreach (var path in Directory.EnumerateFileSystemEntries(
+                         root,
+                         ".provider-credential-*.tmp",
+                         SearchOption.TopDirectoryOnly))
+            {
+                var fileName = Path.GetFileName(path);
+                const string prefix = ".provider-credential-";
+                const string suffix = ".tmp";
+                var tokenLength = fileName.Length - prefix.Length - suffix.Length;
+                if (!fileName.StartsWith(prefix, StringComparison.Ordinal) ||
+                    !fileName.EndsWith(suffix, StringComparison.Ordinal) ||
+                    tokenLength != 32 ||
+                    !IsLowerHexToken(fileName.AsSpan(prefix.Length, tokenLength)))
+                {
+                    throw Error("credential_shape", "CredentialStore 临时条目名称无效");
+                }
+
+                ValidateSensitiveRegularFileMetadata(
+                    path,
+                    MaximumEntryBytes,
+                    allowEmpty: true);
+                File.Delete(path);
+                removed = true;
+            }
+
+            if (removed)
+            {
+                CommercialFileSafety.FlushDirectory(root);
+            }
+        }
+        catch (ProviderCommercialStateException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("credential_recovery", "CredentialStore 临时条目清理失败");
+        }
+    }
+
+    /// <summary>
+    /// 功能：验证 AtomicWrite 随机 token 是精确小写十六进制。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="value">固定长度候选 token。</param>
+    /// <returns>每个字符属于 `0-9a-f` 时 true。</returns>
+    private static bool IsLowerHexToken(ReadOnlySpan<char> value)
+    {
+        foreach (var character in value)
+        {
+            if (character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 功能：安全清理上次崩溃遗留的固定 staging 目录，不打开其中 secret 正文。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    private void RemoveMigrationRootIfPresentUnlocked()
+    {
+        if (!PathEntryExistsUnlocked(migrationRoot))
+        {
+            return;
+        }
+
+        ValidateCredentialDirectory(migrationRoot);
+        try
+        {
+            foreach (var path in Directory.EnumerateFileSystemEntries(
+                         migrationRoot,
+                         "*",
+                         SearchOption.TopDirectoryOnly))
+            {
+                ValidateStagingEntryMetadata(path);
+                File.Delete(path);
+            }
+
+            Directory.Delete(migrationRoot);
+            CommercialFileSafety.FlushDirectory(root);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("credential_migration", "CredentialStore staging 清理失败");
+        }
+    }
+
+    /// <summary>
+    /// 功能：最终 v0.2 目录已发布后删除遗留 v0.1 文档，绝不再解析其正文。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    private void DeleteLegacyDocumentIfPresentUnlocked()
+    {
+        if (!PathEntryExistsUnlocked(legacyDocumentPath))
+        {
+            return;
+        }
+
+        ValidateSensitiveRegularFileMetadata(
+            legacyDocumentPath,
+            MaximumLegacyDocumentBytes,
+            allowEmpty: false);
+        try
+        {
+            File.Delete(legacyDocumentPath);
+            CommercialFileSafety.FlushDirectory(root);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("credential_migration", "CredentialStore 旧格式清理失败");
+        }
+    }
+
+    /// <summary>
+    /// 功能：通过父目录枚举判断固定子项是否存在，包括悬空 symlink。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">root 内固定名称的直接子项。</param>
+    /// <returns>父目录包含同名项时 true。</returns>
+    private bool PathEntryExistsUnlocked(string path)
+    {
+        var expectedName = Path.GetFileName(path);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        try
+        {
+            return Directory.EnumerateFileSystemEntries(root, "*", SearchOption.TopDirectoryOnly)
+                .Any(candidate => string.Equals(
+                    Path.GetFileName(candidate),
+                    expectedName,
+                    comparison));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("credential_metadata", "CredentialStore 根元数据读取失败");
+        }
+    }
+
+    /// <summary>
+    /// 功能：验证 presence 条目是固定目录内、非 reparse、精确 0600 且大小有界的普通文件。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">目录枚举得到的直接子项。</param>
+    private static void ValidateEntryMetadata(string path)
+    {
+        ValidateSensitiveRegularFileMetadata(path, MaximumEntryBytes, allowEmpty: false);
+    }
+
+    /// <summary>
+    /// 功能：验证待清理 staging 叶的 canonical 名称与普通文件元数据，允许中断留下空文件。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">固定 staging 目录的直接子项。</param>
+    private static void ValidateStagingEntryMetadata(string path)
+    {
+        ValidateSensitiveRegularFileMetadata(path, MaximumEntryBytes, allowEmpty: true);
+        var fileName = Path.GetFileName(path);
+        if (!fileName.EndsWith(CredentialSuffix, StringComparison.Ordinal))
+        {
+            throw Error("credential_migration", "CredentialStore staging 条目名称无效");
+        }
+
+        _ = DecodeProviderId(fileName[..^CredentialSuffix.Length]);
+    }
+
+    /// <summary>
+    /// 功能：验证敏感叶为非 reparse、精确 0600 且大小有界的普通文件。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">固定私有目录内的叶路径。</param>
+    /// <param name="maximumBytes">允许的正文最大字节数。</param>
+    /// <param name="allowEmpty">是否允许清理中断 staging 的零字节普通文件。</param>
+    private static void ValidateSensitiveRegularFileMetadata(
+        string path,
+        int maximumBytes,
+        bool allowEmpty)
+    {
+        CommercialFileSafety.ValidateSensitiveRegularFileMetadata(
+            path,
+            maximumBytes,
+            allowEmpty);
+    }
+
+    /// <summary>
+    /// 功能：验证 credential 或 staging 目录是非 reparse 且 Unix mode 精确 0700 的真实目录。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">root 下固定目录路径。</param>
+    private static void ValidateCredentialDirectory(string path)
+    {
+        try
+        {
+            CommercialFileSafety.ValidatePrivateDirectoryMetadata(path);
+        }
+        catch (ProviderCommercialStateException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("credential_metadata", "CredentialStore 条目目录元数据读取失败");
+        }
+    }
+
+    /// <summary>
+    /// 功能：构造已验证 Provider ID 对应的固定敏感条目路径。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="providerId">已通过受限 ASCII 语法验证的 ID。</param>
+    /// <returns>entriesRoot 的直接 canonical `.credential` 子文件。</returns>
+    private string CredentialPath(string providerId)
+    {
+        return Path.Combine(entriesRoot, CredentialFileName(providerId));
+    }
+
+    /// <summary>
+    /// 功能：把 Provider ID 的 UTF-8 字节编码为无 padding canonical base64url 叶名。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="providerId">已验证品牌中立 Provider ID。</param>
+    /// <returns>跨平台安全且可逆的叶文件名。</returns>
+    private static string CredentialFileName(string providerId)
+    {
+        ValidateProviderId(providerId);
+        return EncodeProviderId(providerId) + CredentialSuffix;
+    }
+
+    /// <summary>
+    /// 功能：编码 Provider ID 为无 padding canonical base64url 文本。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="providerId">已验证 ASCII Provider ID。</param>
+    /// <returns>只含字母、数字、连字符和下划线的文本。</returns>
+    private static string EncodeProviderId(string providerId)
+    {
+        return Convert.ToBase64String(StrictUtf8.GetBytes(providerId))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+    }
+
+    /// <summary>
+    /// 功能：从叶名解码并复核 canonical base64url Provider ID。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="encoded">不含 `.credential` 后缀的候选文本。</param>
+    /// <returns>通过 ID 语法且重编码完全一致的 Provider ID。</returns>
+    private static string DecodeProviderId(string encoded)
+    {
+        if (encoded.Length == 0 ||
+            encoded.Any(static character =>
+                !char.IsAsciiLetterOrDigit(character) && character is not ('-' or '_')) ||
+            encoded.Length % 4 == 1)
+        {
+            throw Error("credential_shape", "CredentialStore 条目文件名无效");
+        }
+
+        try
+        {
+            var standard = encoded.Replace('-', '+').Replace('_', '/');
+            standard += new string('=', (4 - (standard.Length % 4)) % 4);
+            var providerId = StrictUtf8.GetString(Convert.FromBase64String(standard));
+            ValidateProviderId(providerId);
+            if (!string.Equals(EncodeProviderId(providerId), encoded, StringComparison.Ordinal))
+            {
+                throw Error("credential_shape", "CredentialStore 条目文件名不是 canonical 编码");
+            }
+
+            return providerId;
+        }
+        catch (ProviderCommercialStateException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is FormatException or DecoderFallbackException)
+        {
+            throw Error("credential_shape", "CredentialStore 条目文件名无效");
+        }
+    }
+
+    /// <summary>
+    /// 功能：把已验证 credential 严格编码为不带 BOM 的 UTF-8 原始正文。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="credential">仅在调用方管理边界持有的 key。</param>
+    /// <returns>长度不超过单条上限的 UTF-8 字节。</returns>
+    private static byte[] EncodeCredential(string credential)
+    {
+        try
+        {
+            var bytes = StrictUtf8.GetBytes(credential);
+            if (bytes.Length is <= 0 or > MaximumEntryBytes)
+            {
+                throw Error("credential_value", "Provider credential 无效");
+            }
+
+            return bytes;
+        }
+        catch (EncoderFallbackException)
+        {
+            throw Error("credential_value", "Provider credential 无效");
+        }
+    }
+
+    /// <summary>
+    /// 功能：仅供构造期受控迁移验证旧聚合版本、数量、唯一 ID 与每个 key。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="document">严格解析的旧格式 DTO。</param>
+    private static void ValidateLegacyDocument(ProviderCredentialDocument document)
     {
         if (document is null ||
             document.SchemaVersion != SchemaVersion ||
             document.Credentials is null ||
-            document.Credentials.Count > 128)
+            document.Credentials.Count > MaximumCredentialCount)
         {
-            throw Error("credential_shape", "CredentialStore 文档无效");
+            throw Error("credential_shape", "CredentialStore 旧文档无效");
         }
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -302,7 +775,7 @@ public sealed class ProviderCredentialStore
         {
             if (entry is null)
             {
-                throw Error("credential_shape", "CredentialStore 文档无效");
+                throw Error("credential_shape", "CredentialStore 旧文档无效");
             }
 
             ValidateProviderId(entry.ProviderId);
@@ -340,9 +813,19 @@ public sealed class ProviderCredentialStore
     /// <param name="value">只存在调用方内存中的候选 key。</param>
     internal static void ValidateApiKey(string value)
     {
-        if (value is null ||
-            value.Length is < 1 or > 16_384 ||
-            value.IndexOfAny(['\r', '\n', '\0']) >= 0)
+        if (value is null || value.IndexOfAny(['\r', '\n', '\0']) >= 0)
+        {
+            throw Error("credential_value", "Provider credential 无效");
+        }
+
+        try
+        {
+            if (StrictUtf8.GetByteCount(value) is < 1 or > MaximumEntryBytes)
+            {
+                throw Error("credential_value", "Provider credential 无效");
+            }
+        }
+        catch (EncoderFallbackException)
         {
             throw Error("credential_value", "Provider credential 无效");
         }
@@ -732,8 +1215,16 @@ public sealed class InstalledSponsoredRouteStore
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
-internal static class CommercialFileSafety
+internal static partial class CommercialFileSafety
 {
+    private const int UnixOpenReadOnly = 0;
+    private const int LinuxOpenNonBlocking = 0x800;
+    private const int LinuxOpenCloseOnExec = 0x80000;
+    private const int LinuxOpenNoFollow = 0x20000;
+    private const int MacOpenNonBlocking = 0x4;
+    private const int MacOpenCloseOnExec = 0x1000000;
+    private const int MacOpenNoFollow = 0x100;
+
     /// <summary>
     /// 功能：创建私有目录，并在 Unix 把 mode 固定为 0700。
     /// 作者：高宏顺
@@ -755,6 +1246,47 @@ internal static class CommercialFileSafety
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             throw Error("directory", "商业状态目录创建失败");
+        }
+    }
+
+    /// <summary>
+    /// 功能：验证 CredentialStore 私有目录是非 reparse 的真实目录，并在 Unix 强制当前用户精确 0700。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">已存在的 CredentialStore 根、最终目录或 migration staging 路径。</param>
+    /// <exception cref="ProviderCommercialStateException">目录类型、链接、权限或 owner 不安全。</exception>
+    internal static void ValidatePrivateDirectoryMetadata(string path)
+    {
+        try
+        {
+            RejectReparsePoint(path);
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.Directory) == 0 ||
+                (attributes & (FileAttributes.Device | FileAttributes.ReparsePoint)) != 0)
+            {
+                throw Error("directory_shape", "CredentialStore 目录无效");
+            }
+
+            if (!OperatingSystem.IsWindows())
+            {
+                var expected = UnixFileMode.UserRead |
+                    UnixFileMode.UserWrite |
+                    UnixFileMode.UserExecute;
+                if (File.GetUnixFileMode(path) != expected ||
+                    GetUnixOwner(path) != GetEffectiveUnixUser())
+                {
+                    throw Error("directory_permissions", "CredentialStore 目录权限或 owner 无效");
+                }
+            }
+        }
+        catch (ProviderCommercialStateException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("directory_metadata", "CredentialStore 目录元数据读取失败");
         }
     }
 
@@ -830,6 +1362,74 @@ internal static class CommercialFileSafety
     }
 
     /// <summary>
+    /// 功能：在 Unix 以 no-follow 目录句柄执行 fsync，Windows 使用平台目录项语义。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="directory">已验证的真实私有目录。</param>
+    /// <remarks>不变量：Unix open 或 fsync 失败会阻止 durable 成功回执。</remarks>
+    /// <exception cref="ProviderCommercialStateException">目录无法安全打开或刷新。</exception>
+    internal static void FlushDirectory(string directory)
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        RejectReparsePoint(directory);
+        var flags = UnixOpenReadOnly |
+            (OperatingSystem.IsLinux()
+                ? LinuxOpenCloseOnExec | LinuxOpenNoFollow
+                : MacOpenCloseOnExec | MacOpenNoFollow);
+        var descriptor = OpenUnixPath(directory, flags);
+        if (descriptor < 0)
+        {
+            throw Error("directory_flush", "商业状态目录刷新失败");
+        }
+
+        using var handle = new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
+        if (Fsync(descriptor) != 0)
+        {
+            throw Error("directory_flush", "商业状态目录刷新失败");
+        }
+    }
+
+    /// <summary>
+    /// 功能：以 OS no-follow 句柄验证敏感普通文件的 0600 mode 与有界长度，不读取正文。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">可信私有目录派生的固定叶路径。</param>
+    /// <param name="maximum">允许的最大字节数。</param>
+    /// <param name="allowEmpty">是否允许崩溃 staging 的零字节叶。</param>
+    /// <remarks>不变量：只查询稳定 handle 元数据；不会调用任何正文读取 API。</remarks>
+    internal static void ValidateSensitiveRegularFileMetadata(
+        string path,
+        int maximum,
+        bool allowEmpty)
+    {
+        try
+        {
+            using var stream = OpenRegularReadNoFollow(path);
+            ValidateSensitiveMode(stream.SafeFileHandle);
+            var length = stream.Length;
+            if ((!allowEmpty && length == 0) || length < 0 || length > maximum)
+            {
+                throw Error("file_shape", "商业状态文件形状无效");
+            }
+        }
+        catch (ProviderCommercialStateException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            throw Error("file_metadata", "商业状态文件元数据读取失败");
+        }
+    }
+
+    /// <summary>
     /// 功能：no-reparse、有界读取普通状态文件，并验证敏感 Unix mode。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -840,24 +1440,14 @@ internal static class CommercialFileSafety
     /// <returns>完整文档字节。</returns>
     internal static byte[] ReadBounded(string path, int maximum, bool sensitive)
     {
-        RejectReparsePoint(path);
         try
         {
-            if (sensitive && !OperatingSystem.IsWindows())
+            using var stream = OpenRegularReadNoFollow(path);
+            if (sensitive)
             {
-                const UnixFileMode exposed = UnixFileMode.GroupRead |
-                    UnixFileMode.GroupWrite |
-                    UnixFileMode.GroupExecute |
-                    UnixFileMode.OtherRead |
-                    UnixFileMode.OtherWrite |
-                    UnixFileMode.OtherExecute;
-                if ((File.GetUnixFileMode(path) & exposed) != 0)
-                {
-                    throw Error("file_permissions", "CredentialStore 文件权限过宽");
-                }
+                ValidateSensitiveMode(stream.SafeFileHandle);
             }
 
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             if (stream.Length is <= 0 || stream.Length > maximum)
             {
                 throw Error("file_shape", "商业状态文件形状无效");
@@ -875,6 +1465,162 @@ internal static class CommercialFileSafety
         {
             throw Error("file_read", "商业状态文件读取失败");
         }
+    }
+
+    /// <summary>
+    /// 功能：以 Linux/macOS O_NOFOLLOW 或 Windows OPEN_REPARSE_POINT 打开普通可 seek 文件。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">可信状态根派生的固定文件路径。</param>
+    /// <returns>拥有稳定底层句柄的同步只读流。</returns>
+    /// <exception cref="ProviderCommercialStateException">平台、链接、类型或打开失败。</exception>
+    private static FileStream OpenRegularReadNoFollow(string path)
+    {
+        SafeFileHandle handle;
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        {
+            var flags = UnixOpenReadOnly |
+                (OperatingSystem.IsLinux()
+                    ? LinuxOpenNonBlocking | LinuxOpenCloseOnExec | LinuxOpenNoFollow
+                    : MacOpenNonBlocking | MacOpenCloseOnExec | MacOpenNoFollow);
+            var descriptor = OpenUnixPath(path, flags);
+            if (descriptor < 0)
+            {
+                throw Error("file_read", "商业状态文件无法安全打开");
+            }
+
+            handle = new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            const uint genericRead = 0x80000000;
+            const uint shareRead = 0x00000001;
+            const uint openExisting = 3;
+            const uint sequentialScan = 0x08000000;
+            const uint openReparsePoint = 0x00200000;
+            handle = CreateFileWindows(
+                path,
+                genericRead,
+                shareRead,
+                0,
+                openExisting,
+                sequentialScan | openReparsePoint,
+                0);
+            if (handle.IsInvalid || !IsWindowsRegularFile(handle))
+            {
+                handle.Dispose();
+                throw Error("file_read", "商业状态文件无法安全打开");
+            }
+        }
+        else
+        {
+            throw Error("file_read", "当前平台缺少 no-follow 文件读取能力");
+        }
+
+        try
+        {
+            var attributes = File.GetAttributes(handle);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.Device | FileAttributes.ReparsePoint)) != 0)
+            {
+                throw Error("file_shape", "商业状态文件必须是普通文件");
+            }
+
+            var stream = new FileStream(handle, FileAccess.Read, 16_384, isAsync: false);
+            if (!stream.CanSeek)
+            {
+                stream.Dispose();
+                throw Error("file_shape", "商业状态文件必须是普通文件");
+            }
+
+            return stream;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 功能：从稳定 handle 验证 Unix 敏感文件 mode 精确为 0600。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="handle">no-follow 打开的普通文件句柄。</param>
+    private static void ValidateSensitiveMode(SafeFileHandle handle)
+    {
+        if (!OperatingSystem.IsWindows() &&
+            (File.GetUnixFileMode(handle) != (UnixFileMode.UserRead | UnixFileMode.UserWrite) ||
+             GetUnixOwner(handle) != GetEffectiveUnixUser()))
+        {
+            throw Error("file_permissions", "CredentialStore 文件权限或 owner 无效");
+        }
+    }
+
+    /// <summary>
+    /// 功能：读取 Unix 当前进程的有效用户 ID，用于敏感状态 owner 校验。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>当前进程 effective UID。</returns>
+    private static uint GetEffectiveUnixUser()
+    {
+        return OperatingSystem.IsWindows() ? 0U : GetEffectiveUserId();
+    }
+
+    /// <summary>
+    /// 功能：读取 Unix 文件路径的 owner UID，供私有目录元数据校验使用。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">已验证、不跟随链接的私有目录路径。</param>
+    /// <returns>路径所指 inode 的 UID。</returns>
+    private static uint GetUnixOwner(string path)
+    {
+        if (StatUnixPath(path, out var status) != 0)
+        {
+            throw Error("owner_metadata", "CredentialStore owner 元数据读取失败");
+        }
+
+        return status.UserId;
+    }
+
+    /// <summary>
+    /// 功能：读取 Unix 已打开敏感文件的 owner UID，避免基于路径的二次检查。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="handle">no-follow 打开的文件句柄。</param>
+    /// <returns>句柄绑定 inode 的 UID。</returns>
+    private static uint GetUnixOwner(SafeFileHandle handle)
+    {
+        if (FileStatUnixHandle(handle.DangerousGetHandle().ToInt32(), out var status) != 0)
+        {
+            throw Error("owner_metadata", "CredentialStore owner 元数据读取失败");
+        }
+
+        return status.UserId;
+    }
+
+    /// <summary>
+    /// 功能：从 Windows no-follow handle 属性判断目标既非目录也非 reparse point。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="handle">以 OPEN_REPARSE_POINT 打开的句柄。</param>
+    /// <returns>属性查询成功且目标为普通候选文件时 true。</returns>
+    private static bool IsWindowsRegularFile(SafeFileHandle handle)
+    {
+        const int fileAttributeTagInfo = 9;
+        const uint directory = 0x00000010;
+        const uint reparsePoint = 0x00000400;
+        return GetFileInformationByHandleExWindows(
+                handle,
+                fileAttributeTagInfo,
+                out var information,
+                (uint)Marshal.SizeOf<FileAttributeTagInformation>()) != 0 &&
+            (information.FileAttributes & (directory | reparsePoint)) == 0;
     }
 
     /// <summary>
@@ -939,6 +1685,7 @@ internal static class CommercialFileSafety
             }
 
             File.Move(temporary, path, overwrite: true);
+            FlushDirectory(parent);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -954,6 +1701,91 @@ internal static class CommercialFileSafety
             {
                 // 临时文件尽力清理；原始写入失败分类保持不变。
             }
+        }
+    }
+
+    /// <summary>
+    /// 功能：从 CredentialStore 根的受控临时叶耐久原子发布一条 credential。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="credentialRoot">已验证的 `credentials` 私有根目录。</param>
+    /// <param name="destination">最终逐 credential canonical 叶。</param>
+    /// <param name="bytes">已验证的 raw UTF-8 secret 字节。</param>
+    /// <remarks>不变量：最终目录永不含崩溃临时项；文件同步、替换、最终目录与根目录同步均成功才返回。</remarks>
+    internal static void AtomicWriteCredentialLeaf(
+        string credentialRoot,
+        string destination,
+        byte[] bytes)
+    {
+        var destinationParent = Path.GetDirectoryName(destination)
+            ?? throw Error("file_path", "CredentialStore 叶路径无效");
+        ValidatePrivateDirectoryMetadata(credentialRoot);
+        ValidatePrivateDirectoryMetadata(destinationParent);
+        RejectReparsePointIfPresent(destination);
+        var temporary = Path.Combine(
+            credentialRoot,
+            ".provider-credential-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            using (var stream = new FileStream(
+                       temporary,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None))
+            {
+                RestrictFilePermissions(temporary);
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+
+            ValidateSensitiveRegularFileMetadata(temporary, bytes.Length, allowEmpty: false);
+            AtomicReplaceCredentialLeaf(temporary, destination);
+            FlushDirectory(destinationParent);
+            FlushDirectory(credentialRoot);
+        }
+        catch (ProviderCommercialStateException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw Error("file_publish", "CredentialStore 叶文件原子发布失败");
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporary);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // 临时文件仅尽力清理；下次构造期会按固定名称和元数据恢复。
+            }
+        }
+    }
+
+    /// <summary>
+    /// 功能：以平台原子替换语义把已同步临时 credential 移到最终叶。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="source">CredentialStore 根内已同步临时叶。</param>
+    /// <param name="destination">最终 canonical 叶。</param>
+    /// <remarks>不变量：Windows 使用 REPLACE_EXISTING 与 WRITE_THROUGH；Unix 使用同文件系统 rename。</remarks>
+    private static void AtomicReplaceCredentialLeaf(string source, string destination)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            File.Move(source, destination, overwrite: true);
+            return;
+        }
+
+        const uint replaceExisting = 0x00000001;
+        const uint writeThrough = 0x00000008;
+        if (MoveFileExWindows(source, destination, replaceExisting | writeThrough) == 0)
+        {
+            throw new IOException("CredentialStore 原子替换失败");
         }
     }
 
@@ -1008,6 +1840,145 @@ internal static class CommercialFileSafety
             }
         }
     }
+
+    /// <summary>
+    /// 功能：通过 libc open 对私有状态目录应用 no-follow 与 close-on-exec。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">进程内从可信 state root 派生的目录。</param>
+    /// <param name="flags">平台只读、no-follow 与 close-on-exec 标志。</param>
+    /// <returns>成功时非负 descriptor，失败为 -1。</returns>
+    [LibraryImport("libc", EntryPoint = "open", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int OpenUnixPath(string path, int flags);
+
+    /// <summary>
+    /// 功能：调用 libc fsync 持久化已打开的私有状态目录。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="descriptor">由 OpenUnixPath 打开的目录 descriptor。</param>
+    /// <returns>成功为零，失败为 -1。</returns>
+    [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]
+    private static partial int Fsync(int descriptor);
+
+    /// <summary>
+    /// 功能：调用 libc 获取当前进程 effective UID。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>Unix effective UID。</returns>
+    [LibraryImport("libc", EntryPoint = "geteuid", SetLastError = true)]
+    private static partial uint GetEffectiveUserId();
+
+    /// <summary>
+    /// 功能：调用 libc 从路径读取 Unix owner 元数据。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">NUL 终止前有效的 UTF-8 路径。</param>
+    /// <param name="status">由 libc 填充的 stat 结构。</param>
+    /// <returns>零表示成功。</returns>
+    [LibraryImport("libc", EntryPoint = "stat", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int StatUnixPath(string path, out UnixFileStatus status);
+
+    /// <summary>
+    /// 功能：调用 libc 从打开文件描述符读取 Unix owner 元数据。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="descriptor">当前进程拥有的 Unix 文件描述符。</param>
+    /// <param name="status">由 libc 填充的 stat 结构。</param>
+    /// <returns>零表示成功。</returns>
+    [LibraryImport("libc", EntryPoint = "fstat", SetLastError = true)]
+    private static partial int FileStatUnixHandle(int descriptor, out UnixFileStatus status);
+
+    /// <summary>
+    /// 功能：调用 Windows CreateFileW 以 OPEN_REPARSE_POINT 打开敏感叶句柄。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">UTF-16 文件路径。</param>
+    /// <param name="desiredAccess">只读访问掩码。</param>
+    /// <param name="shareMode">固定共享读。</param>
+    /// <param name="securityAttributes">固定 null。</param>
+    /// <param name="creationDisposition">固定 OPEN_EXISTING。</param>
+    /// <param name="flagsAndAttributes">no-follow 与顺序读 flags。</param>
+    /// <param name="templateFile">固定 null。</param>
+    /// <returns>拥有原生句柄的 SafeFileHandle。</returns>
+    [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    private static partial SafeFileHandle CreateFileWindows(
+        string path,
+        uint desiredAccess,
+        uint shareMode,
+        nint securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        nint templateFile);
+
+    /// <summary>
+    /// 功能：查询 Windows handle 的 FILE_ATTRIBUTE_TAG_INFO 以拒绝目录与 reparse point。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="handle">有效文件句柄。</param>
+    /// <param name="informationClass">固定 FileAttributeTagInfo。</param>
+    /// <param name="information">返回属性与 reparse tag。</param>
+    /// <param name="bufferSize">固定结构大小。</param>
+    /// <returns>非零表示成功。</returns>
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
+    private static partial int GetFileInformationByHandleExWindows(
+        SafeFileHandle handle,
+        int informationClass,
+        out FileAttributeTagInformation information,
+        uint bufferSize);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileAttributeTagInformation
+    {
+        internal uint FileAttributes;
+        internal uint ReparseTag;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UnixFileStatus
+    {
+        private ulong device;
+        private ulong inode;
+        private ulong links;
+        private uint mode;
+        internal uint UserId;
+        private uint groupId;
+        private uint padding;
+        private long reserved0;
+        private long size;
+        private long blockSize;
+        private long blocks;
+        private long accessSeconds;
+        private long accessNanoseconds;
+        private long modificationSeconds;
+        private long modificationNanoseconds;
+        private long statusChangeSeconds;
+        private long statusChangeNanoseconds;
+        private long reserved1;
+        private long reserved2;
+        private long reserved3;
+    }
+
+    /// <summary>
+    /// 功能：调用 Windows MoveFileExW 进行 credential 原子替换。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="existingFileName">同卷已同步临时叶。</param>
+    /// <param name="newFileName">最终 canonical 叶。</param>
+    /// <param name="flags">REPLACE_EXISTING 与 WRITE_THROUGH 标志。</param>
+    /// <returns>非零表示 Win32 调用成功。</returns>
+    [LibraryImport("kernel32.dll", EntryPoint = "MoveFileExW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial int MoveFileExWindows(
+        string existingFileName,
+        string newFileName,
+        uint flags);
 
     /// <summary>
     /// 功能：构造文件安全层脱敏异常。

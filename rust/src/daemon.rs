@@ -14,6 +14,7 @@ use crate::agent_profile::{
     AgentProfileInput, AgentProfileReference, AgentProfileRunSnapshot, AgentProfileService,
     DangerousActionMode,
 };
+use crate::domain::ArtifactRef;
 use crate::error::{AgentError, ErrorCode};
 use crate::protocol::{
     AgentProfilesCreateParams, AgentProfilesDeleteParams, AgentProfilesListParams,
@@ -34,6 +35,7 @@ use crate::provider_identity::{
     AdvertisedModel, ProviderIdentityAdvertisement, default_models, is_provider_id, model_key,
 };
 use crate::provider_route::ProviderRouteSnapshot;
+use crate::session::SessionStore;
 use crate::session_lifecycle::{SessionLifecycleService, lifecycle_busy, parse_session_cursor};
 use crate::terminal::{TerminalAfterResponse, TerminalManager, TerminalNotification};
 
@@ -41,6 +43,9 @@ const MAX_FRAME_BYTES: usize = 1_048_576;
 const MAX_EVENT_BYTES: usize = 262_144;
 const MAX_ARTIFACT_BYTES: usize = 1_073_741_824;
 const MAX_INPUT_IMAGE_BYTES: usize = 524_288;
+const MAX_READ_IMAGE_BYTES: usize = 32 * 1024 * 1024;
+const ARTIFACT_READ_CHUNK_BYTES: usize = 512 * 1024;
+const MAX_ARTIFACT_READ_CURSORS: usize = 2;
 const OUTBOUND_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// stdio daemon 的一次请求处理结果；`after_response` 用于强制响应先于后续事件。
@@ -89,6 +94,30 @@ struct ArtifactCreateParams {
     data_base64: String,
 }
 
+/// `artifacts/read` 的严格连续分块读取参数。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ArtifactReadParams {
+    session_id: String,
+    artifact_id: String,
+    offset: u64,
+}
+
+/// 单连接内一个已经完整验证的图片读取游标。
+///
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+struct ArtifactReadCursor {
+    session_id: String,
+    artifact_id: String,
+    artifact: ArtifactRef,
+    bytes: Vec<u8>,
+    next_offset: usize,
+}
+
 /// `session/list` 的严格可选 cursor 与 page limit 参数。
 ///
 /// 作者：高宏顺
@@ -130,6 +159,7 @@ pub struct Daemon {
     event_sender: mpsc::Sender<crate::domain::EventEnvelope>,
     event_receiver: Option<mpsc::Receiver<crate::domain::EventEnvelope>>,
     terminal_event_receiver: Option<mpsc::Receiver<TerminalNotification>>,
+    artifact_read_cursors: Vec<ArtifactReadCursor>,
 }
 
 impl Daemon {
@@ -174,6 +204,7 @@ impl Daemon {
             event_sender,
             event_receiver: Some(event_receiver),
             terminal_event_receiver: Some(terminal_event_receiver),
+            artifact_read_cursors: Vec::new(),
         })
     }
 
@@ -556,6 +587,10 @@ impl Daemon {
                     .publish_input_image(&params.session_id, &params.media_type, &bytes)
                     .await?;
                 Ok((json!({"artifact":artifact}), None))
+            }
+            "artifacts/read" => {
+                let params: ArtifactReadParams = parse_params(request.params)?;
+                Ok((self.read_artifact(params).await?, None))
             }
             "models/list" => {
                 let params: ModelsListParams = parse_params(request.params)?;
@@ -958,6 +993,7 @@ impl Daemon {
             "providerCredentials/set",
             "providerCredentials/remove",
             "artifacts/create",
+            "artifacts/read",
             "models/list",
             "providerCatalog/list",
             "run/start",
@@ -1026,6 +1062,19 @@ impl Daemon {
         .map_err(|error| AgentError::new(ErrorCode::InternalError, error.to_string()))
     }
 
+    /// 功能：按严格连续 offset 返回一个已完整验证图片 artifact 的有界 Base64 分块。
+    ///
+    /// 输入：同 Session 的 opaque artifact ID；首块 offset 必须为零，后续必须等于上一响应的 nextOffset。
+    /// 输出：portable artifact 引用、当前 offset、最多 512 KiB 原始字节的 Base64 和连续 nextOffset。
+    /// 不变量：单连接最多缓存两个按 Session/artifact 隔离且各自不超过 32 MiB 的完整已验证图片；首块执行 selected-chain、no-follow、长度、hash、MIME 与魔数验证；末块立即释放缓存。
+    /// 失败：跨 Session/artifact、offset 跳跃、归属、文件身份、大小或内容验证失败统一返回不泄漏存在性、路径、hash 和正文的错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    async fn read_artifact(&mut self, params: ArtifactReadParams) -> Result<Value, AgentError> {
+        let sessions = self.agent.session_store();
+        read_artifact_chunk(&mut self.artifact_read_cursors, &sessions, params).await
+    }
+
     /// 功能：验证待持久化 Profile 只引用当前 models/list 与 initialize 工具子集。
     ///
     /// 输入：已经 strict DTO 解码、尚未写数据库的 Profile input。
@@ -1085,6 +1134,88 @@ impl Daemon {
         models.sort_by_key(model_key);
         models
     }
+}
+
+/// 功能：按 artifact 身份隔离游标并返回一个经过完整复核的有界图片分块。
+///
+/// 输入：单连接游标池、同一状态根 SessionStore 与严格读取参数。
+/// 输出：portable 引用、当前 offset、canonical Base64 分块及可选连续 nextOffset。
+/// 不变量：最多保留两个独立游标；首块完整验证图片，后续只接受精确连续 offset，末块立即释放对应游标。
+/// 失败：容量、身份、归属、offset、路径、长度、hash、MIME 或魔数失败统一映射为脱敏读取错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+async fn read_artifact_chunk(
+    cursors: &mut Vec<ArtifactReadCursor>,
+    sessions: &SessionStore,
+    params: ArtifactReadParams,
+) -> Result<Value, AgentError> {
+    let requested_offset = usize::try_from(params.offset).map_err(|_| artifact_read_error())?;
+    let mut cursor = if requested_offset == 0 {
+        cursors.retain(|cursor| {
+            cursor.session_id != params.session_id || cursor.artifact_id != params.artifact_id
+        });
+        if cursors.len() >= MAX_ARTIFACT_READ_CURSORS {
+            return Err(artifact_read_error());
+        }
+        let (artifact, bytes) = sessions
+            .read_verified_image_artifact_by_id(
+                &params.session_id,
+                &params.artifact_id,
+                MAX_READ_IMAGE_BYTES,
+            )
+            .await
+            .map_err(|_| artifact_read_error())?;
+        ArtifactReadCursor {
+            session_id: params.session_id,
+            artifact_id: params.artifact_id,
+            artifact,
+            bytes,
+            next_offset: 0,
+        }
+    } else {
+        let cursor_index = cursors
+            .iter()
+            .position(|cursor| {
+                cursor.session_id == params.session_id && cursor.artifact_id == params.artifact_id
+            })
+            .ok_or_else(artifact_read_error)?;
+        let cursor = cursors.remove(cursor_index);
+        if cursor.next_offset != requested_offset {
+            return Err(artifact_read_error());
+        }
+        cursor
+    };
+
+    if requested_offset != cursor.next_offset || requested_offset >= cursor.bytes.len() {
+        return Err(artifact_read_error());
+    }
+    let end = requested_offset
+        .saturating_add(ARTIFACT_READ_CHUNK_BYTES)
+        .min(cursor.bytes.len());
+    let data_base64 = BASE64_STANDARD.encode(&cursor.bytes[requested_offset..end]);
+    let next_offset = (end < cursor.bytes.len()).then_some(end as u64);
+    let artifact = cursor.artifact.clone();
+    if next_offset.is_some() {
+        cursor.next_offset = end;
+        cursors.push(cursor);
+    }
+    Ok(json!({
+        "artifact":artifact,
+        "offset":params.offset,
+        "dataBase64":data_base64,
+        "nextOffset":next_offset
+    }))
+}
+
+/// 功能：创建统一脱敏的图片 artifact 分块读取错误。
+///
+/// 输出：不区分 Session/artifact 是否存在、游标状态或文件验证阶段的公共参数错误。
+/// 不变量：错误不包含请求 ID、主机路径、hash、图片正文或持久化存在性。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn artifact_read_error() -> AgentError {
+    AgentError::new(ErrorCode::InvalidParams, "artifact read request is invalid")
+        .with_details(json!({"kind":"invalid_artifact_read"}))
 }
 
 /// 严格解码 `artifacts/create` 的 canonical Base64，并执行固定输入大小上限。
@@ -1273,10 +1404,17 @@ async fn write_frame(
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use serde_json::json;
+    use tempfile::tempdir;
     use tokio::io::BufReader;
 
-    use super::{InboundFrame, decode_input_image, parse_run_start_params, read_bounded_frame};
+    use super::{
+        ARTIFACT_READ_CHUNK_BYTES, ArtifactReadParams, InboundFrame, decode_input_image,
+        parse_run_start_params, read_artifact_chunk, read_bounded_frame,
+    };
+    use crate::session::SessionStore;
 
     /// 功能：验证输入图片只接受 canonical Base64，并在错误中不回显正文。
     /// 作者：高宏顺
@@ -1291,6 +1429,97 @@ mod tests {
             let error = decode_input_image(invalid).expect_err("invalid base64 must fail");
             assert!(!error.message.contains(invalid));
         }
+    }
+
+    /// 功能：验证同一 RPC 连接可让两张大图以独立 cursor 交错完成分块读取。
+    ///
+    /// 不变量：测试只使用本地 synthetic PNG；第二张首块不会覆盖第一张 nextOffset，末块分别释放游标。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn artifact_reader_interleaves_two_large_image_cursors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let store = SessionStore::new(directory.path(), 4).await?;
+        let session_id = "session-two-image-cursors";
+        store.create_session(session_id, directory.path()).await?;
+        let mut first_bytes = vec![0x11; ARTIFACT_READ_CHUNK_BYTES + 17];
+        first_bytes[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        let mut second_bytes = vec![0x22; ARTIFACT_READ_CHUNK_BYTES + 31];
+        second_bytes[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        let first = store
+            .store_image_artifact(session_id, &first_bytes, "image/png")
+            .await?;
+        let second = store
+            .store_image_artifact(session_id, &second_bytes, "image/png")
+            .await?;
+        let mut cursors = Vec::new();
+
+        let first_head = read_artifact_chunk(
+            &mut cursors,
+            &store,
+            ArtifactReadParams {
+                session_id: session_id.to_owned(),
+                artifact_id: first.artifact_id.clone(),
+                offset: 0,
+            },
+        )
+        .await?;
+        let second_head = read_artifact_chunk(
+            &mut cursors,
+            &store,
+            ArtifactReadParams {
+                session_id: session_id.to_owned(),
+                artifact_id: second.artifact_id.clone(),
+                offset: 0,
+            },
+        )
+        .await?;
+        assert_eq!(first_head["nextOffset"], ARTIFACT_READ_CHUNK_BYTES as u64);
+        assert_eq!(second_head["nextOffset"], ARTIFACT_READ_CHUNK_BYTES as u64);
+        assert_eq!(cursors.len(), 2);
+        assert_eq!(
+            BASE64_STANDARD.decode(first_head["dataBase64"].as_str().ok_or("first chunk")?)?,
+            first_bytes[..ARTIFACT_READ_CHUNK_BYTES]
+        );
+        assert_eq!(
+            BASE64_STANDARD.decode(second_head["dataBase64"].as_str().ok_or("second chunk")?)?,
+            second_bytes[..ARTIFACT_READ_CHUNK_BYTES]
+        );
+
+        let first_tail = read_artifact_chunk(
+            &mut cursors,
+            &store,
+            ArtifactReadParams {
+                session_id: session_id.to_owned(),
+                artifact_id: first.artifact_id,
+                offset: ARTIFACT_READ_CHUNK_BYTES as u64,
+            },
+        )
+        .await?;
+        assert!(first_tail["nextOffset"].is_null());
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(
+            BASE64_STANDARD.decode(first_tail["dataBase64"].as_str().ok_or("first tail")?)?,
+            first_bytes[ARTIFACT_READ_CHUNK_BYTES..]
+        );
+        let second_tail = read_artifact_chunk(
+            &mut cursors,
+            &store,
+            ArtifactReadParams {
+                session_id: session_id.to_owned(),
+                artifact_id: second.artifact_id,
+                offset: ARTIFACT_READ_CHUNK_BYTES as u64,
+            },
+        )
+        .await?;
+        assert!(second_tail["nextOffset"].is_null());
+        assert!(cursors.is_empty());
+        assert_eq!(
+            BASE64_STANDARD.decode(second_tail["dataBase64"].as_str().ok_or("second tail")?)?,
+            second_bytes[ARTIFACT_READ_CHUNK_BYTES..]
+        );
+        Ok(())
     }
 
     /// 功能：验证 run/start 的非法 Profile 引用使用冻结错误且不扩大到其他字段。

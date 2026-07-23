@@ -254,6 +254,20 @@ impl Provider for OpenRouterImagesProvider {
         IMAGE_MODELS.contains(&model_id)
     }
 
+    /// 功能：声明冻结 OpenRouter Images route 接受已复核图片输入。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn supports_image_input(&self) -> bool {
+        true
+    }
+
+    /// 功能：声明冻结 OpenRouter Images route 产生严格验证的图片完成结果。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn supports_image_output(&self) -> bool {
+        true
+    }
+
     /// 功能：执行一次非流式 OpenRouter Images HTTP 请求并返回内存内 artifact 候选事件。
     ///
     /// 输入：selected Session 消息、冻结模型和运行级取消令牌。
@@ -636,6 +650,7 @@ mod tests {
             max_output_tokens: None,
             session_id: Some("session-system-message".to_owned()),
             run_id: Some("run-system-message".to_owned()),
+            resolved_images: Vec::new(),
         };
         let body: serde_json::Value =
             serde_json::from_slice(&provider.request_body(&request).await?)?;

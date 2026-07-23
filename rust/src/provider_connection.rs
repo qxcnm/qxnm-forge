@@ -36,8 +36,8 @@ use crate::provider_identity::{
     AdvertisedModel, custom_openai_model, is_canonical_provider_id, model_key,
 };
 
-const DOCUMENT_SCHEMA_VERSION: &str = "0.2";
-const LEGACY_DOCUMENT_SCHEMA_VERSION: &str = "0.1";
+const DOCUMENT_SCHEMA_VERSION: &str = "0.3";
+const LEGACY_DOCUMENT_SCHEMA_VERSIONS: &[&str] = &["0.1", "0.2"];
 const MAX_DOCUMENT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 128;
 const MAX_MODEL_IDS: usize = 512;
@@ -63,6 +63,8 @@ pub struct CustomProviderConnectionInput {
     pub models_url: String,
     pub model_ids: Vec<String>,
     pub supports_tools: bool,
+    pub supports_image_input: bool,
+    pub supports_image_output: bool,
     pub logo_asset_id: Option<String>,
     pub enabled: bool,
 }
@@ -80,6 +82,8 @@ pub struct CustomProviderConnectionView {
     pub models_url: String,
     pub model_ids: Vec<String>,
     pub supports_tools: bool,
+    pub supports_image_input: bool,
+    pub supports_image_output: bool,
     pub logo_asset_id: Option<String>,
     pub enabled: bool,
     pub credential_configured: bool,
@@ -157,6 +161,10 @@ struct StoredConnection {
     model_ids: Vec<String>,
     #[serde(default)]
     supports_tools: bool,
+    #[serde(default)]
+    supports_image_input: bool,
+    #[serde(default)]
+    supports_image_output: bool,
     logo_asset_id: Option<String>,
     enabled: bool,
     created_at: String,
@@ -290,6 +298,8 @@ impl CustomProviderConnectionStore {
             models_url: input.models_url,
             model_ids: input.model_ids,
             supports_tools: input.supports_tools,
+            supports_image_input: input.supports_image_input,
+            supports_image_output: input.supports_image_output,
             logo_asset_id: input.logo_asset_id,
             enabled: input.enabled,
             created_at: now.clone(),
@@ -357,6 +367,8 @@ impl CustomProviderConnectionStore {
             models_url: input.models_url,
             model_ids: input.model_ids,
             supports_tools: input.supports_tools,
+            supports_image_input: input.supports_image_input,
+            supports_image_output: input.supports_image_output,
             logo_asset_id: input.logo_asset_id,
             enabled: input.enabled,
             created_at: previous.created_at.clone(),
@@ -552,7 +564,7 @@ impl CustomProviderConnectionStore {
         }
         let bytes = read_bounded_file(&path, MAX_DOCUMENT_BYTES)?;
         let mut document: ConnectionDocument = parse_strict_json(&bytes)?;
-        if document.schema_version == LEGACY_DOCUMENT_SCHEMA_VERSION {
+        if document.schema_version == "0.1" {
             for connection in &mut document.connections {
                 if connection.models_url.is_empty() {
                     connection.models_url = native_endpoint(&connection.base_url, "/models", &[])
@@ -560,6 +572,8 @@ impl CustomProviderConnectionStore {
                         .to_string();
                 }
             }
+        }
+        if LEGACY_DOCUMENT_SCHEMA_VERSIONS.contains(&document.schema_version.as_str()) {
             document.schema_version = DOCUMENT_SCHEMA_VERSION.to_owned();
         }
         validate_document(&document, self.allow_conformance_loopback)?;
@@ -907,6 +921,11 @@ impl CustomProviderConnectionService {
                     && !connection.model_ids.is_empty()
                     && configured.contains(&connection.provider_id)
             })
+            .map(|mut connection| {
+                connection.supports_image_output &=
+                    configured.contains(&image_credential_id(&connection.connection_id));
+                connection
+            })
             .collect();
         Ok(CustomProviderRuntimeSnapshot {
             connections,
@@ -983,7 +1002,9 @@ impl CustomProviderRuntimeSnapshot {
                         &connection.provider_id,
                         model_id,
                         &connection.api_family,
-                        connection.supports_tools,
+                        connection.supports_tools && !connection.supports_image_output,
+                        connection.supports_image_input,
+                        connection.supports_image_output,
                     )
                 })
             })
@@ -1092,28 +1113,44 @@ impl CustomProviderRuntimeSnapshot {
                 _ => return Err(invalid_connection("apiFamily", "Provider API family 无效")),
             };
             let endpoint = native_endpoint(&connection.base_url, request_path, &[])?;
+            let image_credential_id = connection
+                .supports_image_output
+                .then(|| image_credential_id(&connection.connection_id));
+            let request_credential_id = image_credential_id
+                .as_deref()
+                .unwrap_or(&connection.provider_id)
+                .to_owned();
             let source = ProviderCredentialSource::from_store(
                 self.credentials.clone(),
-                connection.provider_id.clone(),
+                request_credential_id,
             );
             let inner: Arc<dyn Provider> = match connection.api_family.as_str() {
-                CHAT_API_FAMILY => Arc::new(OpenAiChatProvider::with_credential_source(
-                    &connection.provider_id,
-                    endpoint.to_string(),
-                    source,
-                )),
-                RESPONSES_API_FAMILY => Arc::new(OpenAiResponsesProvider::with_credential_source(
-                    &connection.provider_id,
-                    endpoint.to_string(),
-                    source,
-                )),
+                CHAT_API_FAMILY => Arc::new(
+                    OpenAiChatProvider::with_credential_source(
+                        &connection.provider_id,
+                        endpoint.to_string(),
+                        source,
+                    )
+                    .with_image_output(connection.supports_image_output),
+                ),
+                RESPONSES_API_FAMILY => Arc::new(
+                    OpenAiResponsesProvider::with_credential_source(
+                        &connection.provider_id,
+                        endpoint.to_string(),
+                        source,
+                    )
+                    .with_image_output(connection.supports_image_output),
+                ),
                 _ => unreachable!("validated API family"),
             };
             let provider = CustomConnectionProvider {
                 provider_id: connection.provider_id.clone(),
                 api_family: connection.api_family.clone(),
                 model_ids: connection.model_ids.iter().cloned().collect(),
-                supports_tools: connection.supports_tools,
+                supports_tools: connection.supports_tools && !connection.supports_image_output,
+                supports_image_input: connection.supports_image_input,
+                supports_image_output: connection.supports_image_output,
+                image_credential_id,
                 credentials: self.credentials.clone(),
                 inner,
             };
@@ -1156,6 +1193,9 @@ struct CustomConnectionProvider {
     api_family: String,
     model_ids: BTreeSet<String>,
     supports_tools: bool,
+    supports_image_input: bool,
+    supports_image_output: bool,
+    image_credential_id: Option<String>,
     credentials: ProviderCredentialStore,
     inner: Arc<dyn Provider>,
 }
@@ -1190,11 +1230,29 @@ impl Provider for CustomConnectionProvider {
         self.supports_tools
     }
 
+    /// 功能：返回连接启动快照中的显式图片输入能力声明。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn supports_image_input(&self) -> bool {
+        self.supports_image_input
+    }
+
+    /// 功能：返回连接启动快照中的显式图片输出能力声明。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn supports_image_output(&self) -> bool {
+        self.supports_image_output
+    }
+
     /// 功能：在 durable Session 副作用前重新检查 stored credential presence。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     fn is_available(&self) -> bool {
         self.credentials.contains(&self.provider_id)
+            && self
+                .image_credential_id
+                .as_deref()
+                .is_none_or(|credential_id| self.credentials.contains(credential_id))
     }
 
     /// 功能：把已验证请求委托给原生 OpenAI Chat adapter。
@@ -1241,6 +1299,8 @@ fn project_connection(
         models_url: connection.models_url,
         model_ids: connection.model_ids,
         supports_tools: connection.supports_tools,
+        supports_image_input: connection.supports_image_input,
+        supports_image_output: connection.supports_image_output,
         logo_asset_id: connection.logo_asset_id,
         enabled: connection.enabled,
         credential_configured,
@@ -1425,6 +1485,8 @@ fn validate_stored_connection(
             models_url: connection.models_url.clone(),
             model_ids: connection.model_ids.clone(),
             supports_tools: connection.supports_tools,
+            supports_image_input: connection.supports_image_input,
+            supports_image_output: connection.supports_image_output,
             logo_asset_id: connection.logo_asset_id.clone(),
             enabled: connection.enabled,
         },
@@ -2038,6 +2100,8 @@ mod tests {
             models_url: "https://example.test/v1/models".to_owned(),
             model_ids: vec!["model-a".to_owned(), "model-b".to_owned()],
             supports_tools: false,
+            supports_image_input: false,
+            supports_image_output: false,
             logo_asset_id: Some("new-api".to_owned()),
             enabled,
         }
@@ -2154,6 +2218,75 @@ mod tests {
         service.set_credential("dual-key", "responses", "responses-secret")?;
         service.delete(&created.connection_id, created.revision)?;
         assert!(service.credentials.list()?.is_empty());
+        Ok(())
+    }
+
+    /// 功能：验证有效 Image key 会收窄 tools，而移除后恢复持久化 tools 声明并关闭图片输出。
+    ///
+    /// 不变量：测试只使用本地 synthetic credential store；运行时快照不得改写连接文档中的原始能力声明。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn image_credential_narrows_tools_and_removal_restores_them()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempdir()?;
+        let state = root.path().join("state");
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(&workspace)?;
+        let service = service(&state, &workspace)?;
+        let mut connection = input("image-route", true);
+        connection.supports_tools = true;
+        connection.supports_image_input = true;
+        connection.supports_image_output = true;
+        let created = service.create(connection)?;
+        service.set_credential("image-route", "responses", "synthetic-responses-key")?;
+        service.set_credential("image-route", "image", "synthetic-image-key")?;
+
+        let image_snapshot = service.runtime_snapshot()?;
+        let image_model = serde_json::to_value(image_snapshot.models(None))?;
+        assert_eq!(image_model[0]["capabilities"]["tools"], false);
+        assert_eq!(image_model[0]["capabilities"]["streaming"], false);
+        assert_eq!(
+            image_model[0]["capabilities"]["input"],
+            json!(["text", "image"])
+        );
+        assert_eq!(
+            image_model[0]["capabilities"]["output"],
+            json!(["text", "image"])
+        );
+        let image_providers = image_snapshot.build_providers()?;
+        let image_provider = image_providers
+            .values()
+            .next()
+            .ok_or("missing image provider")?;
+        assert!(!image_provider.supports_tools());
+        assert!(image_provider.supports_image_input());
+        assert!(image_provider.supports_image_output());
+
+        service.remove_credential("image-route", "image")?;
+        let text_snapshot = service.runtime_snapshot()?;
+        let text_model = serde_json::to_value(text_snapshot.models(None))?;
+        assert_eq!(text_model[0]["capabilities"]["tools"], true);
+        assert_eq!(text_model[0]["capabilities"]["streaming"], true);
+        assert_eq!(
+            text_model[0]["capabilities"]["input"],
+            json!(["text", "image"])
+        );
+        assert_eq!(text_model[0]["capabilities"]["output"], json!(["text"]));
+        let text_providers = text_snapshot.build_providers()?;
+        let text_provider = text_providers
+            .values()
+            .next()
+            .ok_or("missing text provider")?;
+        assert!(text_provider.supports_tools());
+        assert!(text_provider.supports_image_input());
+        assert!(!text_provider.supports_image_output());
+
+        let persisted = service.list()?.remove(0);
+        assert_eq!(persisted.connection_id, created.connection_id);
+        assert!(persisted.supports_tools);
+        assert!(persisted.supports_image_output);
+        assert!(!persisted.image_credential_configured);
         Ok(())
     }
 

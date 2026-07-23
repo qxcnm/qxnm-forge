@@ -285,15 +285,7 @@ describe("QXNM Forge workspace", () => {
       target: { value: "只属于桌面 Session 的消息" },
     });
     fireEvent.click(screen.getByLabelText("发送任务"));
-    fireEvent.click(
-      screen.getAllByRole("button", { name: /统一后端能力协议/ })[0],
-    );
-
-    expect(screen.queryByText("只属于桌面 Session 的消息")).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getAllByRole("button", { name: /实现跨平台桌面端/ })[0],
-    );
-    expect(screen.getByText("只属于桌面 Session 的消息")).toBeInTheDocument();
+    expect(await screen.findByText("只属于桌面 Session 的消息")).toBeInTheDocument();
     expect(
       await screen.findByText(/运行已由 Rust capability 画像接受/, {}, { timeout: 2_000 }),
     ).toBeInTheDocument();
@@ -303,6 +295,12 @@ describe("QXNM Forge workspace", () => {
     );
     expect(screen.queryByText("只属于桌面 Session 的消息")).not.toBeInTheDocument();
     expect(screen.queryByText(/运行已由 Rust capability 画像接受/)).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /实现跨平台桌面端/ })[0],
+    );
+    expect(screen.getByText("只属于桌面 Session 的消息")).toBeInTheDocument();
+    expect(screen.getByText(/运行已由 Rust capability 画像接受/)).toBeInTheDocument();
   });
 
   /**
@@ -433,11 +431,11 @@ describe("QXNM Forge workspace", () => {
     fireEvent.click(modelSelect);
     fireEvent.click(
       await screen.findByRole("option", {
-        name: "gpt-5 · newapi-gzxsy/openai-responses",
+        name: "gpt-5 · newapi-gzxsy/openai-responses · 仅文本",
       }),
     );
     expect(modelSelect).toHaveTextContent(
-      "gpt-5 · newapi-gzxsy/openai-responses",
+      "gpt-5 · newapi-gzxsy/openai-responses · 仅文本",
     );
 
     const agentSelect = screen.getByLabelText("选择智能体");
@@ -447,7 +445,7 @@ describe("QXNM Forge workspace", () => {
     fireEvent.click(modelSelect);
     fireEvent.click(
       await screen.findByRole("option", {
-        name: "gpt-5 · newapi-gzxsy/openai-responses",
+        name: "gpt-5 · newapi-gzxsy/openai-responses · 仅文本",
       }),
     );
     expect(agentSelect).toHaveTextContent("默认智能体");
@@ -488,8 +486,8 @@ describe("QXNM Forge workspace", () => {
     fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
     expect(composer).toHaveValue("组合键发送测试");
     fireEvent.keyDown(composer, { key: "Enter", code: "Enter", ctrlKey: true });
-    expect(composer).toHaveValue("");
     expect(await screen.findByText("组合键发送测试")).toBeInTheDocument();
+    await waitFor(() => expect(composer).toHaveValue(""));
   });
 
   /**

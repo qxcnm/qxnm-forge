@@ -95,7 +95,7 @@ impl Provider for AzureOpenAiResponsesProvider {
                 .post(endpoint.clone())
                 .header(CONTENT_TYPE, "application/json")
                 .header("api-key", api_key)
-                .json(&request_body(&request)),
+                .json(&request_body(&request)?),
             &cancellation,
         )
         .await?;
@@ -129,18 +129,18 @@ impl Provider for AzureOpenAiResponsesProvider {
 /// 输入：包含历史消息、工具结果、工具定义及模型部署名的 ProviderRequest。
 /// 输出：兼容 Responses wire 且包含 `store:false` 的 JSON 对象。
 /// 不变量：工具顺序保持，工具 schema 使用非严格模式以兼容冻结 reference 行为。
-/// 失败：映射为纯内存操作，不返回错误。
+/// 失败：请求包含未复核图片引用时返回脱敏输入错误。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
-fn request_body(request: &ProviderRequest) -> Value {
-    let mut body = openai_responses::request_body(request);
+fn request_body(request: &ProviderRequest) -> Result<Value, AgentError> {
+    let mut body = openai_responses::request_body(request)?;
     body["store"] = Value::Bool(false);
     if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
         for tool in tools {
             tool["strict"] = Value::Bool(false);
         }
     }
-    body
+    Ok(body)
 }
 
 /// 功能：验证 Azure API version 只含有限 ASCII 标识字符且长度有界。
@@ -246,7 +246,9 @@ mod tests {
             max_output_tokens: None,
             session_id: None,
             run_id: None,
-        });
+            resolved_images: Vec::new(),
+        })
+        .expect("text-only request must serialize");
         assert_eq!(body["store"], false);
         assert_eq!(body["tools"][0]["name"], "file.read");
         assert_eq!(body["tools"][0]["strict"], false);

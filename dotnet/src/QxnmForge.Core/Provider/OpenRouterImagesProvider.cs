@@ -156,6 +156,20 @@ public sealed class OpenRouterImagesProvider : HttpSseProviderBase
     public override string ApiFamily => "openrouter-images";
 
     /// <summary>
+    /// 功能：声明 OpenRouter Images 接受已复核图片输入。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public override bool SupportsImageInput => true;
+
+    /// <summary>
+    /// 功能：声明 OpenRouter Images 产生严格验证的图片完成结果。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public override bool SupportsImageOutput => true;
+
+    /// <summary>
     /// 功能：取得 v1 冻结的三十五个 OpenRouter 图像模型。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com

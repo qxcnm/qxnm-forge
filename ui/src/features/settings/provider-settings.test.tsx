@@ -94,6 +94,11 @@ describe("ProviderSettings secret import boundary", () => {
     expect(screen.getByLabelText("Base URL")).toHaveValue(
       "https://api.example.invalid/v1",
     );
+    expect(
+      screen.getByText(
+        "图片输出需单独保存 Image Key；即使与上方 Key 相同，也请在这里重新输入。",
+      ),
+    ).toBeInTheDocument();
   });
 
   /**
@@ -212,6 +217,46 @@ describe("ProviderSettings secret import boundary", () => {
   });
 
   /**
+   * 验证 Responses 与 Image Key 从两个独立密码框提交，不会互相复制或回退。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("submits responses and image credentials independently", async () => {
+    const service = createApplicationServiceClient("rust");
+    const setProviderCredential = vi.spyOn(service, "setProviderCredential");
+    renderProviderSettings({ service });
+
+    fireEvent.click(await screen.findByRole("button", { name: "配置 OpenAI" }));
+    fireEvent.change(screen.getByLabelText("模型 ID"), {
+      target: { value: "image-capable-model" },
+    });
+    fireEvent.change(screen.getByLabelText("Responses / Chat API Key"), {
+      target: { value: "responses-canary" },
+    });
+    fireEvent.change(screen.getByLabelText("Image API Key"), {
+      target: { value: "image-canary" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(setProviderCredential).toHaveBeenCalledTimes(2));
+    expect(setProviderCredential).toHaveBeenNthCalledWith(
+      1,
+      "custom-openai",
+      "responses",
+      "responses-canary",
+    );
+    expect(setProviderCredential).toHaveBeenNthCalledWith(
+      2,
+      "custom-openai",
+      "image",
+      "image-canary",
+    );
+    expect(screen.getByLabelText("Responses / Chat API Key")).toHaveValue("");
+    expect(screen.getByLabelText("Image API Key")).toHaveValue("");
+  });
+
+  /**
    * 验证桌面 capability 可把空模型连接、瞬时凭据与显式发现串成一次保存流程。
    *
    * 作者：高宏顺
@@ -233,6 +278,8 @@ describe("ProviderSettings secret import boundary", () => {
             apiFamily: "openai-completions",
             modelIds: ["model-a", "model-b"],
             supportsTools: false,
+            supportsImageInput: false,
+            supportsImageOutput: false,
             logoAssetId: "newapi-gzxsy",
             enabled: true,
             credentialConfigured: true,

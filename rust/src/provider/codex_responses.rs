@@ -87,7 +87,7 @@ impl Provider for OpenAiCodexResponsesProvider {
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .header("OpenAI-Beta", "responses=experimental")
                 .header("originator", "qxnm-forge")
-                .json(&request_body(&request)),
+                .json(&request_body(&request)?),
             &cancellation,
         )
         .await?;
@@ -121,13 +121,13 @@ impl Provider for OpenAiCodexResponsesProvider {
 /// 输入：公共消息、工具、模型及可选输出限制。
 /// 输出：包含 `model/input/stream/store:false` 的 Responses JSON。
 /// 不变量：工具定义顺序和 Schema 保持不变；模型只来自显式 run/start 选择。
-/// 失败：纯内存映射不返回错误。
+/// 失败：请求包含未复核图片引用时返回脱敏输入错误。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
-fn request_body(request: &ProviderRequest) -> Value {
-    let mut body = openai_responses::request_body(request);
+fn request_body(request: &ProviderRequest) -> Result<Value, AgentError> {
+    let mut body = openai_responses::request_body(request)?;
     body["store"] = Value::Bool(false);
-    body
+    Ok(body)
 }
 
 /// 功能：验证 Codex SSE 的命名事件与 JSON `type` 一致后复用 Responses 归一化器。
@@ -206,7 +206,9 @@ mod tests {
             max_output_tokens: None,
             session_id: None,
             run_id: None,
-        });
+            resolved_images: Vec::new(),
+        })
+        .expect("text-only request must serialize");
         assert_eq!(body["stream"], true);
         assert_eq!(body["store"], false);
 

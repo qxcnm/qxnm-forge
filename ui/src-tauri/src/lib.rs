@@ -53,6 +53,7 @@ fn runtime_environment() -> RuntimeEnvironment {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(ApplicationServiceBridge::default())
         .invoke_handler(tauri::generate_handler![
             runtime_environment,

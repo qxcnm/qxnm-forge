@@ -65,6 +65,8 @@ interface ProviderDraft {
   readonly apiFamily: "openai-responses" | "openai-completions";
   readonly modelIdsText: string;
   readonly supportsTools: boolean;
+  readonly supportsImageInput: boolean;
+  readonly supportsImageOutput: boolean;
   readonly logoAssetId: string;
   readonly enabled: boolean;
 }
@@ -82,6 +84,8 @@ const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
   apiFamily: "openai-responses",
   modelIdsText: "",
   supportsTools: false,
+  supportsImageInput: false,
+  supportsImageOutput: false,
   logoAssetId: "newapi-gzxsy",
   enabled: true,
 };
@@ -103,6 +107,8 @@ function connectionToDraft(connection: ProviderConnection): ProviderDraft {
     apiFamily: connection.apiFamily,
     modelIdsText: connection.modelIds.join("\n"),
     supportsTools: connection.supportsTools,
+    supportsImageInput: connection.supportsImageInput,
+    supportsImageOutput: connection.supportsImageOutput,
     logoAssetId: connection.logoAssetId ?? "",
     enabled: connection.enabled,
   };
@@ -126,6 +132,8 @@ function draftToInput(draft: ProviderDraft): ProviderConnectionInput {
       .map((modelId) => modelId.trim())
       .filter(Boolean),
     supportsTools: draft.supportsTools,
+    supportsImageInput: draft.supportsImageInput,
+    supportsImageOutput: draft.supportsImageOutput,
     logoAssetId: draft.logoAssetId.trim() || null,
     enabled: draft.enabled,
   };
@@ -177,6 +185,8 @@ function parseConnectionImport(source: string): ImportedConnection {
       apiFamily: "openai-responses",
       modelIdsText: "",
       supportsTools: false,
+      supportsImageInput: false,
+      supportsImageOutput: false,
       logoAssetId: "newapi-gzxsy",
       enabled: true,
     },
@@ -390,6 +400,8 @@ export function ProviderSettings({
       apiFamily: preset.apiFamily,
       modelIdsText: "",
       supportsTools: false,
+      supportsImageInput: false,
+      supportsImageOutput: false,
       logoAssetId: preset.logoAssetId ?? "",
       enabled: true,
     });
@@ -1060,6 +1072,30 @@ export function ProviderSettings({
                 {t("provider.fields.supportsTools")}
               </Label>
             </div>
+            <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+              <Switch
+                id="provider-supports-image-input"
+                checked={draft.supportsImageInput}
+                onCheckedChange={(supportsImageInput) =>
+                  setDraft({ ...draft, supportsImageInput })
+                }
+              />
+              <Label htmlFor="provider-supports-image-input" className="text-[10px] font-normal">
+                {t("provider.fields.supportsImageInput")}
+              </Label>
+            </div>
+            <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+              <Switch
+                id="provider-supports-image-output"
+                checked={draft.supportsImageOutput}
+                onCheckedChange={(supportsImageOutput) =>
+                  setDraft({ ...draft, supportsImageOutput })
+                }
+              />
+              <Label htmlFor="provider-supports-image-output" className="text-[10px] font-normal">
+                {t("provider.fields.supportsImageOutput")}
+              </Label>
+            </div>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <div className="flex items-center justify-between gap-2">
@@ -1136,6 +1172,9 @@ export function ProviderSettings({
                 </Button>
               ) : null}
             </div>
+            <p className="text-[9px] leading-relaxed text-muted-foreground">
+              {t("provider.fields.imageApiKeyHint")}
+            </p>
           </div>
         </div>
 

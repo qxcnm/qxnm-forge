@@ -22,8 +22,11 @@ const MODEL: ModelDescriptor = {
   modelId: "faux-v1",
   apiFamily: "faux",
   displayName: "Faux v1",
+  capabilities: { input: ["text"], output: ["text"] },
   supportsReasoning: false,
   supportsTools: true,
+  supportsImageInput: false,
+  supportsImageOutput: false,
 };
 
 const REPLACEMENT_MODEL: ModelDescriptor = {
@@ -31,8 +34,11 @@ const REPLACEMENT_MODEL: ModelDescriptor = {
   modelId: "replacement-v1",
   apiFamily: "faux",
   displayName: "Replacement v1",
+  capabilities: { input: ["text"], output: ["text"] },
   supportsReasoning: false,
   supportsTools: false,
+  supportsImageInput: false,
+  supportsImageOutput: false,
 };
 
 const DISCOVERED_MODEL: ModelDescriptor = {
@@ -40,9 +46,29 @@ const DISCOVERED_MODEL: ModelDescriptor = {
   modelId: "discovered-model",
   apiFamily: "openai-completions",
   displayName: "Discovered model",
+  capabilities: { input: ["text"], output: ["text"] },
   supportsReasoning: false,
   supportsTools: true,
+  supportsImageInput: false,
+  supportsImageOutput: false,
 };
+
+const IMAGE_MODEL: ModelDescriptor = {
+  providerId: "image-provider",
+  modelId: "image-v1",
+  apiFamily: "openai-responses",
+  displayName: "Image v1",
+  capabilities: { input: ["text", "image"], output: ["text", "image"] },
+  supportsReasoning: false,
+  supportsTools: false,
+  supportsImageInput: true,
+  supportsImageOutput: true,
+};
+
+const TEST_IMAGE_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+const TEST_IMAGE_BASE64 = "iVBORw0KGgo=";
+const TEST_IMAGE_SHA256 =
+  "4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6";
 
 const METHODS = [
   "initialize",
@@ -128,6 +154,7 @@ function createTestService(
     initialize: overrides.initialize ?? base.initialize.bind(base),
     listModels: overrides.listModels ?? base.listModels.bind(base),
     createArtifact: overrides.createArtifact ?? base.createArtifact.bind(base),
+    readArtifact: overrides.readArtifact ?? base.readArtifact.bind(base),
     startRun: overrides.startRun ?? base.startRun.bind(base),
     cancelRun: overrides.cancelRun ?? base.cancelRun.bind(base),
     respondToApproval:
@@ -281,6 +308,54 @@ const EMPTY_LIVE_CHAT_SNAPSHOT: SessionSnapshot = {
   latestSeq: 0,
   activeRunId: null,
   messages: [],
+  events: [],
+};
+
+const IMAGE_OUTPUT_SESSION: SessionSummary = {
+  sessionId: "image-output-session",
+  title: "图片输出闭环",
+  project: "测试工作区",
+  updatedAt: "2026-07-22T07:00:00Z",
+  archived: false,
+};
+
+const VALID_OUTPUT_ARTIFACT = {
+  artifactId: "artifact-output-valid",
+  mediaType: "image/png",
+  byteLength: TEST_IMAGE_BYTES.length,
+  sha256: TEST_IMAGE_SHA256,
+  displayName: "模型生成图片.png",
+} as const;
+
+const BROKEN_OUTPUT_ARTIFACT = {
+  ...VALID_OUTPUT_ARTIFACT,
+  artifactId: "artifact-output-broken",
+  displayName: "损坏图片.png",
+} as const;
+
+const IMAGE_OUTPUT_SNAPSHOT: SessionSnapshot = {
+  sessionId: IMAGE_OUTPUT_SESSION.sessionId,
+  latestSeq: 0,
+  activeRunId: null,
+  messages: [
+    {
+      messageId: "image-assistant",
+      role: "assistant",
+      content: [
+        { type: "text", text: "图片结果文本仍然可见" },
+        { type: "image_ref", artifact: VALID_OUTPUT_ARTIFACT, alt: "模型生成图片" },
+        { type: "image_ref", artifact: BROKEN_OUTPUT_ARTIFACT, alt: "损坏图片" },
+      ],
+      provider: {
+        id: IMAGE_MODEL.providerId,
+        modelId: IMAGE_MODEL.modelId,
+        apiFamily: IMAGE_MODEL.apiFamily,
+      },
+      finishReason: "stop",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      time: "2026-07-22T07:00:01Z",
+    },
+  ],
   events: [],
 };
 
@@ -529,6 +604,294 @@ describe("App fail-closed boundaries", () => {
   });
 
   /**
+   * 验证仅文本模型在发布 artifact 前拒绝图片，并在切换 Session 时清理附件和错误。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("rejects images before upload for a text-only model", async () => {
+    const createArtifact = vi.fn<ApplicationServiceClient["createArtifact"]>();
+    const startRun = vi.fn<ApplicationServiceClient["startRun"]>();
+    const service = createTestService({
+      initialize: vi.fn().mockResolvedValue({
+        ...INITIALIZE_RESULT,
+        capabilities: {
+          ...INITIALIZE_RESULT.capabilities,
+          methods: [...METHODS, "artifacts/create"],
+        },
+      }),
+      listModels: vi.fn().mockResolvedValue([MODEL]),
+      listProfiles: vi.fn().mockResolvedValue([]),
+      createArtifact,
+      startRun,
+    });
+    renderTestApp(service);
+
+    await waitFor(() => expect(screen.getByLabelText("选择模型")).toBeEnabled());
+    const file = new File([TEST_IMAGE_BYTES], "text-only.png", {
+      type: "image/png",
+    });
+    Object.defineProperty(file, "arrayBuffer", {
+      value: () => Promise.resolve(TEST_IMAGE_BYTES.slice().buffer),
+    });
+    fireEvent.change(screen.getByLabelText("选择图片或文本文件"), {
+      target: { files: [file] },
+    });
+    expect(
+      await screen.findByLabelText("移除附件 text-only.png"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("发送任务"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "所选模型不支持图片输入",
+    );
+    expect(createArtifact).not.toHaveBeenCalled();
+    expect(startRun).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("移除附件 text-only.png")).toBeInTheDocument();
+
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: /统一后端能力协议/ }))[0],
+    );
+    await waitFor(() => {
+      expect(screen.queryByLabelText("移除附件 text-only.png")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+  });
+
+  /**
+   * 验证图片模型只在 run/start 接受后清空草稿与附件，拒绝时保留并允许重试。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("uploads image references and preserves the composer until run acceptance", async () => {
+    const firstRun = createDeferred<
+      Awaited<ReturnType<ApplicationServiceClient["startRun"]>>
+    >();
+    const createArtifact = vi
+      .fn<ApplicationServiceClient["createArtifact"]>()
+      .mockResolvedValue({ artifact: VALID_OUTPUT_ARTIFACT });
+    const startRun = vi
+      .fn<ApplicationServiceClient["startRun"]>()
+      .mockImplementationOnce(() => firstRun.promise)
+      .mockResolvedValue({ runId: "accepted-image-run" });
+    const service = createTestService({
+      initialize: vi.fn().mockResolvedValue({
+        ...INITIALIZE_RESULT,
+        capabilities: {
+          ...INITIALIZE_RESULT.capabilities,
+          methods: [...METHODS, "artifacts/create"],
+        },
+      }),
+      listModels: vi.fn().mockResolvedValue([IMAGE_MODEL]),
+      listProfiles: vi.fn().mockResolvedValue([]),
+      createArtifact,
+      startRun,
+    });
+    renderTestApp(service);
+
+    await waitFor(() => expect(screen.getByLabelText("选择模型")).toBeEnabled());
+    const file = new File([TEST_IMAGE_BYTES], "input.png", { type: "image/png" });
+    Object.defineProperty(file, "arrayBuffer", {
+      value: () => Promise.resolve(TEST_IMAGE_BYTES.slice().buffer),
+    });
+    fireEvent.change(screen.getByLabelText("选择图片或文本文件"), {
+      target: { files: [file] },
+    });
+    expect(await screen.findByLabelText("移除附件 input.png")).toBeInTheDocument();
+    const composer = screen.getByLabelText("任务消息");
+    fireEvent.change(composer, { target: { value: "分析这张图片" } });
+    fireEvent.click(screen.getByLabelText("发送任务"));
+
+    await waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+    expect(createArtifact).toHaveBeenCalledWith({
+      sessionId: "desktop-shell",
+      mediaType: "image/png",
+      dataBase64: TEST_IMAGE_BASE64,
+    });
+    expect(startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "分析这张图片",
+        attachments: [
+          {
+            type: "image_ref",
+            artifact: VALID_OUTPUT_ARTIFACT,
+            alt: "input.png",
+          },
+        ],
+      }),
+    );
+    expect(composer).toHaveValue("分析这张图片");
+    expect(screen.getByLabelText("移除附件 input.png")).toBeInTheDocument();
+
+    act(() => firstRun.reject(new Error("run rejected")));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "任务未被服务接受；草稿与附件已保留",
+    );
+    expect(composer).toHaveValue("分析这张图片");
+    expect(screen.getByLabelText("移除附件 input.png")).toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByLabelText("发送任务")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("发送任务"));
+    expect(await screen.findByText(/分析这张图片/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(composer).toHaveValue("");
+      expect(screen.queryByLabelText("移除附件 input.png")).not.toBeInTheDocument();
+    });
+    expect(createArtifact).toHaveBeenCalledTimes(2);
+    expect(startRun).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * 验证 durable assistant 图片只在 MIME、签名和摘要通过时显示，失败图片不遮蔽文本。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("renders verified assistant images and isolates artifact read failures", async () => {
+    const readArtifact = vi
+      .fn<ApplicationServiceClient["readArtifact"]>()
+      .mockImplementation((input) =>
+        input.artifactId === VALID_OUTPUT_ARTIFACT.artifactId
+          ? Promise.resolve({
+              artifact: VALID_OUTPUT_ARTIFACT,
+              dataBase64: TEST_IMAGE_BASE64,
+            })
+          : Promise.reject(new Error("artifact unavailable")),
+      );
+    const service = createTestService({
+      mode: "application-service",
+      initialize: vi.fn().mockResolvedValue({
+        ...INITIALIZE_RESULT,
+        capabilities: {
+          ...INITIALIZE_RESULT.capabilities,
+          methods: [...METHODS, "artifacts/read"],
+        },
+      }),
+      listModels: vi.fn().mockResolvedValue([IMAGE_MODEL]),
+      listProfiles: vi.fn().mockResolvedValue([]),
+      listSessions: vi.fn().mockResolvedValue([IMAGE_OUTPUT_SESSION]),
+      getSession: vi.fn().mockResolvedValue(IMAGE_OUTPUT_SNAPSHOT),
+      readArtifact,
+    });
+    useWorkspaceUiStore.setState({ activeSessionId: IMAGE_OUTPUT_SESSION.sessionId });
+    renderTestApp(service);
+
+    expect(await screen.findByText("图片结果文本仍然可见")).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "模型生成图片" })).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${TEST_IMAGE_BASE64}`,
+    );
+    expect(
+      await screen.findByText("图片无法安全读取，文本内容仍可查看"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("图片结果文本仍然可见")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "损坏图片" })).not.toBeInTheDocument();
+    expect(readArtifact).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * 验证 Session 图片预算从最新消息向前分配，旧图片不会抢占最新输出额度。
+   *
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  it("prioritizes the newest assistant images within the session byte budget", async () => {
+    const budgetSession: SessionSummary = {
+      ...IMAGE_OUTPUT_SESSION,
+      sessionId: "image-budget-session",
+      title: "图片预算",
+    };
+    const imageByteLength = 32 * 1_024 * 1_024;
+    const budgetSnapshot: SessionSnapshot = {
+      sessionId: budgetSession.sessionId,
+      latestSeq: 0,
+      activeRunId: null,
+      messages: [
+        {
+          messageId: "image-old",
+          role: "assistant",
+          content: [{
+            type: "image_ref",
+            artifact: {
+              artifactId: "artifact-old",
+              mediaType: "image/png",
+              byteLength: imageByteLength,
+              sha256: "1".repeat(64),
+            },
+          }],
+          provider: { id: "faux", modelId: "faux-v1", apiFamily: "faux" },
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          time: "2026-07-22T08:00:01Z",
+        },
+        {
+          messageId: "image-middle",
+          role: "assistant",
+          content: [{
+            type: "image_ref",
+            artifact: {
+              artifactId: "artifact-middle",
+              mediaType: "image/png",
+              byteLength: imageByteLength,
+              sha256: "2".repeat(64),
+            },
+          }],
+          provider: { id: "faux", modelId: "faux-v1", apiFamily: "faux" },
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          time: "2026-07-22T08:00:02Z",
+        },
+        {
+          messageId: "image-new",
+          role: "assistant",
+          content: [{
+            type: "image_ref",
+            artifact: {
+              artifactId: "artifact-new",
+              mediaType: "image/png",
+              byteLength: imageByteLength,
+              sha256: "3".repeat(64),
+            },
+          }],
+          provider: { id: "faux", modelId: "faux-v1", apiFamily: "faux" },
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          time: "2026-07-22T08:00:03Z",
+        },
+      ],
+      events: [],
+    };
+    const readArtifact = vi
+      .fn<ApplicationServiceClient["readArtifact"]>()
+      .mockRejectedValue(new Error("skip payload in budget test"));
+    const service = createTestService({
+      mode: "application-service",
+      initialize: vi.fn().mockResolvedValue({
+        ...INITIALIZE_RESULT,
+        capabilities: {
+          ...INITIALIZE_RESULT.capabilities,
+          methods: [...METHODS, "artifacts/read"],
+        },
+      }),
+      listModels: vi.fn().mockResolvedValue([IMAGE_MODEL]),
+      listProfiles: vi.fn().mockResolvedValue([]),
+      listSessions: vi.fn().mockResolvedValue([budgetSession]),
+      getSession: vi.fn().mockResolvedValue(budgetSnapshot),
+      readArtifact,
+    });
+    useWorkspaceUiStore.setState({ activeSessionId: budgetSession.sessionId });
+    renderTestApp(service);
+
+    await waitFor(() => expect(readArtifact).toHaveBeenCalledTimes(2));
+    const readArtifactIds = readArtifact.mock.calls.map(
+      ([input]) => input.artifactId,
+    );
+    expect(readArtifactIds).toEqual(["artifact-middle", "artifact-new"]);
+    expect(readArtifactIds).not.toContain("artifact-old");
+  });
+
+  /**
    * 验证重新握手进行中和失败后不会继续使用旧模型或运行能力，并可显式重试。
    *
    * 作者：高宏顺
@@ -668,6 +1031,8 @@ describe("App fail-closed boundaries", () => {
       apiFamily: "openai-completions" as const,
       modelIds: [] as readonly string[],
       supportsTools: false,
+      supportsImageInput: false,
+      supportsImageOutput: false,
       logoAssetId: "newapi-gzxsy",
       enabled: true,
       credentialConfigured: false,
@@ -866,6 +1231,8 @@ describe("App fail-closed boundaries", () => {
           apiFamily: "openai-completions",
           modelIds: ["manual-rust-model"],
           supportsTools: false,
+          supportsImageInput: false,
+          supportsImageOutput: false,
           logoAssetId: "newapi-gzxsy",
           enabled: true,
           credentialConfigured: false,
@@ -917,6 +1284,8 @@ describe("App fail-closed boundaries", () => {
       apiFamily: "openai-completions" as const,
       modelIds: [] as readonly string[],
       supportsTools: false,
+      supportsImageInput: false,
+      supportsImageOutput: false,
       logoAssetId: "newapi-gzxsy",
       enabled: true,
       credentialConfigured: false,

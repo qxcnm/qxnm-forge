@@ -354,6 +354,35 @@ artifact-first ordering and byte non-disclosure. The clean-room evidence and
 full decisions are frozen in
 [ADR 0015](adr/0015-openrouter-images-artifact-conformance.md).
 
+## 自定义 OpenAI-compatible 图片 v0.3
+
+ADR 0029 的自定义 `openai-responses` 与 `openai-completions` 连接可以逐方向显式声明图片能力，
+但不会因此成为新的 API family。输入 `image_ref` 仍先由 Agent 从同 Session artifact 安全解析；
+Responses 将每张图片映射为 `input_image.image_url`，Chat Completions 映射为
+`image_url.url`。两个 transport 都只发送 request-local canonical data URL，不发送宿主路径或
+远程 URL，也不根据模型名称猜测能力。
+
+有效图片输出（显式声明且独立 Image credential 可用）把对应 route 固定为非流式模式并把
+descriptor `tools` 强制为 false；持久化 `supportsTools` 不变，Agent function-tool 集合必须为空。
+Responses 请求精确发送 `stream:false` 与 `tools:[{"type":"image_generation"}]`；Chat
+Completions 请求精确发送 `stream:false` 与 `modalities:["text","image"]`，两者都不得混入
+function-tool 定义。Responses 仅接受
+`output[].type == "image_generation_call"` 的 PNG Base64 `result`；Chat Completions 仅接受
+`choices[0].message.images[].image_url.url` 的 PNG/JPEG/WebP/GIF canonical data URL。两种响应
+最多八张、解码总计 4 MiB、HTTP JSON 最多 6 MiB。strict JSON、整个图片批次、MIME 与魔数都
+验证成功后才产生一个图片完成信号；合法文字可作为同一完成的说明。Agent 将图片 durable 发布为
+artifact，并只把 `image_ref` 放入 assistant message；Provider Base64/data URL 不进入事件。
+Responses 非流式对象必须同时具有非空 `id`、顶层 `status:"completed"` 和 `output` 数组，完整
+completed 后才产生 `stop`。Chat 响应包含图片时原始 `finish_reason` 必须精确为 `"stop"`；纯文本
+完成继续按既有 Chat 规则归一化 finish reason。
+
+图片输出还要求独立 Image credential。启动快照在缺少该 key 时只移除 `image` output，不移除仍
+有 Responses credential 的文字或图片输入 route，并让原 `supportsTools` 声明重新决定工具广告；
+请求边界不得把 Responses key、环境变量、
+Codex credential 或其它 Provider secret 作为 Image key 回退。该切面当前只有本语言 loopback
+与静态 Schema 证据时登记为 `implemented`；没有共同双实现动态 runner 或真实服务门禁时不得称为
+`conformant` 或 `live-verified`。
+
 ## Faux provider
 
 `faux` / `faux-v1` is deterministic and makes no network request. It is a test

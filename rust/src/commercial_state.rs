@@ -7,11 +7,15 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(windows)]
 use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
 
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{SecondsFormat, Utc};
 use fs2::FileExt as _;
 use reqwest::Url;
@@ -30,9 +34,17 @@ use crate::sponsored_catalog::{SponsoredProviderCatalog, SponsoredProviderEntry}
 
 const SCHEMA_VERSION: &str = "0.1";
 const MAX_CREDENTIAL_STORE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_CREDENTIAL_COUNT: usize = 128;
+const MAX_CREDENTIAL_BYTES: usize = 16_384;
+const CREDENTIAL_DIRECTORY_NAME: &str = "provider-credentials.d";
+const CREDENTIAL_MIGRATION_DIRECTORY_NAME: &str = ".provider-credentials.d.migrating";
+const LEGACY_CREDENTIAL_FILE_NAME: &str = "provider-credentials.json";
+const CREDENTIAL_LEAF_SUFFIX: &str = ".credential";
 const MAX_INSTALLATION_BYTES: usize = 512 * 1024;
 #[cfg(windows)]
 const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+#[cfg(windows)]
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 
 /// 在作用域结束时显式释放跨进程商业状态 writer lock。
 struct CommercialFileLock(File);
@@ -89,15 +101,18 @@ struct InstalledRouteDocument {
 #[derive(Clone)]
 pub struct ProviderCredentialStore {
     root: PathBuf,
+    #[cfg(test)]
+    request_read_count: Arc<AtomicUsize>,
 }
 
 impl ProviderCredentialStore {
     /// 功能：创建或打开工作区外 CredentialStore，并建立私有目录。
     ///
     /// 输入：用户状态根和当前 canonical workspace。
-    /// 输出：只保存固定状态路径的 store 句柄。
-    /// 不变量：credential 根 canonical 后不得位于 workspace 内；Unix 目录权限收窄到 0700。
-    /// 失败：目录、canonical 路径、权限或边界验证失败时不读取或写入 secret。
+    /// 输出：完成必要格式升级、只保存固定状态路径的 store 句柄。
+    /// 不变量：credential 根 canonical 后不得位于 workspace 内；Unix 目录权限收窄到 0700；
+    /// v0.1 聚合文件仅在最终逐条目录不存在时于独占锁内读取一次并原子迁移，常规启动 presence 检查不打开任何 secret 叶文件。
+    /// 失败：目录、canonical 路径、权限、迁移或边界验证失败时不返回半迁移 store。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     pub fn new(state_root: impl Into<PathBuf>, workspace: &Path) -> Result<Self, AgentError> {
@@ -117,111 +132,147 @@ impl ProviderCredentialStore {
                 "CredentialStore 必须位于 workspace 外",
             ));
         }
-        Ok(Self { root })
+        let store = Self {
+            root: canonical_root,
+            #[cfg(test)]
+            request_read_count: Arc::new(AtomicUsize::new(0)),
+        };
+        let _lock = store.acquire_lock()?;
+        store.ensure_current_layout_unlocked()?;
+        Ok(store)
     }
 
     /// 功能：从调用方内存写入或轮换一个 Provider API key。
     ///
     /// 输入：合法 Provider ID 和只从 stdin 获得的非空 key。
-    /// 输出：独占锁内原子发布排序后的敏感 JSON。
-    /// 不变量：Unix 文件权限为 0600；值不进入错误、日志或返回对象。
-    /// 失败：ID/key、锁、symlink、权限、JSON 或原子写入失败时安全拒绝。
+    /// 输出：独占锁内原子发布单个敏感叶文件。
+    /// 不变量：Provider ID 仅以 canonical base64url 文件名出现；Unix 文件权限为 0600；值不进入错误、日志或返回对象。
+    /// 失败：ID/key、容量、锁、symlink、权限或原子写入失败时安全拒绝并保留旧叶。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     pub fn set(&self, provider_id: &str, api_key: &str) -> Result<(), AgentError> {
         validate_provider_id(provider_id)?;
         validate_api_key(api_key)?;
         let _lock = self.acquire_lock()?;
-        let mut document = self.read_document_unlocked()?;
-        if let Some(existing) = document
-            .credentials
-            .iter_mut()
-            .find(|entry| entry.provider_id == provider_id)
+        self.ensure_current_layout_unlocked()?;
+        let configured = self.list_unlocked()?;
+        if !configured.iter().any(|item| item == provider_id)
+            && configured.len() >= MAX_CREDENTIAL_COUNT
         {
-            existing.api_key = api_key.to_owned();
-        } else {
-            document.credentials.push(StoredCredential {
-                provider_id: provider_id.to_owned(),
-                api_key: api_key.to_owned(),
-            });
+            return Err(commercial_error(
+                "credential_shape",
+                "CredentialStore 条目超过上限",
+            ));
         }
-        document
-            .credentials
-            .sort_by(|left, right| left.provider_id.cmp(&right.provider_id));
-        self.write_document_unlocked(&document)
+        self.write_credential_leaf_unlocked(provider_id, api_key)
     }
 
     /// 功能：列出拥有本地 stored credential 的 Provider ID。
     ///
     /// 输入：当前 store 固定路径。
     /// 输出：按 ordinal 升序、不含 secret 的 ID 数组。
-    /// 不变量：即使序列化也不会返回 apiKey。
-    /// 失败：锁、symlink、权限或文档损坏时失败关闭。
+    /// 不变量：只枚举、解码并验证 canonical 叶名与文件元数据，绝不打开或反序列化 secret 正文。
+    /// 失败：锁、目录、叶名、symlink/reparse、权限、数量或元数据异常时失败关闭。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     pub fn list(&self) -> Result<Vec<String>, AgentError> {
         let _lock = self.acquire_lock()?;
-        Ok(self
-            .read_document_unlocked()?
-            .credentials
-            .into_iter()
-            .map(|entry| entry.provider_id)
-            .collect())
+        self.ensure_current_layout_unlocked()?;
+        self.list_unlocked()
     }
 
     /// 功能：移除一个 Provider credential，且不返回旧 secret。
     ///
     /// 输入：合法 Provider ID。
     /// 输出：存在并删除时 true，不存在时 false。
-    /// 不变量：更新始终在独占锁内发布；任何输出都不包含 key。
-    /// 失败：锁、文件安全、JSON 或写入失败时原状态保留。
+    /// 不变量：更新始终在独占锁内 no-follow 删除精确 canonical 叶并同步目录；任何输出都不包含 key。
+    /// 失败：锁、目录、文件安全、权限、删除或同步失败时安全拒绝。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     pub fn remove(&self, provider_id: &str) -> Result<bool, AgentError> {
         validate_provider_id(provider_id)?;
         let _lock = self.acquire_lock()?;
-        let mut document = self.read_document_unlocked()?;
-        let before = document.credentials.len();
-        document
-            .credentials
-            .retain(|entry| entry.provider_id != provider_id);
-        if document.credentials.len() == before {
-            return Ok(false);
-        }
-        self.write_document_unlocked(&document)?;
+        self.ensure_current_layout_unlocked()?;
+        let path = self.credential_path(provider_id);
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(_) => {
+                return Err(commercial_error(
+                    "file_metadata",
+                    "CredentialStore 叶文件元数据读取失败",
+                ));
+            }
+        };
+        validate_sensitive_regular_metadata(&metadata, MAX_CREDENTIAL_BYTES, false)?;
+        std::fs::remove_file(&path)
+            .map_err(|_| commercial_error("file_remove", "CredentialStore 叶文件删除失败"))?;
+        sync_directory(&self.credential_directory())?;
         Ok(true)
     }
 
-    /// 功能：在 Provider 请求边界读取指定 API key。
+    /// 功能：在 Provider 最终请求边界读取指定 API key 叶文件。
     ///
     /// 输入：固定本地 Provider ID。
-    /// 输出：仅由最终 HTTP header 构造局部持有的 key。
-    /// 不变量：stored source 读取失败或缺失时不回退环境变量。
-    /// 失败：锁、权限、文档或目标缺失时返回脱敏 ProviderUnavailable。
+    /// 输出：仅由最终 HTTP header 构造局部持有的 UTF-8 key。
+    /// 不变量：精确叶 no-follow 打开并复核 regular/reparse/owner/mode/长度；stored source 失败或缺失时不回退环境变量。
+    /// 失败：锁、目录、权限、叶名、正文 UTF-8/header 边界或目标缺失时返回脱敏 ProviderUnavailable。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     pub(crate) fn read_for_request(&self, provider_id: &str) -> Result<String, AgentError> {
         validate_provider_id(provider_id).map_err(|_| provider_unavailable())?;
         let _lock = self.acquire_lock().map_err(|_| provider_unavailable())?;
-        self.read_document_unlocked()
-            .map_err(|_| provider_unavailable())?
-            .credentials
-            .into_iter()
-            .find(|entry| entry.provider_id == provider_id)
-            .map(|entry| entry.api_key)
-            .ok_or_else(provider_unavailable)
+        self.ensure_current_layout_unlocked()
+            .map_err(|_| provider_unavailable())?;
+        #[cfg(test)]
+        self.request_read_count.fetch_add(1, Ordering::SeqCst);
+        let bytes = read_secure_file(
+            &self.credential_path(provider_id),
+            MAX_CREDENTIAL_BYTES,
+            true,
+        )
+        .map_err(|_| provider_unavailable())?;
+        let credential = String::from_utf8(bytes).map_err(|_| provider_unavailable())?;
+        validate_api_key(&credential).map_err(|_| provider_unavailable())?;
+        Ok(credential)
     }
 
-    /// 功能：只判断指定 stored credential 当前能否安全读取。
+    /// 功能：只根据 canonical 叶路径及安全元数据判断 stored credential presence。
     ///
     /// 输入：固定本地 Provider ID。
-    /// 输出：存在且整个 store 仍满足安全不变量时 true。
-    /// 不变量：不缓存、不回显也不返回 credential 值。
-    /// 失败：任何读取失败安全映射为 false。
+    /// 输出：目标叶存在且满足 regular/reparse/owner/mode/长度不变量时 true。
+    /// 不变量：本方法不打开叶文件、不读取或反序列化 credential 正文。
+    /// 失败：任何 ID、锁、迁移、目录或元数据异常安全映射为 false。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     pub(crate) fn contains(&self, provider_id: &str) -> bool {
-        self.read_for_request(provider_id).is_ok()
+        if validate_provider_id(provider_id).is_err() {
+            return false;
+        }
+        let Ok(_lock) = self.acquire_lock() else {
+            return false;
+        };
+        if self.ensure_current_layout_unlocked().is_err() {
+            return false;
+        }
+        std::fs::symlink_metadata(self.credential_path(provider_id))
+            .map_err(AgentError::from)
+            .and_then(|metadata| {
+                validate_sensitive_regular_metadata(&metadata, MAX_CREDENTIAL_BYTES, false)
+            })
+            .is_ok()
+    }
+
+    /// 功能：返回测试期间实际进入 secret 叶读取边界的次数。
+    ///
+    /// 输出：当前 clone 集合共享的单调计数。
+    /// 不变量：list/contains/runtime snapshot 不增加；仅 `read_for_request` 在打开叶文件前增加。
+    /// 失败：本方法不执行 I/O 且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[cfg(test)]
+    pub(crate) fn request_read_count_for_test(&self) -> usize {
+        self.request_read_count.load(Ordering::SeqCst)
     }
 
     /// 功能：以 create-new lock file 获取一次非阻塞独占文件锁。
@@ -237,38 +288,297 @@ impl ProviderCredentialStore {
         Ok(CommercialFileLock(file))
     }
 
-    /// 功能：在调用方持有独占锁时读取并验证完整 credential 文档。
+    /// 功能：返回 v0.2 逐 credential 私有叶目录的固定路径。
+    ///
+    /// 输出：只由 canonical state root 与常量 basename 组成的路径。
+    /// 不变量：不读取文件系统或 secret。
+    /// 失败：本方法不返回错误。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
-    fn read_document_unlocked(&self) -> Result<CredentialDocument, AgentError> {
-        let path = self.root.join("provider-credentials.json");
-        if !path.exists() {
-            return Ok(CredentialDocument {
-                schema_version: SCHEMA_VERSION.to_owned(),
-                credentials: Vec::new(),
-            });
-        }
-        let bytes = read_secure_file(&path, MAX_CREDENTIAL_STORE_BYTES, true)?;
-        let document: CredentialDocument = parse_strict_json(&bytes, "credential_json")?;
-        validate_credential_document(&document)?;
-        Ok(document)
+    fn credential_directory(&self) -> PathBuf {
+        self.root.join(CREDENTIAL_DIRECTORY_NAME)
     }
 
-    /// 功能：在调用方持有独占锁时以敏感权限原子发布 credential 文档。
+    /// 功能：把已验证 Provider ID 映射为 canonical base64url 敏感叶路径。
+    ///
+    /// 输入：已通过受限 ASCII 校验的 Provider ID。
+    /// 输出：位于 v0.2 目录内、无 padding 的 URL-safe Base64 文件名。
+    /// 不变量：Windows 保留名、尾点和路径分隔符不能由编码结果产生；路径不含 secret。
+    /// 失败：调用方必须先验证 ID，本方法不执行 I/O。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
-    fn write_document_unlocked(&self, document: &CredentialDocument) -> Result<(), AgentError> {
-        validate_credential_document(document)?;
-        let mut bytes = serde_json::to_vec(document)
-            .map_err(|_| commercial_error("credential_json", "CredentialStore 序列化失败"))?;
-        bytes.push(b'\n');
-        if bytes.len() > MAX_CREDENTIAL_STORE_BYTES {
+    fn credential_path(&self, provider_id: &str) -> PathBuf {
+        self.credential_directory()
+            .join(credential_leaf_name(provider_id))
+    }
+
+    /// 功能：在独占锁内确保 v0.2 目录为唯一权威，并完成一次性 v0.1 聚合文件迁移或遗留清理。
+    ///
+    /// 输出：存在且已验证的逐 credential 私有目录。
+    /// 不变量：最终目录存在时绝不解析 legacy 正文；最终目录缺失时才严格读取 v0.1，并通过私有 staging 全量同步后原子 rename。
+    /// 失败：路径、权限、legacy JSON、叶写入、同步、rename 或清理异常时失败关闭；legacy 在最终目录发布前保持权威。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn ensure_current_layout_unlocked(&self) -> Result<(), AgentError> {
+        let directory = self.credential_directory();
+        match std::fs::symlink_metadata(&directory) {
+            Ok(metadata) => {
+                validate_private_directory_metadata(&metadata)?;
+                self.remove_legacy_after_publication_unlocked()?;
+                self.cleanup_orphaned_leaf_temporaries_unlocked()?;
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(commercial_error(
+                    "directory",
+                    "CredentialStore 目录元数据读取失败",
+                ));
+            }
+        }
+
+        self.cleanup_migration_directory_unlocked()?;
+        let legacy_path = self.root.join(LEGACY_CREDENTIAL_FILE_NAME);
+        match std::fs::symlink_metadata(&legacy_path) {
+            Ok(_) => self.migrate_legacy_document_unlocked(&legacy_path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                create_private_directory(&directory)?;
+                sync_directory(&self.root)
+            }
+            Err(_) => Err(commercial_error(
+                "file_metadata",
+                "CredentialStore legacy 元数据读取失败",
+            )),
+        }
+    }
+
+    /// 功能：只枚举并验证 v0.2 叶名和安全元数据，投影排序后的 Provider ID。
+    ///
+    /// 输出：最多 128 个 canonical Provider ID。
+    /// 不变量：不打开任何叶文件；未知文件、非 canonical 编码或不安全元数据使整个列表失败关闭。
+    /// 失败：目录枚举、文件名、ID、数量、类型、owner/mode 或长度异常时返回脱敏错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn list_unlocked(&self) -> Result<Vec<String>, AgentError> {
+        let directory = self.credential_directory();
+        let metadata = std::fs::symlink_metadata(&directory)
+            .map_err(|_| commercial_error("directory", "CredentialStore 目录无效"))?;
+        validate_private_directory_metadata(&metadata)?;
+        let mut provider_ids = Vec::new();
+        for entry in std::fs::read_dir(&directory)
+            .map_err(|_| commercial_error("directory_read", "CredentialStore 目录读取失败"))?
+        {
+            let entry = entry
+                .map_err(|_| commercial_error("directory_read", "CredentialStore 目录读取失败"))?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| commercial_error("credential_leaf", "CredentialStore 叶名无效"))?;
+            let provider_id = provider_id_from_credential_leaf_name(&name)?;
+            let leaf_metadata = std::fs::symlink_metadata(entry.path()).map_err(|_| {
+                commercial_error("file_metadata", "CredentialStore 叶文件元数据读取失败")
+            })?;
+            validate_sensitive_regular_metadata(&leaf_metadata, MAX_CREDENTIAL_BYTES, false)?;
+            provider_ids.push(provider_id);
+            if provider_ids.len() > MAX_CREDENTIAL_COUNT {
+                return Err(commercial_error(
+                    "credential_shape",
+                    "CredentialStore 条目超过上限",
+                ));
+            }
+        }
+        provider_ids.sort();
+        if provider_ids.windows(2).any(|items| items[0] == items[1]) {
             return Err(commercial_error(
-                "credential_shape",
-                "CredentialStore 文档超过大小上限",
+                "credential_duplicate",
+                "CredentialStore Provider ID 重复",
             ));
         }
-        atomic_write(&self.root.join("provider-credentials.json"), &bytes, true)
+        Ok(provider_ids)
+    }
+
+    /// 功能：在独占锁内以根目录临时文件原子写入或轮换一个 v0.2 credential 叶。
+    ///
+    /// 输入：已验证 Provider ID 与 header-safe UTF-8 key。
+    /// 输出：目标叶及其目录 durable 后成功。
+    /// 不变量：临时文件固定 0600 且位于同一文件系统；目标既有条目必须是安全普通文件；失败保留旧叶并尽力清理临时文件。
+    /// 失败：目标元数据、临时创建、写入、同步、rename 或目录同步异常时返回脱敏错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn write_credential_leaf_unlocked(
+        &self,
+        provider_id: &str,
+        api_key: &str,
+    ) -> Result<(), AgentError> {
+        let directory = self.credential_directory();
+        let path = self.credential_path(provider_id);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                validate_sensitive_regular_metadata(&metadata, MAX_CREDENTIAL_BYTES, false)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(commercial_error(
+                    "file_metadata",
+                    "CredentialStore 叶文件元数据读取失败",
+                ));
+            }
+        }
+        let temporary = self
+            .root
+            .join(format!(".provider-credential-{}.tmp", Uuid::new_v4()));
+        let result = (|| {
+            write_new_sensitive_file(&temporary, api_key.as_bytes())?;
+            atomic_replace_credential_leaf(&temporary, &path)
+                .map_err(|_| commercial_error("file_publish", "CredentialStore 叶文件发布失败"))?;
+            sync_directory(&directory)?;
+            sync_directory(&self.root)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+            let _ = sync_directory(&self.root);
+        }
+        result
+    }
+
+    /// 功能：把唯一权威的 legacy v0.1 聚合文档迁移为 v0.2 逐 credential 叶目录。
+    ///
+    /// 输入：固定 legacy 文件路径；调用方持有全局 credential lock 且最终目录不存在。
+    /// 输出：全部叶、staging、最终 rename 与父目录均同步，随后 legacy 文件删除并同步。
+    /// 不变量：所有 legacy 字段先严格验证；发布前 legacy 始终权威；发布后最终目录唯一权威，删除失败可由下次启动只按元数据重试。
+    /// 失败：legacy 安全读取/JSON、staging、叶写入、同步、rename 或删除失败时返回脱敏错误，不把 key 放入错误或日志。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn migrate_legacy_document_unlocked(&self, legacy_path: &Path) -> Result<(), AgentError> {
+        let bytes = read_secure_file(legacy_path, MAX_CREDENTIAL_STORE_BYTES, true)?;
+        let document: CredentialDocument = parse_strict_json(&bytes, "credential_json")?;
+        validate_credential_document(&document)?;
+        let staging = self.root.join(CREDENTIAL_MIGRATION_DIRECTORY_NAME);
+        create_private_directory(&staging)?;
+        let result = (|| {
+            for entry in &document.credentials {
+                write_new_sensitive_file(
+                    &staging.join(credential_leaf_name(&entry.provider_id)),
+                    entry.api_key.as_bytes(),
+                )?;
+            }
+            sync_directory(&staging)?;
+            std::fs::rename(&staging, self.credential_directory()).map_err(|_| {
+                commercial_error("credential_migration", "CredentialStore 迁移发布失败")
+            })?;
+            sync_directory(&self.root)?;
+            std::fs::remove_file(legacy_path)
+                .map_err(|_| commercial_error("file_remove", "CredentialStore legacy 删除失败"))?;
+            sync_directory(&self.root)
+        })();
+        if result.is_err() {
+            let _ = self.cleanup_migration_directory_unlocked();
+        }
+        result
+    }
+
+    /// 功能：最终 v0.2 目录已存在时，仅按元数据清理遗留 legacy 聚合文件。
+    ///
+    /// 输出：legacy 不存在，且若发生删除则父目录已同步。
+    /// 不变量：绝不打开、读取或解析 legacy 正文；只删除固定路径的安全普通文件。
+    /// 失败：链接/reparse、类型、owner/mode、大小、删除或同步异常时失败关闭。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn remove_legacy_after_publication_unlocked(&self) -> Result<(), AgentError> {
+        let path = self.root.join(LEGACY_CREDENTIAL_FILE_NAME);
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => {
+                return Err(commercial_error(
+                    "file_metadata",
+                    "CredentialStore legacy 元数据读取失败",
+                ));
+            }
+        };
+        validate_sensitive_regular_metadata(&metadata, MAX_CREDENTIAL_STORE_BYTES, true)?;
+        std::fs::remove_file(&path)
+            .map_err(|_| commercial_error("file_remove", "CredentialStore legacy 删除失败"))?;
+        sync_directory(&self.root)
+    }
+
+    /// 功能：在最终目录尚未发布时安全清理上次崩溃遗留的固定 migration staging。
+    ///
+    /// 输出：staging 不存在且父目录已同步，或原本不存在。
+    /// 不变量：只删除 canonical credential 叶名对应的安全普通文件；未知条目和链接一律拒绝，不递归跟随。
+    /// 失败：目录/叶元数据、名称、权限、删除或同步异常时失败关闭。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn cleanup_migration_directory_unlocked(&self) -> Result<(), AgentError> {
+        let staging = self.root.join(CREDENTIAL_MIGRATION_DIRECTORY_NAME);
+        let metadata = match std::fs::symlink_metadata(&staging) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => {
+                return Err(commercial_error(
+                    "directory",
+                    "CredentialStore migration 目录无效",
+                ));
+            }
+        };
+        validate_private_directory_metadata(&metadata)?;
+        for entry in std::fs::read_dir(&staging).map_err(|_| {
+            commercial_error("directory_read", "CredentialStore migration 目录读取失败")
+        })? {
+            let entry = entry.map_err(|_| {
+                commercial_error("directory_read", "CredentialStore migration 目录读取失败")
+            })?;
+            let name = entry.file_name().into_string().map_err(|_| {
+                commercial_error("credential_leaf", "CredentialStore migration 叶名无效")
+            })?;
+            let _ = provider_id_from_credential_leaf_name(&name)?;
+            let leaf_metadata = std::fs::symlink_metadata(entry.path()).map_err(|_| {
+                commercial_error("file_metadata", "CredentialStore migration 叶元数据无效")
+            })?;
+            validate_sensitive_regular_metadata(&leaf_metadata, MAX_CREDENTIAL_BYTES, true)?;
+            std::fs::remove_file(entry.path()).map_err(|_| {
+                commercial_error("file_remove", "CredentialStore migration 叶删除失败")
+            })?;
+        }
+        std::fs::remove_dir(&staging).map_err(|_| {
+            commercial_error("directory_remove", "CredentialStore migration 目录删除失败")
+        })?;
+        sync_directory(&self.root)
+    }
+
+    /// 功能：清理同一全局锁下因进程崩溃遗留在 credential 根的敏感原子写临时文件。
+    ///
+    /// 输出：所有受控临时文件被删除并在需要时同步根目录。
+    /// 不变量：只匹配本实现固定前后缀并要求安全普通文件；其他状态项完全保留。
+    /// 失败：匹配项元数据、权限、删除或目录同步异常时失败关闭。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    fn cleanup_orphaned_leaf_temporaries_unlocked(&self) -> Result<(), AgentError> {
+        let mut removed = false;
+        for entry in std::fs::read_dir(&self.root)
+            .map_err(|_| commercial_error("directory_read", "CredentialStore 根目录读取失败"))?
+        {
+            let entry = entry.map_err(|_| {
+                commercial_error("directory_read", "CredentialStore 根目录读取失败")
+            })?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if !name.starts_with(".provider-credential-") || !name.ends_with(".tmp") {
+                continue;
+            }
+            let metadata = std::fs::symlink_metadata(entry.path()).map_err(|_| {
+                commercial_error("file_metadata", "CredentialStore 临时文件元数据无效")
+            })?;
+            validate_sensitive_regular_metadata(&metadata, MAX_CREDENTIAL_BYTES, true)?;
+            std::fs::remove_file(entry.path())
+                .map_err(|_| commercial_error("file_remove", "CredentialStore 临时文件删除失败"))?;
+            removed = true;
+        }
+        if removed {
+            sync_directory(&self.root)?;
+        }
+        Ok(())
     }
 }
 
@@ -569,7 +879,9 @@ fn route_from_entry(
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 fn validate_credential_document(document: &CredentialDocument) -> Result<(), AgentError> {
-    if document.schema_version != SCHEMA_VERSION || document.credentials.len() > 128 {
+    if document.schema_version != SCHEMA_VERSION
+        || document.credentials.len() > MAX_CREDENTIAL_COUNT
+    {
         return Err(commercial_error(
             "credential_shape",
             "CredentialStore 文档无效",
@@ -587,6 +899,51 @@ fn validate_credential_document(document: &CredentialDocument) -> Result<(), Age
         }
     }
     Ok(())
+}
+
+/// 功能：把合法 Provider ID 编码为跨平台 canonical credential 叶文件名。
+///
+/// 输入：已经通过受限 ASCII 语法校验的 Provider ID。
+/// 输出：URL-safe、无 padding 的 Base64 文件名及固定 `.credential` 后缀。
+/// 不变量：结果不含路径分隔符、Windows 保留 basename 或尾点；不包含 secret。
+/// 失败：调用方必须先验证 ID，本函数不执行 I/O。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn credential_leaf_name(provider_id: &str) -> String {
+    format!(
+        "{}{}",
+        URL_SAFE_NO_PAD.encode(provider_id.as_bytes()),
+        CREDENTIAL_LEAF_SUFFIX
+    )
+}
+
+/// 功能：从 credential 叶名严格恢复并复核 canonical Provider ID。
+///
+/// 输入：不可信目录项文件名。
+/// 输出：通过语法校验且重新编码完全一致的 Provider ID。
+/// 不变量：拒绝 padding、大小写/别名编码、非 UTF-8、未知后缀和路径语义；不读取文件正文。
+/// 失败：任何非 canonical 形状返回脱敏 credential_leaf 错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn provider_id_from_credential_leaf_name(name: &str) -> Result<String, AgentError> {
+    let encoded = name
+        .strip_suffix(CREDENTIAL_LEAF_SUFFIX)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| commercial_error("credential_leaf", "CredentialStore 叶名无效"))?;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| commercial_error("credential_leaf", "CredentialStore 叶名无效"))?;
+    let provider_id = String::from_utf8(bytes)
+        .map_err(|_| commercial_error("credential_leaf", "CredentialStore 叶名无效"))?;
+    validate_provider_id(&provider_id)
+        .map_err(|_| commercial_error("credential_leaf", "CredentialStore 叶名无效"))?;
+    if credential_leaf_name(&provider_id) != name {
+        return Err(commercial_error(
+            "credential_leaf",
+            "CredentialStore 叶名不是 canonical 编码",
+        ));
+    }
+    Ok(provider_id)
 }
 
 /// 功能：验证安装文档版本、数量、顺序无关唯一身份和所有 route。
@@ -727,6 +1084,211 @@ fn validate_https_base(value: &str) -> Result<(), AgentError> {
     Ok(())
 }
 
+/// 功能：仅用 no-follow 元数据验证 CredentialStore 私有目录。
+///
+/// 输入：由 `symlink_metadata` 或 no-follow handle 取得的目录元数据。
+/// 输出：普通、非 reparse 且属于当前用户的私有目录通过。
+/// 不变量：Unix 拒绝非当前有效用户 owner 或 group/other 任意权限；Windows 拒绝 device/reparse。
+/// 失败：类型、owner 或 mode 不安全时返回脱敏目录错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn validate_private_directory_metadata(metadata: &std::fs::Metadata) -> Result<(), AgentError> {
+    if metadata_is_unsafe(metadata) || !metadata.is_dir() {
+        return Err(commercial_error(
+            "directory_shape",
+            "CredentialStore 目录不是安全普通目录",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        if metadata.uid() != nix::unistd::geteuid().as_raw()
+            || metadata.permissions().mode() & 0o777 != 0o700
+        {
+            return Err(commercial_error(
+                "directory_permissions",
+                "CredentialStore 目录权限无效",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 功能：仅用 no-follow 元数据验证敏感 credential 普通文件的类型、owner、mode 与长度。
+///
+/// 输入：文件元数据、最大字节数及清理路径是否允许零长度崩溃残留。
+/// 输出：满足全部安全边界时成功。
+/// 不变量：不打开或读取正文；Unix 仅接受当前有效用户且无 group/other 权限，Windows 拒绝 device/reparse。
+/// 失败：链接、类型、owner、mode、空值或上限违规时返回脱敏文件错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn validate_sensitive_regular_metadata(
+    metadata: &std::fs::Metadata,
+    maximum: usize,
+    allow_empty: bool,
+) -> Result<(), AgentError> {
+    if metadata_is_unsafe(metadata)
+        || !metadata.is_file()
+        || (!allow_empty && metadata.len() == 0)
+        || metadata.len() > maximum as u64
+    {
+        return Err(commercial_error(
+            "file_shape",
+            "CredentialStore 敏感文件形状无效",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        if metadata.uid() != nix::unistd::geteuid().as_raw()
+            || metadata.permissions().mode() & 0o777 != 0o600
+        {
+            return Err(commercial_error(
+                "file_permissions",
+                "CredentialStore 文件权限过宽或 owner 无效",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 功能：以 create-new/no-follow 语义写入并同步一个新的敏感 credential 文件。
+///
+/// 输入：固定私有目录中的目标路径与已验证非空、最多 16 KiB 的 key 字节。
+/// 输出：0600 普通文件完整写入并 `sync_all` 后成功。
+/// 不变量：绝不覆盖既有路径；失败尽力删除本次新文件；错误不包含正文或路径。
+/// 失败：空值/上限、创建、写入、同步或最终元数据复核异常时返回脱敏错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn write_new_sensitive_file(path: &Path, bytes: &[u8]) -> Result<(), AgentError> {
+    if bytes.is_empty() || bytes.len() > MAX_CREDENTIAL_BYTES {
+        return Err(commercial_error(
+            "credential_value",
+            "Provider credential 无效",
+        ));
+    }
+    reject_symlink_if_present(path)?;
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW).mode(0o600);
+    }
+    #[cfg(windows)]
+    options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    let result = (|| {
+        let mut file = options
+            .open(path)
+            .map_err(|_| commercial_error("file_create", "CredentialStore 叶文件创建失败"))?;
+        file.write_all(bytes)
+            .map_err(|_| commercial_error("file_write", "CredentialStore 叶文件写入失败"))?;
+        file.sync_all()
+            .map_err(|_| commercial_error("file_sync", "CredentialStore 叶文件同步失败"))?;
+        let metadata = file.metadata().map_err(|_| {
+            commercial_error("file_metadata", "CredentialStore 叶文件元数据读取失败")
+        })?;
+        validate_sensitive_regular_metadata(&metadata, MAX_CREDENTIAL_BYTES, false)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+
+/// 功能：原子替换同目录 credential 叶，并在 Windows 请求 replace-existing 与 write-through。
+///
+/// 输入：已完整同步的临时文件与同一文件系统中的 canonical 目标叶。
+/// 输出：目标目录项原子指向新文件。
+/// 不变量：Unix 使用 rename replacement；Windows 使用 MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)。
+/// 失败：平台原子替换失败时返回原始 I/O 错误，由调用方脱敏映射。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn atomic_replace_credential_leaf(source: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        atomic_replace_credential_leaf_windows(source, destination)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(source, destination)
+    }
+}
+
+/// 功能：通过 Windows MoveFileExW 原子轮换已存在或新建的 credential 叶。
+///
+/// 输入：同一文件系统内的源/目标路径。
+/// 输出：replace-existing 且 write-through 的目录项更新。
+/// 不变量：UTF-16 缓冲均 NUL 结尾并在 FFI 返回前存活；调用方已持有全局锁并验证目标元数据。
+/// 失败：Win32 返回零时转换为 last_os_error，不包含路径或 secret。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn atomic_replace_credential_leaf_windows(
+    source: &Path,
+    destination: &Path,
+) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: 两个 UTF-16 缓冲均以 NUL 结尾，并在调用返回前保持存活。
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// 功能：no-follow 打开并同步一个已验证私有目录，作为 rename/remove 的 durable barrier。
+///
+/// 输入：固定 CredentialStore 目录路径。
+/// 输出：目录元数据安全且 `sync_all` 成功。
+/// 不变量：Unix 使用 O_DIRECTORY|O_NOFOLLOW；Windows 使用 BACKUP_SEMANTICS|OPEN_REPARSE_POINT 并复核 handle 元数据。
+/// 失败：打开、类型/reparse、owner/mode 或同步失败时返回脱敏目录错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn sync_directory(path: &Path) -> Result<(), AgentError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    let directory = options
+        .open(path)
+        .map_err(|_| commercial_error("directory_sync", "CredentialStore 目录同步打开失败"))?;
+    let metadata = directory
+        .metadata()
+        .map_err(|_| commercial_error("directory_sync", "CredentialStore 目录元数据读取失败"))?;
+    validate_private_directory_metadata(&metadata)?;
+    directory
+        .sync_all()
+        .map_err(|_| commercial_error("directory_sync", "CredentialStore 目录同步失败"))
+}
+
 /// 功能：创建目录并在 Unix 上把访问权限收窄到当前用户。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -814,22 +1376,14 @@ fn read_secure_file(path: &Path, maximum: usize, sensitive: bool) -> Result<Vec<
     let metadata = file
         .metadata()
         .map_err(|_| commercial_error("file_metadata", "商业状态文件元数据读取失败"))?;
-    if metadata_is_unsafe(&metadata)
+    if sensitive {
+        validate_sensitive_regular_metadata(&metadata, maximum, false)?;
+    } else if metadata_is_unsafe(&metadata)
         || !metadata.is_file()
         || metadata.len() == 0
         || metadata.len() > maximum as u64
     {
         return Err(commercial_error("file_shape", "商业状态文件形状无效"));
-    }
-    #[cfg(unix)]
-    if sensitive {
-        use std::os::unix::fs::PermissionsExt as _;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(commercial_error(
-                "file_permissions",
-                "CredentialStore 文件权限过宽",
-            ));
-        }
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.read_to_end(&mut bytes)
@@ -973,11 +1527,15 @@ mod tests {
         let store = ProviderCredentialStore::new(&state, &workspace)?;
         store.set("relay-example-relay", "first-local-test-key")?;
         store.set("custom.example", "dotted-provider-key")?;
+        assert_eq!(store.request_read_count_for_test(), 0);
         assert_eq!(store.list()?, ["custom.example", "relay-example-relay"]);
+        assert!(store.contains("custom.example"));
+        assert_eq!(store.request_read_count_for_test(), 0);
         assert_eq!(
             store.read_for_request("custom.example")?,
             "dotted-provider-key"
         );
+        assert_eq!(store.request_read_count_for_test(), 1);
         assert!(store.remove("custom.example")?);
         store.set("relay-example-relay", "second-local-test-key")?;
         assert_eq!(
@@ -986,6 +1544,44 @@ mod tests {
         );
         assert!(store.remove("relay-example-relay")?);
         assert!(store.list()?.is_empty());
+        Ok(())
+    }
+
+    /// 功能：验证 v0.1 聚合 credential 文档只在构造升级边界迁移一次，且旧用户 key 无需重录。
+    ///
+    /// 不变量：全部 synthetic secret 先写入工作区外临时状态；迁移后 legacy 删除、逐叶目录唯一权威，list 不增加 secret 读取计数。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn migrates_legacy_credential_document_without_reentry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let workspace = directory.path().join("workspace");
+        let state = directory.path().join("state");
+        let credential_root = state.join("credentials");
+        fs::create_dir(&workspace)?;
+        fs::create_dir_all(&credential_root)?;
+        let legacy = credential_root.join("provider-credentials.json");
+        fs::write(
+            &legacy,
+            br#"{"schemaVersion":"0.1","credentials":[{"providerId":"custom.example","apiKey":"legacy-first-key"},{"providerId":"relay-example-relay","apiKey":"legacy-second-key"}]}"#,
+        )?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&legacy, fs::Permissions::from_mode(0o600))?;
+        }
+
+        let store = ProviderCredentialStore::new(&state, &workspace)?;
+        assert!(!legacy.exists());
+        assert_eq!(store.request_read_count_for_test(), 0);
+        assert_eq!(store.list()?, ["custom.example", "relay-example-relay"]);
+        assert_eq!(store.request_read_count_for_test(), 0);
+        assert_eq!(
+            store.read_for_request("custom.example")?,
+            "legacy-first-key"
+        );
+        assert_eq!(store.request_read_count_for_test(), 1);
         Ok(())
     }
 
@@ -1029,14 +1625,14 @@ mod tests {
         let workspace = directory.path().join("workspace");
         let state = directory.path().join("state");
         fs::create_dir(&workspace)?;
-        let store = ProviderCredentialStore::new(&state, &workspace)?;
         let outside = directory.path().join("outside.json");
         fs::write(&outside, b"{\"schemaVersion\":\"0.1\",\"credentials\":[]}")?;
+        fs::create_dir_all(state.join("credentials"))?;
         symlink(
             &outside,
             state.join("credentials").join("provider-credentials.json"),
         )?;
-        assert!(store.list().is_err());
+        assert!(ProviderCredentialStore::new(&state, &workspace).is_err());
         Ok(())
     }
 

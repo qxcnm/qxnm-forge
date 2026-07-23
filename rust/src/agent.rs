@@ -14,15 +14,15 @@ use uuid::Uuid;
 
 use crate::agent_profile::AgentProfileRunSnapshot;
 use crate::domain::{
-    ArtifactRef, ContentBlock, EventEnvelope, FinishReason, Message, ProviderEvent, Role,
-    ToolEffect, ToolOutput, Usage, artifact_content_type,
+    ArtifactRef, ContentBlock, EventEnvelope, FinishReason, Message, ProviderEvent, ProviderImage,
+    Role, ToolEffect, ToolOutput, Usage, artifact_content_type,
 };
 use crate::error::{AgentError, ErrorCode};
 use crate::policy::PolicyDecision;
 use crate::protocol::{
     ApprovalDecision, SessionBranchSelectParams, SessionCompactParams, parse_strict_value,
 };
-use crate::provider::{Provider, ProviderRequest};
+use crate::provider::{Provider, ProviderRequest, ProviderResolvedImage};
 use crate::session::{
     BranchSelectionResult, ContextCompactionInput, ContextCompactionResult, SessionLease,
     SessionSnapshot, SessionStore, session_busy_error,
@@ -31,6 +31,10 @@ use crate::tools::ToolRegistry;
 
 const MAX_TOOL_TURNS: usize = 32;
 const MAX_QUEUED_INPUTS: usize = 1_024;
+const MAX_PROVIDER_INPUT_IMAGES: usize = 8;
+const MAX_CUSTOM_INPUT_IMAGE_BYTES: usize = 524_288;
+const MAX_CUSTOM_TOTAL_INPUT_IMAGE_BYTES: u64 = 4_194_304;
+const MAX_OPENROUTER_INPUT_IMAGE_BYTES: usize = 16_777_216;
 const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_APPROVAL_TIMEOUT: Duration = Duration::from_secs(3_600);
 
@@ -424,11 +428,45 @@ impl Agent {
             .recover_interrupted(&request.session_id)
             .await?;
         let _ = self.sessions.context_messages(&request.session_id).await?;
+        let image_count = content
+            .iter()
+            .filter(|block| matches!(block, ContentBlock::ImageRef { .. }))
+            .count();
+        if image_count > 0 && !provider.supports_image_input() {
+            return Err(AgentError::new(
+                ErrorCode::InvalidParams,
+                "selected provider does not accept image_ref",
+            )
+            .with_details(json!({"kind":"invalid_params","field":"input.content"})));
+        }
+        if image_count > MAX_PROVIDER_INPUT_IMAGES {
+            return Err(AgentError::new(
+                ErrorCode::OutputLimitExceeded,
+                "provider image input count exceeded the limit",
+            ));
+        }
+        let (single_image_limit, total_image_limit) =
+            provider_image_input_limits(provider.as_ref());
+        let mut total_image_bytes = 0_u64;
         for block in &content {
             if let ContentBlock::ImageRef { artifact, .. } = block {
+                total_image_bytes = total_image_bytes
+                    .checked_add(artifact.byte_length)
+                    .ok_or_else(|| {
+                        AgentError::new(
+                            ErrorCode::OutputLimitExceeded,
+                            "provider image input exceeded the byte limit",
+                        )
+                    })?;
+                if total_image_bytes > total_image_limit {
+                    return Err(AgentError::new(
+                        ErrorCode::OutputLimitExceeded,
+                        "provider image input exceeded the byte limit",
+                    ));
+                }
                 let _ = self
                     .sessions
-                    .read_verified_image_artifact(&request.session_id, artifact, 16_777_216)
+                    .read_verified_image_artifact(&request.session_id, artifact, single_image_limit)
                     .await?;
             }
         }
@@ -1181,6 +1219,90 @@ impl Agent {
             .map(|_| ())
     }
 
+    /// 功能：从本轮 selected context 收集并重新复核 Provider 可接收的用户图片引用。
+    ///
+    /// 输入：当前 Session ID、有序上下文消息和已选择 route。
+    /// 输出：按首次用户引用顺序排列、以 artifact ID 去重的请求期图片字节。
+    /// 不变量：不支持图片的 route 返回空集合；assistant 输出 image_ref 只作为 Session 历史展示而不会回送为模型输入；
+    /// 每个用户引用都来自同 Session selected chain，字节不进入 Session、事件或日志。
+    /// 失败：数量、单图/总字节、重复引用元数据、durable 归属、hash、MIME、魔数或文件形状无效时失败关闭。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    async fn resolve_provider_images(
+        &self,
+        session_id: &str,
+        messages: &[Message],
+        provider: &dyn Provider,
+    ) -> Result<Vec<ProviderResolvedImage>, AgentError> {
+        if !provider.supports_image_input() {
+            return Ok(Vec::new());
+        }
+        let (single_image_limit, total_image_limit) = provider_image_input_limits(provider);
+        let mut references = Vec::<ArtifactRef>::new();
+        let mut total_bytes = 0_u64;
+        for artifact in messages
+            .iter()
+            .filter(|message| message.role == Role::User)
+            .flat_map(|message| {
+                message.content.iter().filter_map(|block| match block {
+                    ContentBlock::ImageRef { artifact, .. } => Some(artifact),
+                    _ => None,
+                })
+            })
+        {
+            if references.len() >= MAX_PROVIDER_INPUT_IMAGES {
+                return Err(AgentError::new(
+                    ErrorCode::OutputLimitExceeded,
+                    "provider image input count exceeded the limit",
+                ));
+            }
+            total_bytes = total_bytes
+                .checked_add(artifact.byte_length)
+                .ok_or_else(|| {
+                    AgentError::new(
+                        ErrorCode::OutputLimitExceeded,
+                        "provider image input exceeded the byte limit",
+                    )
+                })?;
+            if total_bytes > total_image_limit {
+                return Err(AgentError::new(
+                    ErrorCode::OutputLimitExceeded,
+                    "provider image input exceeded the byte limit",
+                ));
+            }
+            references.push(artifact.clone());
+        }
+
+        let mut seen = BTreeMap::<String, ArtifactRef>::new();
+        let mut resolved = Vec::new();
+        for reference in references {
+            if let Some(existing) = seen.get(&reference.artifact_id) {
+                if existing != &reference {
+                    return Err(AgentError::new(
+                        ErrorCode::ProviderError,
+                        "provider image input artifact is invalid",
+                    )
+                    .with_details(json!({"kind":"provider_input_artifact_invalid"})));
+                }
+                continue;
+            }
+            let bytes = self
+                .sessions
+                .read_verified_image_artifact(session_id, &reference, single_image_limit)
+                .await
+                .map_err(|_| {
+                    AgentError::new(
+                        ErrorCode::ProviderError,
+                        "provider image input artifact is invalid",
+                    )
+                    .with_details(json!({"kind":"provider_input_artifact_invalid"}))
+                })?;
+            seen.insert(reference.artifact_id.clone(), reference.clone());
+            resolved.push(ProviderResolvedImage { reference, bytes });
+        }
+        Ok(resolved)
+    }
+
     /// 功能：执行一个已接受 run 的完整 turn/tool 循环直至唯一终态。
     ///
     /// 输入：已 durable 接受的 run、事件通道和独占 `RunControl`。
@@ -1248,6 +1370,9 @@ impl Agent {
             } else {
                 Vec::new()
             };
+            let resolved_images = self
+                .resolve_provider_images(&request.session_id, &messages, provider.as_ref())
+                .await?;
             let provider_request = ProviderRequest {
                 session_id: Some(request.session_id.clone()),
                 run_id: Some(request.run_id.clone()),
@@ -1256,6 +1381,7 @@ impl Agent {
                 messages: messages.clone(),
                 tools,
                 max_output_tokens: None,
+                resolved_images,
             };
             let mut attempt = 1_u32;
             let stream = loop {
@@ -2071,7 +2197,7 @@ impl Agent {
     ///
     /// 输入：run/turn、Provider 流、取消令牌和本 run 已 durable 接受的 tool-call ID 集合。
     /// 输出：仅在 finish reason、ID、名称、参数和批内/跨 turn 唯一性全部有效后持久化的 assistant turn。
-    /// 不变量：任意 partial JSON 只在 `ToolCallEnd` 后解析；带工具调用的 assistant 消息绝不在完整批验证前 durable。
+    /// 不变量：任意 partial JSON 只在 `ToolCallEnd` 后解析；工具与图片均先完成整批/MessageEnd/finish 验证，图片 bytes 才进入 artifact 发布边界。
     /// 失败：不完整、乱序、重复/非法标识或 finish reason 不一致时返回结构化 Provider 错误。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -2093,7 +2219,7 @@ impl Agent {
         let mut completed = Vec::new();
         let mut finish_reason = None;
         let mut message_started = false;
-        let mut image_completion = None::<Vec<ContentBlock>>;
+        let mut image_completion = None::<(Option<String>, Vec<ProviderImage>)>;
         let mut usage = Usage::default();
 
         while let Some(item) = tokio::select! {
@@ -2226,32 +2352,14 @@ impl Agent {
                         )
                         .with_details(json!({"kind":"provider_protocol_error"})));
                     }
-                    let mut blocks =
-                        Vec::with_capacity(images.len() + usize::from(final_text.is_some()));
-                    if let Some(final_text) = final_text {
-                        blocks.push(ContentBlock::Text { text: final_text });
+                    if final_text.as_deref() == Some("") {
+                        return Err(AgentError::new(
+                            ErrorCode::ProviderError,
+                            "provider emitted an empty image completion text",
+                        )
+                        .with_details(json!({"kind":"provider_protocol_error"})));
                     }
-                    for image in images {
-                        if cancellation.is_cancelled() {
-                            return Err(AgentError::new(
-                                ErrorCode::Cancelled,
-                                "run cancelled during image artifact publication",
-                            ));
-                        }
-                        let artifact = self
-                            .sessions
-                            .store_image_artifact(
-                                &request.session_id,
-                                &image.bytes,
-                                &image.media_type,
-                            )
-                            .await?;
-                        blocks.push(ContentBlock::ImageRef {
-                            artifact,
-                            alt: None,
-                        });
-                    }
-                    image_completion = Some(blocks);
+                    image_completion = Some((final_text, images));
                 }
                 ProviderEvent::Usage(delta) => {
                     usage.input_tokens = usage.input_tokens.saturating_add(delta.input_tokens);
@@ -2271,7 +2379,15 @@ impl Agent {
                 }
                 ProviderEvent::MessageEnd {
                     finish_reason: reason,
-                } => finish_reason = Some(reason),
+                } => {
+                    if finish_reason.replace(reason).is_some() {
+                        return Err(AgentError::new(
+                            ErrorCode::ProviderError,
+                            "provider emitted duplicate message end",
+                        )
+                        .with_details(json!({"kind":"provider_protocol_error"})));
+                    }
+                }
             }
         }
 
@@ -2288,7 +2404,9 @@ impl Agent {
             )
         })?;
         validate_complete_tool_batch(&completed, finish_reason, seen_tool_call_ids)?;
-        if let Some(blocks) = image_completion {
+        let assistant_created_at = Utc::now();
+        let mut image_completion_committed = false;
+        if let Some((final_text, images)) = image_completion {
             if finish_reason != FinishReason::Stop {
                 return Err(AgentError::new(
                     ErrorCode::ProviderError,
@@ -2296,7 +2414,59 @@ impl Agent {
                 )
                 .with_details(json!({"kind":"provider_protocol_error"})));
             }
-            content.extend(blocks);
+            if cancellation.is_cancelled() {
+                return Err(AgentError::new(
+                    ErrorCode::Cancelled,
+                    "run cancelled before image artifact publication",
+                ));
+            }
+            let record_text = final_text.clone();
+            let record_run_id = request.run_id.clone();
+            let record_turn_id = turn_id.to_owned();
+            let record_message_id = message_id.clone();
+            let record_provider = run_provider_selection(request, &request.provider_id);
+            let record_usage = usage.clone();
+            let record_time = assistant_created_at;
+            let artifacts = self
+                .sessions
+                .store_image_completion(&request.session_id, &images, move |artifacts| {
+                    let mut portable_content =
+                        Vec::with_capacity(artifacts.len() + usize::from(record_text.is_some()));
+                    if let Some(text) = record_text {
+                        portable_content.push(json!({"type":"text","text":text}));
+                    }
+                    portable_content.extend(
+                        artifacts
+                            .iter()
+                            .map(|artifact| json!({"type":"image_ref","artifact":artifact})),
+                    );
+                    json!({
+                        "runId":record_run_id,
+                        "turnId":record_turn_id,
+                        "message":{
+                            "messageId":record_message_id,
+                            "role":"assistant",
+                            "content":portable_content,
+                            "provider":record_provider,
+                            "finishReason":finish_reason,
+                            "usage":record_usage,
+                            "time":record_time
+                        }
+                    })
+                })
+                .await?;
+            image_completion_committed = true;
+            if let Some(final_text) = final_text {
+                content.push(ContentBlock::Text { text: final_text });
+            }
+            content.extend(
+                artifacts
+                    .into_iter()
+                    .map(|artifact| ContentBlock::ImageRef {
+                        artifact,
+                        alt: None,
+                    }),
+            );
         } else {
             if !text.is_empty() {
                 content.push(ContentBlock::Text { text });
@@ -2320,32 +2490,34 @@ impl Agent {
             id: message_id.clone(),
             role: Role::Assistant,
             content,
-            created_at: Utc::now(),
+            created_at: assistant_created_at,
         };
         let portable_content = assistant
             .content
             .iter()
             .map(portable_content_block)
             .collect::<Vec<_>>();
-        self.sessions
-            .append_record(
-                &request.session_id,
-                "message.appended",
-                json!({
-                    "runId":request.run_id,
-                    "turnId":turn_id,
-                    "message":{
-                        "messageId":message_id,
-                        "role":"assistant",
-                        "content":portable_content,
-                        "provider":run_provider_selection(request, &request.provider_id),
-                        "finishReason":finish_reason,
-                        "usage":usage,
-                        "time":assistant.created_at
-                    }
-                }),
-            )
-            .await?;
+        if !image_completion_committed {
+            self.sessions
+                .append_record(
+                    &request.session_id,
+                    "message.appended",
+                    json!({
+                        "runId":request.run_id,
+                        "turnId":turn_id,
+                        "message":{
+                            "messageId":message_id,
+                            "role":"assistant",
+                            "content":portable_content,
+                            "provider":run_provider_selection(request, &request.provider_id),
+                            "finishReason":finish_reason,
+                            "usage":usage,
+                            "time":assistant.created_at
+                        }
+                    }),
+                )
+                .await?;
+        }
         self.emit(
             events,
             &request.session_id,
@@ -2753,6 +2925,28 @@ fn approval_conflict() -> AgentError {
         "approval is unavailable or already resolved",
     )
     .with_details(json!({"kind":"approval_conflict","field":"approvalId"}))
+}
+
+/// 功能：为已声明图片输入的 route 选择单图与总字节硬上限。
+///
+/// 输入：已完成 route 选择的 Provider。
+/// 输出：`(单图上限, 总上限)`；OpenRouter 保持既有 16 MiB 合同，自定义 OpenAI route 收窄为单图 512 KiB、总计 4 MiB。
+/// 不变量：调用方仅在 `supports_image_input` 为 true 时使用；未知 route 使用更严格的自定义上限。
+/// 失败：本函数不执行 I/O 且不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn provider_image_input_limits(provider: &dyn Provider) -> (usize, u64) {
+    if provider.api_family() == Some("openrouter-images") {
+        (
+            MAX_OPENROUTER_INPUT_IMAGE_BYTES,
+            MAX_OPENROUTER_INPUT_IMAGE_BYTES as u64,
+        )
+    } else {
+        (
+            MAX_CUSTOM_INPUT_IMAGE_BYTES,
+            MAX_CUSTOM_TOTAL_INPUT_IMAGE_BYTES,
+        )
+    }
 }
 
 /// 功能：把 Provider attempt 的结构化错误映射为 Session Schema 终止状态。
@@ -3293,7 +3487,8 @@ mod tests {
         ResponseStyle,
     };
     use crate::domain::{
-        ArtifactRef, EventEnvelope, FinishReason, ProviderEvent, ToolEffect, ToolOutput,
+        ArtifactRef, EventEnvelope, FinishReason, ProviderEvent, ProviderImage, ToolEffect,
+        ToolOutput,
     };
     use crate::error::{AgentError, ErrorCode};
     use crate::policy::{ToolPolicy, WorkspaceGuard};
@@ -3459,6 +3654,149 @@ mod tests {
         let journal = fs::read_to_string(state.join("sessions/session-input-image/journal.jsonl"))?;
         assert!(!journal.contains("fixture"));
         assert!(!journal.contains(artifact_path.to_string_lossy().as_ref()));
+        Ok(())
+    }
+
+    /// 功能：验证图片完成在 MessageEnd/stop 校验失败时不会发布 artifact 或 assistant 假成功。
+    ///
+    /// 不变量：测试只注入内存 faux 图片事件，不访问网络或 credential；错误结束后的 artifact 目录和 `artifact.created` 均为空。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn rejects_image_finish_before_any_artifact_publication() -> Result<(), AgentError> {
+        let directory = tempdir()?;
+        let state = directory.path().join("state");
+        let (agent, faux, sessions) = build_test_agent(directory.path(), &state).await?;
+        let session_id = "session-invalid-image-finish";
+        faux.configure(
+            session_id,
+            vec![FauxScript::from_events(vec![
+                ProviderEvent::MessageStart {
+                    provider_message_id: "faux-image-invalid".to_owned(),
+                },
+                ProviderEvent::ImageCompletion {
+                    text: Some("不应持久化".to_owned()),
+                    images: vec![ProviderImage {
+                        media_type: "image/png".to_owned(),
+                        bytes: b"\x89PNG\r\n\x1a\nsynthetic-invalid-finish".to_vec(),
+                    }],
+                },
+                ProviderEvent::MessageEnd {
+                    finish_reason: FinishReason::Length,
+                },
+            ])],
+        )
+        .await;
+        let request = RunRequest {
+            session_id: session_id.to_owned(),
+            run_id: "run-invalid-image-finish".to_owned(),
+            prompt: "generate".to_owned(),
+            provider_id: "faux".to_owned(),
+            api_family: None,
+            model: "faux-v1".to_owned(),
+            interactive_approvals: false,
+        };
+        agent.accept_run(&request).await?;
+        let (sender, mut receiver) = mpsc::channel(256);
+        agent.start_run(request.clone(), sender).await;
+        let terminal = loop {
+            let event = receive_event(&mut receiver).await?;
+            if matches!(
+                event.event_type.as_str(),
+                "run.completed" | "run.failed" | "run.cancelled" | "run.interrupted"
+            ) {
+                break event;
+            }
+        };
+        assert_eq!(terminal.event_type, "run.failed");
+        assert_eq!(
+            terminal.data.pointer("/error/details/kind"),
+            Some(&json!("provider_protocol_error"))
+        );
+        let records = sessions.load(session_id).await?;
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.kind == "artifact.created")
+                .count(),
+            0
+        );
+        assert!(!records.iter().any(|record| {
+            record.kind == "message.appended"
+                && record.data.pointer("/message/role").and_then(Value::as_str) == Some("assistant")
+        }));
+        let artifact_count =
+            fs::read_dir(state.join("sessions").join(session_id).join("artifacts"))?.count();
+        assert_eq!(artifact_count, 0);
+        Ok(())
+    }
+
+    /// 功能：验证图片完成后的流尾缺少 MessageEnd 时仍保持零 artifact、零 assistant 消息。
+    ///
+    /// 不变量：测试只注入内存 faux 断尾，不访问网络或 credential；图片字节始终停留在内存候选中。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[tokio::test]
+    async fn rejects_unterminated_image_stream_before_any_artifact_publication()
+    -> Result<(), AgentError> {
+        let directory = tempdir()?;
+        let state = directory.path().join("state");
+        let (agent, faux, sessions) = build_test_agent(directory.path(), &state).await?;
+        let session_id = "session-unterminated-image";
+        faux.configure(
+            session_id,
+            vec![FauxScript::from_events(vec![
+                ProviderEvent::MessageStart {
+                    provider_message_id: "faux-image-unterminated".to_owned(),
+                },
+                ProviderEvent::ImageCompletion {
+                    text: None,
+                    images: vec![ProviderImage {
+                        media_type: "image/png".to_owned(),
+                        bytes: b"\x89PNG\r\n\x1a\nsynthetic-unterminated".to_vec(),
+                    }],
+                },
+            ])],
+        )
+        .await;
+        let request = RunRequest {
+            session_id: session_id.to_owned(),
+            run_id: "run-unterminated-image".to_owned(),
+            prompt: "generate".to_owned(),
+            provider_id: "faux".to_owned(),
+            api_family: None,
+            model: "faux-v1".to_owned(),
+            interactive_approvals: false,
+        };
+        agent.accept_run(&request).await?;
+        let (sender, mut receiver) = mpsc::channel(256);
+        agent.start_run(request, sender).await;
+        let terminal = loop {
+            let event = receive_event(&mut receiver).await?;
+            if matches!(
+                event.event_type.as_str(),
+                "run.completed" | "run.failed" | "run.cancelled" | "run.interrupted"
+            ) {
+                break event;
+            }
+        };
+        assert_eq!(terminal.event_type, "run.interrupted");
+        let records = sessions.load(session_id).await?;
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.kind == "artifact.created")
+                .count(),
+            0
+        );
+        assert!(!records.iter().any(|record| {
+            record.kind == "message.appended"
+                && record.data.pointer("/message/role").and_then(Value::as_str) == Some("assistant")
+        }));
+        assert_eq!(
+            fs::read_dir(state.join("sessions").join(session_id).join("artifacts"))?.count(),
+            0
+        );
         Ok(())
     }
 

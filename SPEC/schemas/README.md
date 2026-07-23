@@ -54,10 +54,11 @@ Author: 高宏顺 `<18272669457@163.com>`.
   descriptor、原生 request target 与九类失败关闭案例。
 - `sponsored-provider-catalog.schema.json`：签名远程推广候选目录、source 与 trust key。
 - `sponsored-provider-installation.schema.json`：用户明确确认后固定且不含 secret 的本地 route。
-- `provider-credential-store.schema.json`：只允许工作区外敏感文件使用的 API-key store；
-  不得把其实例放入 fixture、协议或 Session。
-- `custom-provider-connection.schema.json`：ADR 0029 的非敏感自定义连接、CAS 与显式模型发现
-  参数、credential 状态；连接实体、发现结果和列表永远不含 credential。
+- `provider-credential-store.schema.json`：仅定义旧聚合文件的 CredentialStore v0.1 legacy
+  migration input；当前 v0.2 store 是工作区外 `provider-credentials.d/` 逐叶目录，不以 JSON
+  schema 表示。旧文档和当前 secret 都不得进入 fixture、协议或 Session。
+- `custom-provider-connection.schema.json`：ADR 0029 的 v0.3 非敏感自定义连接、CAS、显式模型
+  发现和图片输入/输出能力参数、credential 状态；连接实体、发现结果和列表永远不含 credential。
 - `provider-catalog.schema.json`：ADR 0031 从冻结目录投影的兼容配置模板与空参数只读 RPC；
   模板不含 secret，也不构成 configured、executable 或远端 verified 声明。
 - `storage-config.schema.json`：不携带远程连接串值的 SQLite/PostgreSQL/MySQL provider 配置。

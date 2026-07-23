@@ -1272,6 +1272,7 @@ mod tests {
             max_output_tokens: None,
             session_id: None,
             run_id: None,
+            resolved_images: Vec::new(),
         });
         assert_eq!(body["messages"][0]["content"][0]["text"], "hello");
         assert_eq!(body["system"][0]["text"], "profile guidance");

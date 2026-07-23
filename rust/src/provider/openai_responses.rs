@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use async_stream::try_stream;
 use async_trait::async_trait;
+use futures_util::stream;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -10,7 +11,9 @@ use super::sse::{
     build_http_client, next_response_chunk, provider_status_error, send_provider_request,
 };
 use super::{
-    Provider, ProviderCredentialSource, ProviderRequest, ProviderStream, SseDecoder, SseEvent,
+    CUSTOM_MAX_IMAGE_COUNT, CUSTOM_MAX_JSON_RESPONSE_BYTES, CUSTOM_MAX_TOTAL_IMAGE_BYTES, Provider,
+    ProviderCredentialSource, ProviderRequest, ProviderStream, SseDecoder, SseEvent,
+    decode_custom_base64_image, read_bounded_json_response, resolved_image_data_url,
 };
 use crate::domain::{ContentBlock, FinishReason, ProviderEvent, Role, Usage};
 use crate::error::{AgentError, ErrorCode};
@@ -26,6 +29,7 @@ pub struct OpenAiResponsesProvider {
     client: Result<reqwest::Client, AgentError>,
     endpoint: String,
     credential_source: ProviderCredentialSource,
+    image_output: bool,
 }
 
 impl OpenAiResponsesProvider {
@@ -48,6 +52,7 @@ impl OpenAiResponsesProvider {
             client: build_http_client(),
             endpoint: endpoint.into(),
             credential_source: ProviderCredentialSource::from_environment(credential_env),
+            image_output: false,
         }
     }
 
@@ -69,7 +74,21 @@ impl OpenAiResponsesProvider {
             client: build_http_client(),
             endpoint: endpoint.into(),
             credential_source,
+            image_output: false,
         }
+    }
+
+    /// 功能：为显式声明图片输出的自定义连接启用有界非流式 Responses 解析。
+    ///
+    /// 输入：连接启动快照的 `supportsImageOutput`。
+    /// 输出：保持认证与 endpoint 不变的 adapter。
+    /// 不变量：关闭时保留现有 typed SSE；开启时完整响应先验证再产生图片完成事件。
+    /// 失败：本方法不执行 I/O 且不返回错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    pub(crate) fn with_image_output(mut self, enabled: bool) -> Self {
+        self.image_output = enabled;
+        self
     }
 }
 
@@ -113,15 +132,33 @@ impl Provider for OpenAiResponsesProvider {
                 "provider credential is invalid",
             )
         })?;
+        let mut body = request_body(&request)?;
+        if self.image_output {
+            configure_image_output_request(&mut body);
+        }
         let builder = client
             .post(&self.endpoint)
             .header(CONTENT_TYPE, "application/json")
             .header(AUTHORIZATION, authorization)
-            .json(&request_body(&request));
+            .json(&body);
         drop(api_key);
-        let response = send_provider_request(builder, &cancellation).await?;
+        let mut response = send_provider_request(builder, &cancellation).await?;
         if !response.status().is_success() {
             return Err(provider_status_error(&response));
+        }
+        if self.image_output {
+            let raw = read_bounded_json_response(
+                &mut response,
+                &cancellation,
+                CUSTOM_MAX_JSON_RESPONSE_BYTES,
+            )
+            .await?;
+            let text = std::str::from_utf8(&raw).map_err(|_| image_protocol_error())?;
+            let value =
+                crate::protocol::parse_strict_value(text).map_err(|_| image_protocol_error())?;
+            return Ok(Box::pin(stream::iter(
+                parse_image_completion(&value)?.into_iter().map(Ok),
+            )));
         }
         let output = try_stream! {
             let mut response = response;
@@ -140,6 +177,150 @@ impl Provider for OpenAiResponsesProvider {
     }
 }
 
+/// 功能：严格解析 Responses 非流式 `image_generation_call.result` 图片完成。
+///
+/// 输入：已通过 strict JSON 解码的完整响应对象。
+/// 输出：MessageStart、单一文字或整批图片完成、可选 usage 与 MessageEnd。
+/// 不变量：只有非空 ID、顶层 `status=completed` 的完整响应可产生 Stop；result 固定解释为 canonical PNG Base64；最多八图且总解码字节不超过 4 MiB。
+/// 失败：ID、status、output、Base64、PNG 魔数、数量、大小或结果形状无效时返回脱敏错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn parse_image_completion(value: &Value) -> Result<Vec<ProviderEvent>, AgentError> {
+    let response_id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(image_protocol_error)?;
+    if value.get("status").and_then(Value::as_str) != Some("completed") {
+        return Err(image_protocol_error());
+    }
+    let output = value
+        .get("output")
+        .and_then(Value::as_array)
+        .ok_or_else(image_protocol_error)?;
+    let mut text_parts = Vec::<&str>::new();
+    let mut images = Vec::new();
+    let mut total_bytes = 0_usize;
+    for item in output {
+        match item.get("type").and_then(Value::as_str) {
+            Some("image_generation_call") => {
+                if images.len() >= CUSTOM_MAX_IMAGE_COUNT {
+                    return Err(image_output_limit_error());
+                }
+                let encoded = item
+                    .get("result")
+                    .and_then(Value::as_str)
+                    .ok_or_else(image_protocol_error)?;
+                let image = decode_custom_base64_image(encoded, "image/png")?;
+                total_bytes = total_bytes
+                    .checked_add(image.bytes.len())
+                    .ok_or_else(image_output_limit_error)?;
+                if total_bytes > CUSTOM_MAX_TOTAL_IMAGE_BYTES {
+                    return Err(image_output_limit_error());
+                }
+                images.push(image);
+            }
+            Some("message") => {
+                if let Some(content) = item.get("content").and_then(Value::as_array) {
+                    text_parts.extend(content.iter().filter_map(|part| {
+                        (part.get("type").and_then(Value::as_str) == Some("output_text"))
+                            .then(|| part.get("text").and_then(Value::as_str))
+                            .flatten()
+                            .filter(|text| !text.is_empty())
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    let final_text = (!text_parts.is_empty()).then(|| text_parts.join(""));
+    if images.is_empty() && final_text.is_none() {
+        return Err(image_protocol_error());
+    }
+    let mut events = vec![ProviderEvent::MessageStart {
+        provider_message_id: response_id.to_owned(),
+    }];
+    if images.is_empty() {
+        events.push(ProviderEvent::TextDelta {
+            text: final_text.expect("checked text"),
+        });
+    } else {
+        events.push(ProviderEvent::ImageCompletion {
+            text: final_text,
+            images,
+        });
+    }
+    if let Some(usage) = value.get("usage").filter(|usage| usage.is_object()) {
+        events.push(ProviderEvent::Usage(parse_completed_usage(usage)));
+    }
+    events.push(ProviderEvent::MessageEnd {
+        finish_reason: FinishReason::Stop,
+    });
+    Ok(events)
+}
+
+/// 功能：把 Responses 请求收窄为独占图片生成工具的非流式协议形状。
+///
+/// 输入：已经由公共消息映射器构造的 Responses 请求对象。
+/// 输出：原对象就地设为 `stream:false`，且 tools 恰好只含 `image_generation`。
+/// 不变量：不保留或混入任何 Agent function tool；模型、input、instructions 与输出上限保持不变。
+/// 失败：调用方始终传入对象，本方法不执行 I/O 且不返回错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn configure_image_output_request(body: &mut Value) {
+    body["stream"] = Value::Bool(false);
+    body["tools"] = json!([{"type":"image_generation"}]);
+}
+
+/// 功能：归一化 Responses 非流式 usage，缺失字段按零处理。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn parse_completed_usage(value: &Value) -> Usage {
+    let input_tokens = value
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = value
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    Usage {
+        input_tokens,
+        output_tokens,
+        total_tokens: value
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| input_tokens.saturating_add(output_tokens)),
+        cached_input_tokens: value
+            .pointer("/input_tokens_details/cached_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        cost_micros: None,
+    }
+}
+
+/// 功能：构造不含 Provider 正文的 Responses 图片协议错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn image_protocol_error() -> AgentError {
+    AgentError::new(
+        ErrorCode::ProviderError,
+        "provider image response is invalid",
+    )
+    .with_details(json!({"kind":"provider_protocol_error"}))
+}
+
+/// 功能：构造 Responses 图片批次超过数量或总字节上限的错误。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+fn image_output_limit_error() -> AgentError {
+    AgentError::new(
+        ErrorCode::OutputLimitExceeded,
+        "provider image response exceeded the byte limit",
+    )
+    .with_details(json!({"kind":"provider_output_limit"}))
+}
+
 /// 功能：保存 Responses item ID 对应的稳定 call ID 及是否已经规范化结束。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -151,7 +332,7 @@ pub(super) struct ResponseCallState {
 /// 功能：把公共消息、工具和输出上限转换为 Responses API 请求 JSON。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
-pub(super) fn request_body(request: &ProviderRequest) -> Value {
+pub(super) fn request_body(request: &ProviderRequest) -> Result<Value, AgentError> {
     let mut input = Vec::new();
     for message in &request.messages {
         let role = match message.role {
@@ -186,9 +367,24 @@ pub(super) fn request_body(request: &ProviderRequest) -> Value {
                     "call_id": call_id,
                     "output": output.text.as_deref().unwrap_or("tool result stored as artifact")
                 })),
-                ContentBlock::Reasoning { .. }
-                | ContentBlock::ImageRef { .. }
-                | ContentBlock::ArtifactRef { .. } => {}
+                ContentBlock::ImageRef { artifact, .. }
+                    if message.role == Role::User
+                        && request
+                            .resolved_images
+                            .iter()
+                            .any(|image| image.reference == *artifact) =>
+                {
+                    input.push(json!({
+                        "type":"message",
+                        "role":role,
+                        "content":[{
+                            "type":"input_image",
+                            "image_url":resolved_image_data_url(request, artifact)?
+                        }]
+                    }));
+                }
+                ContentBlock::ImageRef { .. } => {}
+                ContentBlock::Reasoning { .. } | ContentBlock::ArtifactRef { .. } => {}
             }
         }
     }
@@ -215,7 +411,7 @@ pub(super) fn request_body(request: &ProviderRequest) -> Value {
     if let Some(limit) = request.max_output_tokens {
         body["max_output_tokens"] = json!(limit);
     }
-    body
+    Ok(body)
 }
 
 /// 功能：解析单个 Responses SSE 事件并维护 item ID 到工具调用 ID 的映射。
@@ -413,13 +609,20 @@ mod tests {
     use std::thread::{self, JoinHandle};
     use std::time::Duration;
 
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use chrono::Utc;
     use futures_util::TryStreamExt;
     use serde_json::json;
     use tokio_util::sync::CancellationToken;
 
-    use super::{OpenAiResponsesProvider, parse_event, request_body};
-    use crate::domain::{ContentBlock, Message, ProviderEvent, Role, ToolOutput};
+    use super::{
+        OpenAiResponsesProvider, configure_image_output_request, parse_event,
+        parse_image_completion, request_body,
+    };
+    use crate::domain::{
+        ArtifactRef, ContentBlock, FinishReason, Message, ProviderEvent, Role, ToolOutput,
+    };
     use crate::error::ErrorCode;
     use crate::provider::{Provider, ProviderRequest, SseEvent};
 
@@ -531,9 +734,10 @@ mod tests {
             max_output_tokens: None,
             session_id: None,
             run_id: None,
+            resolved_images: Vec::new(),
         };
 
-        let body = request_body(&request);
+        let body = request_body(&request).expect("text-only request must serialize");
         assert_eq!(body["instructions"], "profile guidance");
         assert_eq!(body["input"][0]["type"], "function_call");
         assert_eq!(body["input"][0]["call_id"], "call-1");
@@ -642,6 +846,163 @@ mod tests {
         assert!(!error.message.contains("qxnm-forge-secret-canary-responses"));
     }
 
+    /// 功能：验证 Responses 图片输出请求只保留 image_generation tool 并关闭流式。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn image_output_request_is_non_streaming_and_tool_narrowed() {
+        let mut body = json!({
+            "model":"fixture-model",
+            "input":[],
+            "stream":true,
+            "tools":[{"type":"function","name":"file.read"}]
+        });
+        configure_image_output_request(&mut body);
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["tools"], json!([{"type":"image_generation"}]));
+    }
+
+    /// 功能：验证 Responses 仅接受 completed 响应，保留纯文字/usage，并安全忽略未知 output item。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn validates_completed_text_unknown_items_empty_output_and_usage() {
+        let events = parse_image_completion(&json!({
+            "id":"response-text-1",
+            "status":"completed",
+            "output":[
+                {"type":"future_item","payload":{"ignored":true}},
+                {"type":"message","content":[
+                    {"type":"future_part","text":"ignored"},
+                    {"type":"output_text","text":"完成"}
+                ]}
+            ],
+            "usage":{"input_tokens":2,"output_tokens":3}
+        }))
+        .expect("valid completed pure text response");
+        assert!(matches!(
+            events.as_slice(),
+            [
+                ProviderEvent::MessageStart { provider_message_id },
+                ProviderEvent::TextDelta { text },
+                ProviderEvent::Usage(usage),
+                ProviderEvent::MessageEnd { finish_reason: FinishReason::Stop }
+            ] if provider_message_id == "response-text-1"
+                && text == "完成"
+                && usage.input_tokens == 2
+                && usage.output_tokens == 3
+                && usage.total_tokens == 5
+        ));
+
+        for invalid in [
+            json!({"id":"","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"x"}]}]}),
+            json!({"id":"response-missing-status","output":[{"type":"message","content":[{"type":"output_text","text":"x"}]}]}),
+            json!({"id":"response-running","status":"in_progress","output":[{"type":"message","content":[{"type":"output_text","text":"x"}]}]}),
+            json!({"id":"response-empty","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":""}]}]}),
+            json!({"id":"response-unknown-only","status":"completed","output":[{"type":"future_item"}]}),
+        ] {
+            assert!(parse_image_completion(&invalid).is_err());
+        }
+
+        let encoded = BASE64_STANDARD.encode(b"\x89PNG\r\n\x1a\nfixture");
+        let image_events = parse_image_completion(&json!({
+            "id":"response-image-1",
+            "status":"completed",
+            "output":[{"type":"image_generation_call","result":encoded}]
+        }))
+        .expect("valid completed image response");
+        assert!(matches!(
+            image_events.as_slice(),
+            [
+                ProviderEvent::MessageStart { .. },
+                ProviderEvent::ImageCompletion { images, .. },
+                ProviderEvent::MessageEnd { finish_reason: FinishReason::Stop }
+            ] if images.len() == 1
+        ));
+    }
+
+    /// 功能：验证 output-only/text-only 后续轮次会保留历史文字并省略所有未解析图片引用。
+    ///
+    /// 不变量：assistant 输出图片永不回送为 input_image；切换到不支持图片输入的 route 时，历史 user 图片也不会使请求序列化失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    #[test]
+    fn omits_historical_images_when_route_cannot_accept_input() {
+        let artifact = ArtifactRef {
+            artifact_id: "artifact-history-responses".to_owned(),
+            media_type: "image/png".to_owned(),
+            byte_length: 16,
+            sha256: "0".repeat(64),
+            display_name: None,
+            extensions: BTreeMap::new(),
+        };
+        let request = ProviderRequest {
+            model: "fixture-model".to_owned(),
+            system_instructions: None,
+            messages: vec![
+                Message {
+                    id: "message-user-image".to_owned(),
+                    role: Role::User,
+                    content: vec![
+                        ContentBlock::Text {
+                            text: "生成一张图".to_owned(),
+                        },
+                        ContentBlock::ImageRef {
+                            artifact: artifact.clone(),
+                            alt: None,
+                        },
+                    ],
+                    created_at: Utc::now(),
+                },
+                Message {
+                    id: "message-assistant-image".to_owned(),
+                    role: Role::Assistant,
+                    content: vec![
+                        ContentBlock::Text {
+                            text: "图片已生成".to_owned(),
+                        },
+                        ContentBlock::ImageRef {
+                            artifact: artifact.clone(),
+                            alt: None,
+                        },
+                    ],
+                    created_at: Utc::now(),
+                },
+                Message {
+                    id: "message-assistant-image-only".to_owned(),
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::ImageRef {
+                        artifact: artifact.clone(),
+                        alt: None,
+                    }],
+                    created_at: Utc::now(),
+                },
+                Message {
+                    id: "message-user-image-only".to_owned(),
+                    role: Role::User,
+                    content: vec![ContentBlock::ImageRef {
+                        artifact,
+                        alt: None,
+                    }],
+                    created_at: Utc::now(),
+                },
+                Message::text("message-next", Role::User, "继续说明"),
+            ],
+            tools: Vec::new(),
+            max_output_tokens: None,
+            session_id: None,
+            run_id: None,
+            resolved_images: Vec::new(),
+        };
+
+        let body = request_body(&request).expect("historical images must be safely omitted");
+        assert!(!body.to_string().contains("input_image"));
+        assert_eq!(body["input"][0]["content"][0]["text"], "生成一张图");
+        assert_eq!(body["input"][1]["content"][0]["text"], "图片已生成");
+        assert_eq!(body["input"][2]["content"][0]["text"], "继续说明");
+        assert_eq!(body["input"].as_array().map(Vec::len), Some(3));
+    }
+
     /// 功能：通过本地 HTTP/SSE mock 验证 CRLF、多行 data、UTF-8 分片和完整 Provider 流。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -679,6 +1040,7 @@ mod tests {
             max_output_tokens: Some(32),
             session_id: None,
             run_id: None,
+            resolved_images: Vec::new(),
         };
         let events = provider
             .stream(request, CancellationToken::new())

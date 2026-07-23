@@ -22,6 +22,33 @@ namespace QxnmForge.Session;
 public sealed record JournalAppendReceipt(string RecordId, long Seq);
 
 /// <summary>
+/// 功能：表示图片完成 journal 批次写失败，并明确原长度回滚是否已 durable 完成。
+/// 作者：高宏顺
+/// 邮箱：18272669457@163.com
+/// </summary>
+internal sealed class JournalBatchAppendException : IOException
+{
+    /// <summary>
+    /// 功能：创建不携带路径或 journal 正文的批次失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="rollbackCompleted">journal 是否已截回批次前长度并强制落盘。</param>
+    internal JournalBatchAppendException(bool rollbackCompleted)
+        : base("journal image completion batch append failed")
+    {
+        RollbackCompleted = rollbackCompleted;
+    }
+
+    /// <summary>
+    /// 功能：取得调用方能否确认本批没有任何 durable journal 引用。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    internal bool RollbackCompleted { get; }
+}
+
+/// <summary>
 /// 功能：表示无法安全打开或继续写入的 portable journal。
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
@@ -163,11 +190,27 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
     private readonly Dictionary<string, string> approvalResolutionChoices = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RecoveredTerminalState> recoveredTerminals = new(StringComparer.Ordinal);
     private readonly HashSet<string> terminalEventRunIds = new(StringComparer.Ordinal);
+    private int? imageCompletionBatchFailureAfterBytesForTest;
     private string? lastRecordId;
     private string? activeRunId;
     private long journalSequence;
     private long eventSequence;
     private bool disposed;
+
+    /// <summary>
+    /// 功能：保存已在内存预构造、尚未写入 journal 的单条图片完成批次记录。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="Line">最终单行 wire 记录。</param>
+    /// <param name="TreeRecord">成功 flush 后加入 selected tree 的投影。</param>
+    /// <param name="Kind">核心记录 kind。</param>
+    /// <param name="Data">生命周期独立的 data object。</param>
+    private sealed record PreparedImageCompletionRecord(
+        JournalRecordLine Line,
+        JournalTreeRecord TreeRecord,
+        string Kind,
+        JsonElement Data);
 
     /// <summary>
     /// 功能：保存已独占打开的 lock 和 journal 句柄。
@@ -451,6 +494,238 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
         try
         {
             return await AppendLockedAsync(kind, data, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            appendGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 功能：仅供测试让下一次图片完成批次在单次 journal write 的指定字节后失败。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="byteCount">写入此前缀后抛出合成 IOException；零表示写入前失败。</param>
+    /// <remarks>不变量：hook 一次性消费且只影响图片完成批次；生产路径从不调用。</remarks>
+    internal void FailNextImageCompletionBatchAfterBytesForTest(int byteCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(byteCount);
+        imageCompletionBatchFailureAfterBytesForTest = byteCount;
+    }
+
+    /// <summary>
+    /// 功能：在同一 append lock 内预构造全部 artifact.created 与 assistant message，并以一次 write/flush 提交。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="artifacts">已整批发布文件但尚未被 journal 引用的有序图片引用。</param>
+    /// <param name="assistantMessage">只含 portable text/image_ref 的完整 assistant 消息。</param>
+    /// <param name="runId">当前 active run ID。</param>
+    /// <param name="turnId">当前 Provider turn ID。</param>
+    /// <param name="cancellationToken">等待锁和开始提交前的取消信号。</param>
+    /// <returns>同批最后一条 assistant message.appended 的 durable 回执。</returns>
+    /// <remarks>不变量：全部记录先验证并串成连续 parent/seq，再一次写入并 Flush(true)；开始写后忽略普通取消。写入或 flush 失败时在锁内截回原长度，成功前不推进任何内存投影。</remarks>
+    /// <exception cref="ArgumentException">批次为空、超限、引用重复或输入基础形状无效。</exception>
+    /// <exception cref="JournalCorruptException">run、assistant 或 image_ref 绑定不满足当前 journal 状态。</exception>
+    /// <exception cref="IOException">批量写、flush 或失败回滚无法 durable 完成。</exception>
+    internal async Task<JournalAppendReceipt> AppendImageCompletionBatchAsync(
+        IReadOnlyList<ArtifactReference> artifacts,
+        JsonElement assistantMessage,
+        string runId,
+        string turnId,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (artifacts.Count is < 1 or > 8 ||
+            !IsValidOpaqueId(runId) ||
+            !IsValidOpaqueId(turnId))
+        {
+            throw new ArgumentException("image completion batch shape is invalid", nameof(artifacts));
+        }
+
+        await appendGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await writerLease.EnsureOwnershipAsync(cancellationToken).ConfigureAwait(false);
+            var artifactIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var artifact in artifacts)
+            {
+                try
+                {
+                    ImageArtifactValidation.ValidateReference(artifact, MaxSafeInteger);
+                }
+                catch (ArgumentException exception)
+                {
+                    throw new ArgumentException(
+                        "image completion artifact is invalid",
+                        nameof(artifacts),
+                        exception);
+                }
+
+                if (!artifactIds.Add(artifact.ArtifactId))
+                {
+                    throw new ArgumentException(
+                        "image completion artifacts must be unique",
+                        nameof(artifacts));
+                }
+            }
+
+            ValidatePortableMessage(assistantMessage);
+            var messageId = RequireString(assistantMessage, "messageId");
+            if (activeRunId != runId ||
+                RequireString(assistantMessage, "role") != "assistant" ||
+                RequireString(assistantMessage, "finishReason") != "stop" ||
+                messageIds.Contains(messageId))
+            {
+                throw new JournalCorruptException("image completion message state is invalid");
+            }
+
+            var referencedArtifacts = new List<ArtifactReference>();
+            foreach (var block in RequireProperty(assistantMessage, "content").EnumerateArray())
+            {
+                if (!block.TryGetProperty("type", out var type) || type.GetString() != "image_ref")
+                {
+                    continue;
+                }
+
+                if (!block.TryGetProperty("artifact", out var artifactElement) ||
+                    artifactElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new JournalCorruptException("image completion reference is invalid");
+                }
+
+                try
+                {
+                    referencedArtifacts.Add(
+                        artifactElement.Deserialize<ArtifactReference>(JsonDefaults.Options)
+                        ?? throw new JournalCorruptException("image completion reference is invalid"));
+                }
+                catch (JsonException exception)
+                {
+                    throw new JournalCorruptException("image completion reference is invalid", exception);
+                }
+            }
+
+            if (referencedArtifacts.Count != artifacts.Count ||
+                referencedArtifacts.Where((artifact, index) =>
+                    !ArtifactCoreEquals(artifact, artifacts[index])).Any())
+            {
+                throw new JournalCorruptException("image completion references do not match the batch");
+            }
+
+            var items = new List<(string Kind, object Data)>(artifacts.Count + 1);
+            items.AddRange(artifacts.Select(static artifact =>
+                ("artifact.created", (object)new { Artifact = artifact })));
+            items.Add((
+                "message.appended",
+                new { Message = assistantMessage.Clone(), RunId = runId, TurnId = turnId }));
+
+            var prepared = new List<PreparedImageCompletionRecord>(items.Count);
+            var sequence = journalSequence;
+            var parentId = lastRecordId;
+            foreach (var item in items)
+            {
+                var data = JsonSerializer.SerializeToElement(item.Data, JsonDefaults.Options);
+                if (data.ValueKind != JsonValueKind.Object)
+                {
+                    throw new ArgumentException("journal data must serialize as an object", nameof(artifacts));
+                }
+
+                sequence++;
+                var recordId = "record-" + Guid.NewGuid().ToString("N");
+                var treeRecord = new JournalTreeRecord(
+                    recordId,
+                    sequence,
+                    parentId,
+                    item.Kind,
+                    data.Clone());
+                var line = new JournalRecordLine(
+                    "0.1",
+                    item.Kind,
+                    recordId,
+                    SessionId,
+                    sequence,
+                    parentId,
+                    DateTimeOffset.UtcNow,
+                    data);
+                prepared.Add(new PreparedImageCompletionRecord(line, treeRecord, item.Kind, data));
+                parentId = recordId;
+            }
+
+            var output = new ArrayBufferWriter<byte>();
+            foreach (var item in prepared)
+            {
+                output.Write(JsonSerializer.SerializeToUtf8Bytes(item.Line, JsonDefaults.Options));
+                output.Write("\n"u8);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var originalLength = journalStream.Length;
+            journalStream.Position = originalLength;
+            var injectedFailure = imageCompletionBatchFailureAfterBytesForTest;
+            imageCompletionBatchFailureAfterBytesForTest = null;
+            try
+            {
+                if (injectedFailure is int prefixLength)
+                {
+                    var length = Math.Min(prefixLength, output.WrittenCount);
+                    if (length > 0)
+                    {
+                        await journalStream.WriteAsync(
+                            output.WrittenMemory[..length],
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    throw new IOException("synthetic image completion batch failure");
+                }
+
+                await journalStream.WriteAsync(
+                    output.WrittenMemory,
+                    CancellationToken.None).ConfigureAwait(false);
+                await journalStream.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                journalStream.Flush(flushToDisk: true);
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or
+                ObjectDisposedException or NotSupportedException)
+            {
+                try
+                {
+                    journalStream.SetLength(originalLength);
+                    journalStream.Position = originalLength;
+                    await journalStream.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                    journalStream.Flush(flushToDisk: true);
+                }
+                catch (Exception rollbackException) when (
+                    rollbackException is IOException or UnauthorizedAccessException or
+                    ObjectDisposedException or NotSupportedException)
+                {
+                    throw new JournalBatchAppendException(rollbackCompleted: false);
+                }
+
+                throw new JournalBatchAppendException(rollbackCompleted: true);
+            }
+
+            try
+            {
+                foreach (var item in prepared)
+                {
+                    recordIds.Add(item.TreeRecord.RecordId);
+                    treeRecords.Add(item.TreeRecord.RecordId, item.TreeRecord);
+                    ApplyRecordProjection(item.Kind, item.Data, item.TreeRecord.Sequence);
+                    journalSequence = item.TreeRecord.Sequence;
+                    lastRecordId = item.TreeRecord.RecordId;
+                }
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or JournalCorruptException or InvalidOperationException)
+            {
+                throw new JournalBatchAppendException(rollbackCompleted: false);
+            }
+
+            var completed = prepared[^1].TreeRecord;
+            return new JournalAppendReceipt(completed.RecordId, completed.Sequence);
         }
         finally
         {
@@ -777,6 +1052,85 @@ public sealed partial class PortableSessionJournal : IAsyncDisposable
             }
             catch (Exception exception) when (
                 exception is ArgumentException or JournalCorruptException or JournalIncompatibleException)
+            {
+                throw new ArtifactValidationException();
+            }
+        }
+        finally
+        {
+            appendGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 功能：按 opaque ID 从当前 selected parent chain 解析唯一 durable 图片引用并完整复核文件。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="artifactId">不得形成路径的 artifact ID。</param>
+    /// <param name="maximumBytes">本次读取允许的单 artifact 最大字节数。</param>
+    /// <param name="cancellationToken">等待 journal gate 与读取文件的取消信号。</param>
+    /// <returns>journal 中完整 portable 引用和一次性通过 no-follow、长度、hash、MIME、魔数验证的字节。</returns>
+    /// <remarks>不变量：只认可当前 selected chain；同 ID 重复、sibling、未发布文件或可选字段异常均拒绝。</remarks>
+    /// <exception cref="ArtifactValidationException">ID、记录归属、引用形状或文件身份与内容无效。</exception>
+    internal async Task<(ArtifactReference Artifact, byte[] Bytes)> ReadImageArtifactByIdAsync(
+        string artifactId,
+        long maximumBytes,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        await appendGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(artifactId) || !IsValidOpaqueId(artifactId) || lastRecordId is null)
+                {
+                    throw new ArtifactValidationException();
+                }
+
+                ArtifactReference? recorded = null;
+                foreach (var record in BuildParentChain(lastRecordId))
+                {
+                    if (record.Kind != "artifact.created" ||
+                        !record.Data.TryGetProperty("artifact", out var artifact) ||
+                        artifact.ValueKind != JsonValueKind.Object ||
+                        !artifact.TryGetProperty("artifactId", out var idElement) ||
+                        idElement.ValueKind != JsonValueKind.String ||
+                        !string.Equals(idElement.GetString(), artifactId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (recorded is not null)
+                    {
+                        throw new ArtifactValidationException();
+                    }
+
+                    recorded = artifact.Deserialize<ArtifactReference>(JsonDefaults.Options)
+                        ?? throw new ArtifactValidationException();
+                }
+
+                if (recorded is null)
+                {
+                    throw new ArtifactValidationException();
+                }
+
+                ImageArtifactValidation.ValidateReference(recorded, maximumBytes);
+                var bytes = await SessionArtifactStore.ReadImageAsync(
+                    DirectoryPath,
+                    recorded,
+                    maximumBytes,
+                    cancellationToken).ConfigureAwait(false);
+                return (recorded, bytes);
+            }
+            catch (ArtifactValidationException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or JsonException or JournalCorruptException or
+                JournalIncompatibleException)
             {
                 throw new ArtifactValidationException();
             }

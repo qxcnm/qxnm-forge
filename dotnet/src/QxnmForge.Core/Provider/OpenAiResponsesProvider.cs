@@ -12,6 +12,7 @@ namespace QxnmForge.Provider;
 /// </summary>
 public class OpenAiResponsesProvider : HttpSseProviderBase
 {
+    private readonly bool imageOutputEnabled;
     /// <summary>
     /// 功能：创建禁用重定向并最终注入 Bearer credential 的 Responses adapter。
     /// 作者：高宏顺
@@ -77,6 +78,7 @@ public class OpenAiResponsesProvider : HttpSseProviderBase
     /// <param name="apiFamily">canonical Responses API family。</param>
     /// <param name="models">同一 snapshot 的 catalog allowlist。</param>
     /// <param name="options">HTTP/SSE/retry 策略。</param>
+    /// <param name="imageOutputEnabled">是否切换到只声明 image_generation 的有界非流式图片输出。</param>
     /// <remarks>不变量：credential 值不进入 adapter 字段，且模型必须精确命中 allowlist。</remarks>
     private protected OpenAiResponsesProvider(
         string id,
@@ -84,7 +86,8 @@ public class OpenAiResponsesProvider : HttpSseProviderBase
         ProviderCredentialSource credentialSource,
         string apiFamily,
         IReadOnlyList<string> models,
-        ProviderTransportOptions options)
+        ProviderTransportOptions options,
+        bool imageOutputEnabled = false)
         : base(
             id,
             endpoint,
@@ -96,6 +99,7 @@ public class OpenAiResponsesProvider : HttpSseProviderBase
             apiFamily,
             models)
     {
+        this.imageOutputEnabled = imageOutputEnabled;
     }
 
     /// <summary>
@@ -110,15 +114,25 @@ public class OpenAiResponsesProvider : HttpSseProviderBase
         var body = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["model"] = request.Selection.ModelId,
-            ["input"] = MapInput(request.Messages),
-            ["stream"] = true,
+            ["input"] = MapInput(request.Messages, request.ResolvedImages),
+            ["stream"] = !imageOutputEnabled,
         };
         if (request.SystemInstructions is not null)
         {
             body["instructions"] = request.SystemInstructions;
         }
 
-        if (request.Tools.Count > 0)
+        if (imageOutputEnabled)
+        {
+            body["tools"] = new[]
+            {
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["type"] = "image_generation",
+                },
+            };
+        }
+        else if (request.Tools.Count > 0)
         {
             body["tools"] = request.Tools.Select(static tool =>
                 new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -147,6 +161,19 @@ public class OpenAiResponsesProvider : HttpSseProviderBase
         CancellationToken callerCancellation,
         [EnumeratorCancellation] CancellationToken totalCancellation)
     {
+        if (imageOutputEnabled)
+        {
+            var payload = await CustomProviderImageCodec
+                .ReadJsonObjectAsync(response, totalCancellation)
+                .ConfigureAwait(false);
+            foreach (var signal in ParseImageCompletion(payload))
+            {
+                yield return signal;
+            }
+
+            yield break;
+        }
+
         var tools = new Dictionary<string, ToolAccumulator>(StringComparer.Ordinal);
         var completed = false;
         await foreach (var item in ReadSseAsync(
@@ -247,6 +274,108 @@ public class OpenAiResponsesProvider : HttpSseProviderBase
     }
 
     /// <summary>
+    /// 功能：严格解析 Responses 非流式 image_generation_call.result 或纯文字完成。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="payload">已拒绝重复 key 的完整响应对象。</param>
+    /// <returns>一个全批图片完成信号，或纯文字与可选 usage 信号。</returns>
+    /// <remarks>不变量：图片 result 固定为 canonical PNG Base64；最多八图且总计 4 MiB。</remarks>
+    private static IReadOnlyList<ProviderSignal> ParseImageCompletion(JsonElement payload)
+    {
+        if (!payload.TryGetProperty("id", out var responseId) ||
+            responseId.ValueKind != JsonValueKind.String ||
+            string.IsNullOrEmpty(responseId.GetString()) ||
+            !payload.TryGetProperty("status", out var status) ||
+            status.ValueKind != JsonValueKind.String ||
+            status.GetString() != "completed" ||
+            !payload.TryGetProperty("output", out var output) ||
+            output.ValueKind != JsonValueKind.Array)
+        {
+            throw ImageProtocolFailure();
+        }
+
+        var images = new List<ProviderImagePayload>();
+        var text = new StringBuilder();
+        long totalBytes = 0;
+        foreach (var item in output.EnumerateArray())
+        {
+            if (!item.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            if (type.GetString() == "image_generation_call")
+            {
+                if (images.Count >= CustomProviderImageCodec.MaxImageCount ||
+                    !item.TryGetProperty("result", out var result) ||
+                    result.ValueKind != JsonValueKind.String)
+                {
+                    throw ImageProtocolFailure();
+                }
+
+                var decoded = CustomProviderImageCodec.DecodeBase64Image(
+                    result.GetString()!,
+                    "image/png");
+                totalBytes += decoded.Bytes.LongLength;
+                if (totalBytes > CustomProviderImageCodec.MaxTotalImageBytes)
+                {
+                    throw ImageProtocolFailure();
+                }
+
+                images.Add(decoded);
+            }
+            else if (type.GetString() == "message" &&
+                item.TryGetProperty("content", out var content) &&
+                content.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var part in content.EnumerateArray())
+                {
+                    if (part.TryGetProperty("type", out var partType) &&
+                        partType.ValueKind == JsonValueKind.String &&
+                        partType.GetString() == "output_text" &&
+                        part.TryGetProperty("text", out var partText) &&
+                        partText.ValueKind == JsonValueKind.String)
+                    {
+                        text.Append(partText.GetString());
+                    }
+                }
+            }
+        }
+
+        if (images.Count == 0 && text.Length == 0)
+        {
+            throw ImageProtocolFailure();
+        }
+
+        var usage = payload.TryGetProperty("usage", out var usageElement) &&
+            usageElement.ValueKind == JsonValueKind.Object
+            ? ParseUsage(usageElement)
+            : Usage.Zero;
+        return
+        [
+            new ProviderImageCompletionSignal(
+                text.Length == 0 ? null : text.ToString(),
+                images,
+                usage),
+        ];
+    }
+
+    /// <summary>
+    /// 功能：构造不回显 Responses 图片正文的固定协议错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    private static ProviderOperationException ImageProtocolFailure()
+    {
+        return new ProviderOperationException(new PortableError(
+            -32005,
+            "provider image response is invalid",
+            false,
+            new ErrorDetails("provider_protocol_error")));
+    }
+
+    /// <summary>
     /// 功能：把 portable messages 映射为 Responses input message/function_call/function_call_output items。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -254,6 +383,21 @@ public class OpenAiResponsesProvider : HttpSseProviderBase
     /// <param name="messages">有序 portable 消息。</param>
     /// <returns>Responses input 数组。</returns>
     protected static List<object> MapInput(IReadOnlyList<JsonElement> messages)
+    {
+        return MapInput(messages, []);
+    }
+
+    /// <summary>
+    /// 功能：把 portable messages 与同 Session 复核图片映射为 Responses input items。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="messages">有序 portable 消息。</param>
+    /// <param name="resolvedImages">仅存在于请求期的已复核图片。</param>
+    /// <returns>包含 input_text/input_image 与 function items 的数组。</returns>
+    private static List<object> MapInput(
+        IReadOnlyList<JsonElement> messages,
+        IReadOnlyList<ProviderResolvedImage> resolvedImages)
     {
         var input = new List<object>();
         foreach (var message in messages)
@@ -270,18 +414,57 @@ public class OpenAiResponsesProvider : HttpSseProviderBase
                 continue;
             }
 
-            input.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+            var nativeContent = new List<object>();
+            var hasImage = false;
+            var hasText = false;
+            if (message.TryGetProperty("content", out var nativeBlocks) &&
+                nativeBlocks.ValueKind == JsonValueKind.Array)
             {
-                ["role"] = role,
-                ["content"] = new[]
+                foreach (var block in nativeBlocks.EnumerateArray())
                 {
-                    new Dictionary<string, object?>(StringComparer.Ordinal)
+                    var blockType = block.TryGetProperty("type", out var blockTypeElement) &&
+                        blockTypeElement.ValueKind == JsonValueKind.String
+                        ? blockTypeElement.GetString()
+                        : null;
+                    if (blockType == "text")
                     {
-                        ["type"] = role == "assistant" ? "output_text" : "input_text",
-                        ["text"] = ProviderJson.ExtractText(message),
-                    },
-                },
-            });
+                        hasText = true;
+                        nativeContent.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["type"] = role == "assistant" ? "output_text" : "input_text",
+                            ["text"] = ProviderJson.RequireString(block, "text"),
+                        });
+                    }
+                    else if (blockType == "image_ref" && role == "user")
+                    {
+                        hasImage = true;
+                        nativeContent.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["type"] = "input_image",
+                            ["image_url"] = CustomProviderImageCodec.ResolveDataUrl(block, resolvedImages),
+                        });
+                    }
+                }
+            }
+
+            if (!hasImage && hasText)
+            {
+                nativeContent.Clear();
+                nativeContent.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["type"] = role == "assistant" ? "output_text" : "input_text",
+                    ["text"] = ProviderJson.ExtractText(message),
+                });
+            }
+
+            if (role != "assistant" || hasText || hasImage)
+            {
+                input.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["role"] = role,
+                    ["content"] = nativeContent,
+                });
+            }
             if (role == "assistant" &&
                 message.TryGetProperty("content", out var content) &&
                 content.ValueKind == JsonValueKind.Array)
@@ -314,15 +497,21 @@ public class OpenAiResponsesProvider : HttpSseProviderBase
     /// <returns>规范化 token 计数。</returns>
     private static Usage ParseUsage(JsonElement usage)
     {
-        var input = usage.TryGetProperty("input_tokens", out var inputElement) && inputElement.TryGetInt64(out var inputValue)
+        var input = usage.TryGetProperty("input_tokens", out var inputElement) &&
+            inputElement.TryGetInt64(out var inputValue) &&
+            inputValue >= 0
             ? inputValue
             : 0;
-        var output = usage.TryGetProperty("output_tokens", out var outputElement) && outputElement.TryGetInt64(out var outputValue)
+        var output = usage.TryGetProperty("output_tokens", out var outputElement) &&
+            outputElement.TryGetInt64(out var outputValue) &&
+            outputValue >= 0
             ? outputValue
             : 0;
-        var total = usage.TryGetProperty("total_tokens", out var totalElement) && totalElement.TryGetInt64(out var totalValue)
+        var total = usage.TryGetProperty("total_tokens", out var totalElement) &&
+            totalElement.TryGetInt64(out var totalValue) &&
+            totalValue >= 0
             ? totalValue
-            : input + output;
+            : input > long.MaxValue - output ? long.MaxValue : input + output;
         return new Usage(input, output, total);
     }
 

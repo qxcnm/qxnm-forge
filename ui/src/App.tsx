@@ -4,7 +4,11 @@ import { useTranslation } from "react-i18next";
 
 import { AppHeader } from "@/components/app-header";
 import { Composer, type ComposerAttachment } from "@/components/composer";
-import { Conversation, type SubmittedMessage } from "@/components/conversation";
+import {
+  Conversation,
+  type SubmittedMessage,
+  type SubmittedMessageImage,
+} from "@/components/conversation";
 import { ReviewSheet } from "@/components/review-sheet";
 import {
   AlertDialog,
@@ -37,6 +41,7 @@ import { SettingsWorkspace } from "@/features/settings/settings-workspace";
 import { useApplicationServiceEvents } from "@/lib/application-service-events";
 import { createApplicationServiceClient } from "@/lib/mock-application-service";
 import { findModelByRouteKey, getModelRouteKey } from "@/lib/model-route";
+import { readNativeClipboardImage } from "@/lib/native-clipboard-image";
 import { getRuntimeEnvironment } from "@/lib/runtime-environment";
 import i18n from "@/i18n";
 import {
@@ -46,10 +51,12 @@ import {
 import type {
   ApprovalChoice,
   ApplicationServiceClient,
+  ArtifactReadResult,
   BackendKind,
   ModelDescriptor,
   PendingApproval,
   RunStartInput,
+  SessionArtifactReference,
   SessionSnapshot,
   SessionSummary,
 } from "@/types/application-service";
@@ -59,6 +66,16 @@ const EMPTY_MODELS = [] as const;
 const EMPTY_AGENT_PROFILES = [] as const;
 const EMPTY_SESSIONS: readonly SessionSummary[] = [];
 const EMPTY_MESSAGES: readonly SubmittedMessage[] = [];
+const EMPTY_SESSION_IMAGES: ReadonlyMap<string, LoadedSessionImage> = new Map();
+const SUPPORTED_IMAGE_MEDIA_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+const MAX_SESSION_IMAGE_COUNT = 32;
+const MAX_SESSION_IMAGE_BYTES = 64 * 1_024 * 1_024;
+const MAX_IMAGE_BASE64_LENGTH = 44_739_244;
 
 interface RunMutationRequest {
   readonly client: ApplicationServiceClient;
@@ -69,6 +86,7 @@ interface RunMutationRequest {
   readonly supportsFollowUp: boolean;
   readonly supportsSessionGet: boolean;
   readonly submissionId: string;
+  readonly acceptedUserMessage: SubmittedMessage;
 }
 
 interface ApprovalMutationRequest {
@@ -104,6 +122,12 @@ type PendingWorkspaceNavigation =
   | { readonly kind: "view"; readonly view: Exclude<WorkspaceView, "conversation"> };
 
 type SessionMessages = ReadonlyMap<string, readonly SubmittedMessage[]>;
+
+interface LoadedSessionImage {
+  readonly status: "ready" | "error";
+  readonly dataUrl?: string;
+  readonly retryable?: boolean;
+}
 
 const CLEAN_AGENT_NAVIGATION_STATE: AgentWorkspaceNavigationState = {
   dirty: false,
@@ -161,7 +185,11 @@ function isApprovalExpired(approval: PendingApproval): boolean {
  * 作者：高宏顺
  * 邮箱：18272669457@163.com
  */
-function projectSessionSnapshotMessages(snapshot: SessionSnapshot): readonly SubmittedMessage[] {
+function projectSessionSnapshotMessages(
+  snapshot: SessionSnapshot,
+  loadedImages: ReadonlyMap<string, LoadedSessionImage> = EMPTY_SESSION_IMAGES,
+  artifactReadAvailable = false,
+): readonly SubmittedMessage[] {
   const projectedMessages: Array<{
     readonly message: SubmittedMessage;
     readonly timestamp: number;
@@ -172,12 +200,24 @@ function projectSessionSnapshotMessages(snapshot: SessionSnapshot): readonly Sub
       .map((content) => content.text)
       .join("\n\n")
       .trim();
+    const images: readonly SubmittedMessageImage[] = message.content
+      .filter((content) => content.type === "image_ref")
+      .map((content) => {
+        const loaded = loadedImages.get(getArtifactProjectionKey(content.artifact));
+        return {
+          artifactId: content.artifact.artifactId,
+          alt: content.alt ?? content.artifact.displayName ?? i18n.t("conversation.imageAlt"),
+          status: loaded?.status ?? (artifactReadAvailable ? "loading" : "error"),
+          ...(loaded?.dataUrl ? { dataUrl: loaded.dataUrl } : {}),
+        };
+      });
     let projection: SubmittedMessage;
     if (message.role === "user") {
       projection = {
         id: message.messageId,
         role: "user" as const,
         content: text || i18n.t("app.attachmentSent"),
+        ...(images.length > 0 ? { images } : {}),
       };
     } else if (message.role === "tool") {
       projection = {
@@ -201,7 +241,10 @@ function projectSessionSnapshotMessages(snapshot: SessionSnapshot): readonly Sub
             ? i18n.t("app.requestedTools", {
                 names: toolNames.join(i18n.resolvedLanguage === "en-US" ? ", " : "、"),
               })
-            : i18n.t("app.runCompleted")),
+            : images.length > 0
+              ? i18n.t("app.imageResponse")
+              : i18n.t("app.runCompleted")),
+        ...(images.length > 0 ? { images } : {}),
       };
     }
     const timestamp = Date.parse(message.time);
@@ -320,6 +363,202 @@ function projectSessionSnapshotMessages(snapshot: SessionSnapshot): readonly Sub
   return projectedMessages
     .sort((left, right) => left.timestamp - right.timestamp || left.order - right.order)
     .map((projection) => projection.message);
+}
+
+/**
+ * 为同一 artifact 元数据生成不含路径和正文的前端投影键。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function getArtifactProjectionKey(artifact: SessionArtifactReference): string {
+  return [
+    artifact.artifactId,
+    artifact.mediaType,
+    artifact.byteLength.toString(10),
+    artifact.sha256,
+  ].join("\u0000");
+}
+
+/**
+ * 从完整 Session 消息中收集唯一图片引用，不读取普通 artifact 或宿主路径。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function collectSessionImageReferences(
+  snapshot: SessionSnapshot | undefined,
+): readonly SessionArtifactReference[] {
+  const references = new Map<string, SessionArtifactReference>();
+  const messages = snapshot?.messages ?? [];
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex];
+    if (!message) {
+      continue;
+    }
+    for (let contentIndex = 0; contentIndex < message.content.length; contentIndex += 1) {
+      const content = message.content[contentIndex];
+      if (content.type === "image_ref") {
+        const key = getArtifactProjectionKey(content.artifact);
+        if (!references.has(key)) {
+          references.set(key, content.artifact);
+        }
+      }
+    }
+  }
+  return [...references.values()];
+}
+
+/**
+ * 校验 artifact 回读字节并构造仅含受支持图片 MIME 的 data URL。
+ *
+ * 输入：快照中的不可变引用与 application service 的严格回读结果。
+ * 输出：元数据、长度、签名和摘要全部匹配时的 data URL。
+ * 失败：任何身份、Base64、MIME、大小、签名或摘要差异均拒绝。
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+async function createVerifiedImageDataUrl(
+  reference: SessionArtifactReference,
+  result: ArtifactReadResult,
+): Promise<string> {
+  if (
+    result.artifact.artifactId !== reference.artifactId ||
+    result.artifact.mediaType !== reference.mediaType ||
+    result.artifact.byteLength !== reference.byteLength ||
+    result.artifact.sha256 !== reference.sha256 ||
+    result.dataBase64.length > MAX_IMAGE_BASE64_LENGTH ||
+    !SUPPORTED_IMAGE_MEDIA_TYPES.has(reference.mediaType) ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      result.dataBase64,
+    )
+  ) {
+    throw new Error("Artifact image response does not match the Session reference");
+  }
+  let binary: string;
+  let bytes: Uint8Array;
+  try {
+    binary = atob(result.dataBase64);
+    bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    throw new Error("Artifact image response is not valid Base64");
+  }
+  if (
+    bytes.length === 0 ||
+    bytes.length > 32 * 1_024 * 1_024 ||
+    bytes.length !== reference.byteLength ||
+    btoa(binary) !== result.dataBase64
+  ) {
+    throw new Error("Artifact image response violates the byte boundary");
+  }
+  const prefix = String.fromCharCode(...bytes.slice(0, 12));
+  const signatureMatches =
+    (reference.mediaType === "image/png" &&
+      [137, 80, 78, 71, 13, 10, 26, 10].every(
+        (value, index) => bytes[index] === value,
+      )) ||
+    (reference.mediaType === "image/jpeg" &&
+      bytes[0] === 0xff &&
+      bytes[1] === 0xd8 &&
+      bytes[2] === 0xff) ||
+    (reference.mediaType === "image/gif" &&
+      (prefix.startsWith("GIF87a") || prefix.startsWith("GIF89a"))) ||
+    (reference.mediaType === "image/webp" &&
+      prefix.startsWith("RIFF") &&
+      prefix.slice(8) === "WEBP");
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const sha256 = [...digest]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+  if (!signatureMatches || sha256 !== reference.sha256) {
+    throw new Error("Artifact image response failed integrity validation");
+  }
+  return `data:${reference.mediaType};base64,${result.dataBase64}`;
+}
+
+/**
+ * 逐张读取 Session 图片；单张失败收敛为占位状态，不阻断其他消息或文本。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+async function loadSessionImages(
+  client: ApplicationServiceClient,
+  sessionId: string,
+  references: readonly SessionArtifactReference[],
+): Promise<ReadonlyMap<string, LoadedSessionImage>> {
+  const images = new Map<string, LoadedSessionImage>();
+  const eligibleReferences: SessionArtifactReference[] = [];
+  let remainingBytes = MAX_SESSION_IMAGE_BYTES;
+  for (let index = references.length - 1; index >= 0; index -= 1) {
+    const reference = references[index];
+    if (!reference) {
+      continue;
+    }
+    const key = getArtifactProjectionKey(reference);
+    images.set(key, { status: "error" });
+    if (
+      eligibleReferences.length >= MAX_SESSION_IMAGE_COUNT ||
+      reference.byteLength <= 0 ||
+      reference.byteLength > 32 * 1_024 * 1_024 ||
+      reference.byteLength > remainingBytes
+    ) {
+      continue;
+    }
+    eligibleReferences.push(reference);
+    remainingBytes -= reference.byteLength;
+  }
+  eligibleReferences.reverse();
+  for (let index = 0; index < eligibleReferences.length; index += 2) {
+    const batch = await Promise.all(
+      eligibleReferences.slice(index, index + 2).map(async (reference) => {
+        let result: ArtifactReadResult;
+        try {
+          result = await client.readArtifact({
+            sessionId,
+            artifactId: reference.artifactId,
+          });
+        } catch {
+          return {
+            key: getArtifactProjectionKey(reference),
+            image: { status: "error", retryable: true } as const,
+          };
+        }
+        try {
+          return {
+            key: getArtifactProjectionKey(reference),
+            image: {
+              status: "ready",
+              dataUrl: await createVerifiedImageDataUrl(reference, result),
+            } as const,
+          };
+        } catch {
+          return {
+            key: getArtifactProjectionKey(reference),
+            image: { status: "error" } as const,
+          };
+        }
+      }),
+    );
+    for (const entry of batch) {
+      images.set(entry.key, entry.image);
+    }
+  }
+  return images;
+}
+
+/**
+ * 判断提交完成时附件是否仍是原始 ID 快照，避免清掉等待期间的新附件。
+ *
+ * 作者：高宏顺
+ * 邮箱：18272669457@163.com
+ */
+function haveSameAttachmentIds(
+  left: readonly ComposerAttachment[],
+  right: readonly ComposerAttachment[],
+): boolean {
+  return left.length === right.length &&
+    left.every((attachment, index) => attachment.id === right[index]?.id);
 }
 
 /**
@@ -607,6 +846,11 @@ export default function App({
     mutationFn: (request: RunMutationRequest) => request.client.startRun(request.input),
     onSuccess: async (result, request) => {
       if (request.client.mode === "faux-preview") {
+        appendSessionMessage(
+          request.backend,
+          request.input.sessionId,
+          request.acceptedUserMessage,
+        );
         const translation: NonNullable<SubmittedMessage["translation"]> = request.agentProfileName
           ? {
               key: "app.runAcceptedPreviewProfile",
@@ -635,12 +879,15 @@ export default function App({
         serviceOwnedSessionKeys.current.add(
           getSessionScopeKey(request.backend, request.input.sessionId),
         );
-        await Promise.all([
-          queryClient.invalidateQueries({
+        let durableSnapshotLoaded = false;
+        const refreshSessionList = queryClient
+          .invalidateQueries({
             queryKey: ["sessions", request.client.mode, request.backend],
-          }),
-          request.supportsSessionGet
-            ? queryClient.fetchQuery({
+          })
+          .catch(() => undefined);
+        const refreshSessionSnapshot = request.supportsSessionGet
+          ? queryClient
+              .fetchQuery({
                 queryKey: [
                   "session-snapshot",
                   request.client.mode,
@@ -649,8 +896,19 @@ export default function App({
                 ],
                 queryFn: () => request.client.getSession(request.input.sessionId),
               })
-            : Promise.resolve(),
-        ]).catch(() => undefined);
+              .then(() => {
+                durableSnapshotLoaded = true;
+              })
+              .catch(() => undefined)
+          : Promise.resolve();
+        await Promise.all([refreshSessionList, refreshSessionSnapshot]);
+        if (!durableSnapshotLoaded) {
+          appendSessionMessage(
+            request.backend,
+            request.input.sessionId,
+            request.acceptedUserMessage,
+          );
+        }
         if (useWorkspaceUiStore.getState().backend === request.backend) {
           setPreviewSessions((currentSessions) =>
             currentSessions.filter((session) => session.sessionId !== request.input.sessionId),
@@ -869,10 +1127,43 @@ export default function App({
     staleTime: 0,
     refetchInterval: (query) => query.state.data?.activeRunId ? 750 : false,
   });
+  const sessionImageReferences = useMemo(
+    () => collectSessionImageReferences(sessionSnapshotQuery.data),
+    [sessionSnapshotQuery.data],
+  );
+  const artifactReadAvailable = serviceMethods.includes("artifacts/read");
+  const sessionImagesQuery = useQuery({
+    queryKey: [
+      "session-image-artifacts",
+      applicationService.mode,
+      backend,
+      activeSession.sessionId,
+      ...sessionImageReferences.map(getArtifactProjectionKey),
+    ],
+    queryFn: () =>
+      loadSessionImages(
+        applicationService,
+        activeSession.sessionId,
+        sessionImageReferences,
+      ),
+    enabled:
+      activeView === "conversation" &&
+      artifactReadAvailable &&
+      sessionImageReferences.length > 0,
+    staleTime: 15_000,
+    refetchInterval: (query) =>
+      query.state.data && [...query.state.data.values()].some((image) => image.retryable)
+        ? 3_000
+        : false,
+  });
   const localMessages =
     messagesBySession.get(getSessionScopeKey(backend, activeSession.sessionId)) ?? [];
   const snapshotMessages = sessionSnapshotQuery.data
-    ? projectSessionSnapshotMessages(sessionSnapshotQuery.data)
+    ? projectSessionSnapshotMessages(
+        sessionSnapshotQuery.data,
+        sessionImagesQuery.data ?? EMPTY_SESSION_IMAGES,
+        artifactReadAvailable,
+      )
     : EMPTY_MESSAGES;
   const activeRequestPending = busySessionKeys.has(
     getSessionScopeKey(backend, activeSession.sessionId),
@@ -1070,14 +1361,18 @@ export default function App({
   };
 
   /**
-   * 将用户消息提交到当前后端客户端并清空输入框。
+   * 将用户消息提交到当前后端客户端，并仅在 run/start 真正接受后清空输入。
    *
    * 作者：高宏顺
    * 邮箱：18272669457@163.com
    */
   const handleSubmit = async () => {
-    const prompt = draft.trim();
+    const submittedDraft = draft;
+    const prompt = submittedDraft.trim();
     const pendingAttachments = composerAttachments;
+    const hasImageAttachments = pendingAttachments.some(
+      (attachment) => attachment.kind === "image",
+    );
     const sessionScopeKey = getSessionScopeKey(backend, activeSession.sessionId);
     if (
       (prompt.length === 0 && pendingAttachments.length === 0) ||
@@ -1091,10 +1386,11 @@ export default function App({
     ) {
       return;
     }
-    if (
-      pendingAttachments.some((attachment) => attachment.kind === "image") &&
-      !serviceMethods.includes("artifacts/create")
-    ) {
+    if (hasImageAttachments && !selectedModel.supportsImageInput) {
+      setComposerSubmissionError(t("composer.modelImageInputUnsupported"));
+      return;
+    }
+    if (hasImageAttachments && !serviceMethods.includes("artifacts/create")) {
       setComposerSubmissionError(t("composer.attachmentUploadUnsupported"));
       return;
     }
@@ -1103,8 +1399,10 @@ export default function App({
     activeRunSubmissions.current.set(sessionScopeKey, submissionId);
     setBusySessionKeys((currentSessionKeys) => new Set(currentSessionKeys).add(sessionScopeKey));
     setComposerSubmissionError(null);
+    let runSubmitted = false;
     try {
       const runAttachments: NonNullable<RunStartInput["attachments"]>[number][] = [];
+      const submittedImages: SubmittedMessageImage[] = [];
       for (const attachment of pendingAttachments) {
         if (attachment.kind === "text") {
           runAttachments.push({
@@ -1122,6 +1420,12 @@ export default function App({
             artifact: created.artifact,
             alt: attachment.name,
           });
+          submittedImages.push({
+            artifactId: created.artifact.artifactId,
+            alt: attachment.name,
+            status: "ready",
+            dataUrl: `data:${attachment.mediaType};base64,${attachment.dataBase64}`,
+          });
         }
       }
       const attachmentLabels = pendingAttachments.map((attachment) =>
@@ -1129,14 +1433,8 @@ export default function App({
           ? `[Image: ${attachment.name}]`
           : `[File: ${attachment.name}]`,
       );
-      appendSessionMessage(backend, activeSession.sessionId, {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: [prompt, ...attachmentLabels].filter(Boolean).join("\n"),
-      });
-      setDraft("");
-      setComposerAttachments([]);
-      runMutation.mutate({
+      runSubmitted = true;
+      await runMutation.mutateAsync({
         client: applicationService,
         backend,
         backendLabel: backend === "rust" ? "Rust" : ".NET",
@@ -1144,6 +1442,12 @@ export default function App({
         supportsFollowUp: serviceMethods.includes("run/followUp"),
         supportsSessionGet: serviceMethods.includes("session/get"),
         submissionId,
+        acceptedUserMessage: {
+          id: crypto.randomUUID(),
+          role: "user",
+          content: [prompt, ...attachmentLabels].filter(Boolean).join("\n"),
+          ...(submittedImages.length > 0 ? { images: submittedImages } : {}),
+        },
         input: {
           sessionId: activeSession.sessionId,
           prompt,
@@ -1163,14 +1467,37 @@ export default function App({
             : {}),
         },
       });
+      const currentWorkspace = useWorkspaceUiStore.getState();
+      if (
+        currentWorkspace.backend === backend &&
+        currentWorkspace.activeSessionId === activeSession.sessionId
+      ) {
+        setDraft((currentDraft) => currentDraft === submittedDraft ? "" : currentDraft);
+        setComposerAttachments((currentAttachments) =>
+          haveSameAttachmentIds(currentAttachments, pendingAttachments)
+            ? []
+            : currentAttachments,
+        );
+        setComposerSubmissionError(null);
+      }
     } catch {
-      activeRunSubmissions.current.delete(sessionScopeKey);
-      setBusySessionKeys((currentSessionKeys) => {
-        const nextSessionKeys = new Set(currentSessionKeys);
-        nextSessionKeys.delete(sessionScopeKey);
-        return nextSessionKeys;
-      });
-      setComposerSubmissionError(t("composer.attachmentUploadFailed"));
+      if (!runSubmitted) {
+        activeRunSubmissions.current.delete(sessionScopeKey);
+        setBusySessionKeys((currentSessionKeys) => {
+          const nextSessionKeys = new Set(currentSessionKeys);
+          nextSessionKeys.delete(sessionScopeKey);
+          return nextSessionKeys;
+        });
+      }
+      const currentWorkspace = useWorkspaceUiStore.getState();
+      if (
+        currentWorkspace.backend === backend &&
+        currentWorkspace.activeSessionId === activeSession.sessionId
+      ) {
+        setComposerSubmissionError(
+          t(runSubmitted ? "composer.runSubmissionFailed" : "composer.attachmentUploadFailed"),
+        );
+      }
     }
   };
 
@@ -1202,6 +1529,8 @@ export default function App({
       setPreviewSessions((currentSessions) => [session, ...currentSessions]);
     }
     setDraft("");
+    setComposerAttachments([]);
+    setComposerSubmissionError(null);
     setActiveSessionId(sessionId);
     setActiveView("conversation");
     setMobileSidebarOpen(false);
@@ -1371,6 +1700,9 @@ export default function App({
       (session) => session.sessionId !== removedSessionId,
     );
     if (fallback) {
+      setDraft("");
+      setComposerAttachments([]);
+      setComposerSubmissionError(null);
       setActiveSessionId(fallback.sessionId);
       return;
     }
@@ -1699,6 +2031,11 @@ export default function App({
               agentProfiles={selectableAgentProfiles}
               selectedAgentProfileId={activeAgentProfileId}
               runtimeEnvironment={runtimeEnvironmentQuery.data}
+              readNativeClipboardImage={
+                runtimeEnvironmentQuery.data?.mode === "desktop-local"
+                  ? readNativeClipboardImage
+                  : undefined
+              }
               submitMode={composerSubmitMode}
               busy={activeSessionBusy}
               onValueChange={(value) => {

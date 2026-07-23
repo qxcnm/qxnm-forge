@@ -12,6 +12,7 @@ namespace QxnmForge.Provider;
 /// </summary>
 public class OpenAiChatProvider : HttpSseProviderBase
 {
+    private readonly bool imageOutputEnabled;
     /// <summary>
     /// 功能：创建禁用重定向并在最终 header 边界注入 Bearer credential 的 Chat adapter。
     /// 作者：高宏顺
@@ -65,6 +66,7 @@ public class OpenAiChatProvider : HttpSseProviderBase
     /// <param name="apiFamily">canonical Chat API family。</param>
     /// <param name="models">同一 snapshot 的 catalog allowlist。</param>
     /// <param name="options">有界 HTTP/SSE/retry 策略。</param>
+    /// <param name="imageOutputEnabled">是否切换到无 function tools 的有界非流式图片输出。</param>
     /// <remarks>不变量：credential 值不进入 adapter 字段，且模型不能绕过 allowlist。</remarks>
     private protected OpenAiChatProvider(
         string id,
@@ -72,7 +74,8 @@ public class OpenAiChatProvider : HttpSseProviderBase
         ProviderCredentialSource credentialSource,
         string apiFamily,
         IReadOnlyList<string> models,
-        ProviderTransportOptions options)
+        ProviderTransportOptions options,
+        bool imageOutputEnabled = false)
         : base(
             id,
             endpoint,
@@ -84,6 +87,7 @@ public class OpenAiChatProvider : HttpSseProviderBase
             apiFamily,
             models)
     {
+        this.imageOutputEnabled = imageOutputEnabled;
     }
 
     /// <summary>
@@ -95,7 +99,7 @@ public class OpenAiChatProvider : HttpSseProviderBase
     /// <returns>包含 model、messages、stream 和 stream_options 的 JSON object。</returns>
     protected override JsonElement CreateRequestBody(ProviderRequest request)
     {
-        var messages = MapMessages(request.Messages);
+        var messages = MapMessages(request.Messages, request.ResolvedImages);
         if (request.SystemInstructions is not null)
         {
             messages.Insert(0, new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -109,10 +113,18 @@ public class OpenAiChatProvider : HttpSseProviderBase
         {
             ["model"] = request.Selection.ModelId,
             ["messages"] = messages,
-            ["stream"] = true,
-            ["stream_options"] = new Dictionary<string, object?> { ["include_usage"] = true },
+            ["stream"] = !imageOutputEnabled,
         };
-        if (request.Tools.Count > 0)
+        if (!imageOutputEnabled)
+        {
+            body["stream_options"] = new Dictionary<string, object?> { ["include_usage"] = true };
+        }
+        else
+        {
+            body["modalities"] = new[] { "text", "image" };
+        }
+
+        if (!imageOutputEnabled && request.Tools.Count > 0)
         {
             body["tools"] = request.Tools.Select(static tool =>
                 new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -144,6 +156,19 @@ public class OpenAiChatProvider : HttpSseProviderBase
         CancellationToken callerCancellation,
         [EnumeratorCancellation] CancellationToken totalCancellation)
     {
+        if (imageOutputEnabled)
+        {
+            var payload = await CustomProviderImageCodec
+                .ReadJsonObjectAsync(response, totalCancellation)
+                .ConfigureAwait(false);
+            foreach (var signal in ParseImageCompletion(payload))
+            {
+                yield return signal;
+            }
+
+            yield break;
+        }
+
         var tools = new Dictionary<int, ToolAccumulator>();
         var completed = false;
         await foreach (var item in ReadSseAsync(
@@ -223,13 +248,151 @@ public class OpenAiChatProvider : HttpSseProviderBase
     }
 
     /// <summary>
-    /// 功能：把 portable message 投影为 Chat role/content/tool_calls 结构。
+    /// 功能：严格解析 Chat 非流式纯文字或 message.images 图片完成。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="payload">已拒绝重复 key 的完整 JSON object。</param>
+    /// <returns>纯文字信号与可选 usage，或单个全批图片完成信号。</returns>
+    /// <remarks>不变量：choices 必须恰好一项；图片先全批验证，最多八图且总计 4 MiB。</remarks>
+    private static IReadOnlyList<ProviderSignal> ParseImageCompletion(JsonElement payload)
+    {
+        if (!payload.TryGetProperty("id", out var responseId) ||
+            responseId.ValueKind != JsonValueKind.String ||
+            string.IsNullOrEmpty(responseId.GetString()) ||
+            !payload.TryGetProperty("choices", out var choices) ||
+            choices.ValueKind != JsonValueKind.Array ||
+            choices.GetArrayLength() != 1)
+        {
+            throw ImageProtocolFailure();
+        }
+
+        var choice = choices[0];
+        if (!choice.TryGetProperty("message", out var message) ||
+            message.ValueKind != JsonValueKind.Object)
+        {
+            throw ImageProtocolFailure();
+        }
+
+        var text = message.TryGetProperty("content", out var content) &&
+            content.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrEmpty(content.GetString())
+            ? content.GetString()
+            : null;
+        var images = new List<ProviderImagePayload>();
+        long totalBytes = 0;
+        if (message.TryGetProperty("images", out var imageValues))
+        {
+            if (imageValues.ValueKind != JsonValueKind.Array ||
+                imageValues.GetArrayLength() > CustomProviderImageCodec.MaxImageCount)
+            {
+                throw ImageProtocolFailure();
+            }
+
+            foreach (var image in imageValues.EnumerateArray())
+            {
+                if (!image.TryGetProperty("image_url", out var imageUrl) ||
+                    imageUrl.ValueKind != JsonValueKind.Object ||
+                    !imageUrl.TryGetProperty("url", out var url) ||
+                    url.ValueKind != JsonValueKind.String)
+                {
+                    throw ImageProtocolFailure();
+                }
+
+                var decoded = CustomProviderImageCodec.DecodeDataUrl(url.GetString()!);
+                totalBytes += decoded.Bytes.LongLength;
+                if (totalBytes > CustomProviderImageCodec.MaxTotalImageBytes)
+                {
+                    throw ImageProtocolFailure();
+                }
+
+                images.Add(decoded);
+            }
+        }
+
+        if (images.Count == 0 && text is null)
+        {
+            throw ImageProtocolFailure();
+        }
+
+        var usage = payload.TryGetProperty("usage", out var usageElement) &&
+            usageElement.ValueKind == JsonValueKind.Object
+            ? ParseUsage(usageElement)
+            : Usage.Zero;
+        var providerFinishReason = choice.TryGetProperty("finish_reason", out var finishReason) &&
+            finishReason.ValueKind == JsonValueKind.String
+            ? finishReason.GetString()
+            : null;
+        if (images.Count > 0 && providerFinishReason != "stop")
+        {
+            throw ImageProtocolFailure();
+        }
+
+        return
+        [
+            new ProviderImageCompletionSignal(
+                text,
+                images,
+                usage,
+                NormalizeFinishReason(providerFinishReason ?? "stop")),
+        ];
+    }
+
+    /// <summary>
+    /// 功能：把 Chat 非流式结束原因收窄为 portable spelling。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="value">Provider finish_reason；缺失已由调用方替换为 stop。</param>
+    /// <returns>stop、tool_use、length 或 error。</returns>
+    private static string NormalizeFinishReason(string value)
+    {
+        return value switch
+        {
+            "stop" => "stop",
+            "tool_calls" or "function_call" => "tool_use",
+            "length" => "length",
+            _ => "error",
+        };
+    }
+
+    /// <summary>
+    /// 功能：构造不回显 Chat 图片正文或 URL 的固定协议错误。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    private static ProviderOperationException ImageProtocolFailure()
+    {
+        return new ProviderOperationException(new PortableError(
+            -32005,
+            "provider image response is invalid",
+            false,
+            new ErrorDetails("provider_protocol_error")));
+    }
+
+    /// <summary>
+    /// 功能：为不支持图片的派生 Chat family 保留文本映射入口。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
     /// <param name="messages">有序 portable 消息。</param>
-    /// <returns>保持顺序的 Chat message objects。</returns>
+    /// <returns>不含图片字节的 Chat message objects。</returns>
     protected static List<object> MapMessages(IReadOnlyList<JsonElement> messages)
+    {
+        return MapMessages(messages, []);
+    }
+
+    /// <summary>
+    /// 功能：把 portable message 与复核图片投影为 Chat role/content/tool_calls 结构。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="messages">有序 portable 消息。</param>
+    /// <param name="resolvedImages">同 Session 复核的请求期图片。</param>
+    /// <returns>保持顺序的 Chat message objects。</returns>
+    private static List<object> MapMessages(
+        IReadOnlyList<JsonElement> messages,
+        IReadOnlyList<ProviderResolvedImage> resolvedImages)
     {
         var result = new List<object>(messages.Count);
         foreach (var message in messages)
@@ -269,14 +432,61 @@ public class OpenAiChatProvider : HttpSseProviderBase
                 }
             }
 
+            object nativeContent = ProviderJson.ExtractText(message);
+            var hasText = false;
+            var hasImage = false;
+            if (message.TryGetProperty("content", out var nativeBlocks) &&
+                nativeBlocks.ValueKind == JsonValueKind.Array)
+            {
+                var parts = new List<object>();
+                foreach (var block in nativeBlocks.EnumerateArray())
+                {
+                    var type = block.TryGetProperty("type", out var typeElement) &&
+                        typeElement.ValueKind == JsonValueKind.String
+                        ? typeElement.GetString()
+                        : null;
+                    if (type == "text")
+                    {
+                        hasText = true;
+                        parts.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["type"] = "text",
+                            ["text"] = ProviderJson.RequireString(block, "text"),
+                        });
+                    }
+                    else if (type == "image_ref" && role == "user")
+                    {
+                        hasImage = true;
+                        parts.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["type"] = "image_url",
+                            ["image_url"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+                            {
+                                ["url"] = CustomProviderImageCodec.ResolveDataUrl(block, resolvedImages),
+                            },
+                        });
+                    }
+                }
+
+                if (hasImage)
+                {
+                    nativeContent = parts;
+                }
+            }
+
             var mapped = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["role"] = role,
-                ["content"] = ProviderJson.ExtractText(message),
+                ["content"] = nativeContent,
             };
             if (toolCalls.Count > 0)
             {
                 mapped["tool_calls"] = toolCalls;
+            }
+
+            if (role == "assistant" && !hasText && !hasImage && toolCalls.Count == 0)
+            {
+                continue;
             }
 
             result.Add(mapped);
@@ -294,15 +504,21 @@ public class OpenAiChatProvider : HttpSseProviderBase
     /// <returns>规范化 Usage。</returns>
     private static Usage ParseUsage(JsonElement usage)
     {
-        var input = usage.TryGetProperty("prompt_tokens", out var inputElement) && inputElement.TryGetInt64(out var inputValue)
+        var input = usage.TryGetProperty("prompt_tokens", out var inputElement) &&
+            inputElement.TryGetInt64(out var inputValue) &&
+            inputValue >= 0
             ? inputValue
             : 0;
-        var output = usage.TryGetProperty("completion_tokens", out var outputElement) && outputElement.TryGetInt64(out var outputValue)
+        var output = usage.TryGetProperty("completion_tokens", out var outputElement) &&
+            outputElement.TryGetInt64(out var outputValue) &&
+            outputValue >= 0
             ? outputValue
             : 0;
-        var total = usage.TryGetProperty("total_tokens", out var totalElement) && totalElement.TryGetInt64(out var totalValue)
+        var total = usage.TryGetProperty("total_tokens", out var totalElement) &&
+            totalElement.TryGetInt64(out var totalValue) &&
+            totalValue >= 0
             ? totalValue
-            : input + output;
+            : 0;
         return new Usage(input, output, total);
     }
 

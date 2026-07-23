@@ -3,6 +3,8 @@ import type {
   ApplicationServiceClient,
   ArtifactCreateInput,
   ArtifactCreateResult,
+  ArtifactReadInput,
+  ArtifactReadResult,
   BackendKind,
   InitializeResult,
   ModelDescriptor,
@@ -17,6 +19,7 @@ import type {
   RunStartInput,
   RunStartResult,
   SessionSnapshot,
+  SessionArtifactReference,
   SessionSummary,
 } from "@/types/application-service";
 import {
@@ -36,6 +39,7 @@ const SHARED_METHODS = [
   "initialize",
   "models/list",
   "artifacts/create",
+  "artifacts/read",
   "run/start",
   "run/cancel",
   "approval/respond",
@@ -71,8 +75,11 @@ const FAUX_MODEL_DESCRIPTOR: ModelDescriptor = {
   modelId: "faux-v1",
   apiFamily: "faux",
   displayName: "Faux v1",
+  capabilities: { input: ["text", "image"], output: ["text"] },
   supportsReasoning: false,
   supportsTools: true,
+  supportsImageInput: true,
+  supportsImageOutput: false,
 };
 
 const PREVIEW_PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
@@ -146,6 +153,14 @@ interface MockServiceState {
   readonly providerConnections: Map<string, ProviderConnection>;
   readonly sessions: Map<string, SessionSummary>;
   readonly sessionSnapshots: Map<string, SessionSnapshot>;
+  readonly artifacts: Map<string, MockArtifactRecord>;
+}
+
+/** 浏览器 faux 服务保留的有界图片正文，不包含宿主路径。 */
+interface MockArtifactRecord {
+  readonly sessionId: string;
+  readonly artifact: SessionArtifactReference;
+  readonly dataBase64: string;
 }
 
 /** desktop-shell faux 会话的脱敏 portable 消息投影。 */
@@ -260,6 +275,7 @@ function createMockServiceState(): MockServiceState {
         createDefaultSessionSnapshot(session.sessionId),
       ]),
     ),
+    artifacts: new Map(),
   };
 }
 
@@ -319,6 +335,7 @@ export function resetMockApplicationServiceState(): void {
     state.providerConnections.clear();
     state.sessions.clear();
     state.sessionSnapshots.clear();
+    state.artifacts.clear();
     for (const session of DEFAULT_SESSIONS) {
       state.sessions.set(session.sessionId, session);
       state.sessionSnapshots.set(
@@ -360,8 +377,14 @@ function createMockModelSnapshot(state: MockServiceState): readonly ModelDescrip
         modelId,
         apiFamily: connection.apiFamily,
         displayName: modelId,
+        capabilities: {
+          input: connection.supportsImageInput ? ["text", "image"] : ["text"],
+          output: connection.supportsImageOutput ? ["text", "image"] : ["text"],
+        },
         supportsReasoning: false,
         supportsTools: connection.supportsTools,
+        supportsImageInput: connection.supportsImageInput,
+        supportsImageOutput: connection.supportsImageOutput,
       });
     }
   }
@@ -436,6 +459,8 @@ function normalizeProviderInput(input: ProviderConnectionInput): ProviderConnect
     apiFamily,
     modelIds,
     supportsTools: input.supportsTools,
+    supportsImageInput: input.supportsImageInput,
+    supportsImageOutput: input.supportsImageOutput,
     logoAssetId: input.logoAssetId?.trim() || null,
     enabled: input.enabled,
   };
@@ -595,12 +620,17 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
     ) {
       throw new Error("run input must not be empty");
     }
-    if (
-      !createMockModelSnapshot(this.#state).some(
-        (model) => getModelRouteKey(model) === getModelRouteKey(input.model),
-      )
-    ) {
+    const selectedModel = createMockModelSnapshot(this.#state).find(
+      (model) => getModelRouteKey(model) === getModelRouteKey(input.model),
+    );
+    if (!selectedModel) {
       throw new Error("model route is not available");
+    }
+    if (
+      (input.attachments ?? []).some((attachment) => attachment.type === "image_ref") &&
+      !selectedModel.supportsImageInput
+    ) {
+      throw new Error("model route does not support image input");
     }
 
     await wait(760);
@@ -635,14 +665,36 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
       .map((value) => value.toString(16).padStart(2, "0"))
       .join("");
     await wait(30);
-    return {
-      artifact: {
-        artifactId: `artifact-${crypto.randomUUID()}`,
-        mediaType: input.mediaType,
-        byteLength: bytes.length,
-        sha256,
-      },
+    const artifact: SessionArtifactReference = {
+      artifactId: `artifact-${crypto.randomUUID()}`,
+      mediaType: input.mediaType,
+      byteLength: bytes.length,
+      sha256,
     };
+    this.#state.artifacts.set(artifact.artifactId, {
+      sessionId: input.sessionId,
+      artifact,
+      dataBase64: input.dataBase64,
+    });
+    return { artifact };
+  }
+
+  /**
+   * 从 faux 内存状态读取同 Session 的有界图片，不返回文件系统路径。
+   *
+   * 输入：Session 与 opaque artifact ID；输出：独立复制的元数据与 Base64 正文。
+   * 不变量：只返回由 createArtifact 验证并发布的同 Session 图片。
+   * 失败：图片不存在或 Session 不匹配时拒绝。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  public async readArtifact(input: ArtifactReadInput): Promise<ArtifactReadResult> {
+    const record = this.#state.artifacts.get(input.artifactId);
+    if (!record || record.sessionId !== input.sessionId) {
+      throw new Error("artifact image is unavailable for this Session");
+    }
+    await wait(20);
+    return { artifact: { ...record.artifact }, dataBase64: record.dataBase64 };
   }
 
   /**
@@ -1006,6 +1058,11 @@ class MockApplicationServiceClient implements ApplicationServiceClient {
       throw new Error("Session 不存在");
     }
     this.#state.sessionSnapshots.delete(sessionId);
+    for (const [artifactId, artifact] of this.#state.artifacts) {
+      if (artifact.sessionId === sessionId) {
+        this.#state.artifacts.delete(artifactId);
+      }
+    }
     await wait(50);
   }
 }

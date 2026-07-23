@@ -37,6 +37,19 @@ internal static partial class SessionArtifactStore
     private const int MacOpenNoFollow = 0x100;
 
     /// <summary>
+    /// 功能：保存一张已完整落盘但尚未对 Session 可见的图片及最终引用。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="Reference">预先计算的 portable 内容绑定引用。</param>
+    /// <param name="TemporaryPath">artifacts 目录内的随机临时叶路径。</param>
+    /// <param name="TargetPath">最终 opaque artifact 叶路径。</param>
+    private sealed record StagedImage(
+        ArtifactReference Reference,
+        string TemporaryPath,
+        string TargetPath);
+
+    /// <summary>
     /// 功能：从已验证 artifact ID 派生叶路径，以 O_NOFOLLOW 打开并复核长度、hash、MIME 和魔数。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
@@ -113,7 +126,7 @@ internal static partial class SessionArtifactStore
     }
 
     /// <summary>
-    /// 功能：把完整已验证图像写入同目录临时文件，flush 后无覆盖原子发布并刷新目录。
+    /// 功能：把完整已验证图像作为单项批次暂存并无覆盖发布。
     /// 作者：高宏顺
     /// 邮箱：18272669457@163.com
     /// </summary>
@@ -134,56 +147,84 @@ internal static partial class SessionArtifactStore
         long maximumBytes,
         CancellationToken cancellationToken)
     {
-        if (!ImageArtifactValidation.IsSupportedMediaType(mediaType) ||
-            bytes.Length == 0 ||
-            bytes.Length > maximumBytes ||
-            !ImageArtifactValidation.HasMatchingSignature(mediaType, bytes.Span))
+        var published = await PublishImageBatchAsync(
+            sessionDirectory,
+            [(mediaType, bytes)],
+            maximumBytes,
+            cancellationToken).ConfigureAwait(false);
+        return published[0];
+    }
+
+    /// <summary>
+    /// 功能：先验证并完整暂存整批图片，再统一发布最终叶文件。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionDirectory">当前 journal 所属 Session 目录。</param>
+    /// <param name="images">已经由 Provider 完整解析的有序 MIME 与图片字节。</param>
+    /// <param name="maximumBytes">每张 artifact 的协商上限。</param>
+    /// <param name="cancellationToken">验证、暂存和最终发布取消信号。</param>
+    /// <returns>全部成功发布后的有序 portable 引用；空批次返回空数组。</returns>
+    /// <remarks>不变量：任一候选先验无效时不创建文件；全部临时文件 durable 后才开始最终 rename；失败时尽力移除本批临时文件与尚未被 journal 引用的目标文件。</remarks>
+    /// <exception cref="ArtifactValidationException">任一 MIME、空数据、大小或魔数无效。</exception>
+    /// <exception cref="IOException">暂存、flush、无覆盖发布或目录 flush 失败。</exception>
+    /// <exception cref="OperationCanceledException">最终批次提交前调用方取消。</exception>
+    internal static async Task<IReadOnlyList<ArtifactReference>> PublishImageBatchAsync(
+        string sessionDirectory,
+        IReadOnlyList<(string MediaType, ReadOnlyMemory<byte> Bytes)> images,
+        long maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        var frozenImages = new List<(string MediaType, ReadOnlyMemory<byte> Bytes)>(images.Count);
+        foreach (var image in images)
         {
-            throw new ArtifactValidationException();
+            ValidateImageCandidate(image.MediaType, image.Bytes, maximumBytes);
+            var frozenBytes = (ReadOnlyMemory<byte>)image.Bytes.ToArray();
+            ValidateImageCandidate(image.MediaType, frozenBytes, maximumBytes);
+            frozenImages.Add((image.MediaType, frozenBytes));
+        }
+
+        if (images.Count == 0)
+        {
+            return [];
         }
 
         var artifactDirectory = ValidateArtifactDirectory(sessionDirectory);
-        var artifactId = "artifact-" + Guid.NewGuid().ToString("N");
-        var temporary = Path.Combine(artifactDirectory, ".tmp-" + Guid.NewGuid().ToString("N"));
-        var target = Path.Combine(artifactDirectory, artifactId);
-        var published = false;
+        var staged = new List<StagedImage>(images.Count);
+        var publishedTargets = new List<string>(images.Count);
+        var committed = false;
         try
         {
-            var options = new FileStreamOptions
+            foreach (var image in frozenImages)
             {
-                Mode = FileMode.CreateNew,
-                Access = FileAccess.Write,
-                Share = FileShare.None,
-                BufferSize = 16_384,
-                Options = FileOptions.Asynchronous |
-                    FileOptions.SequentialScan |
-                    FileOptions.WriteThrough,
-            };
-            if (!OperatingSystem.IsWindows())
-            {
-                options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-            }
-
-            await using (var stream = new FileStream(temporary, options))
-            {
-                if (!OperatingSystem.IsWindows())
-                {
-                    File.SetUnixFileMode(
-                        temporary,
-                        UnixFileMode.UserRead | UnixFileMode.UserWrite);
-                }
-
-                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
+                cancellationToken.ThrowIfCancellationRequested();
+                var artifactId = "artifact-" + Guid.NewGuid().ToString("N");
+                var temporary = Path.Combine(
+                    artifactDirectory,
+                    ".tmp-" + Guid.NewGuid().ToString("N"));
+                var target = Path.Combine(artifactDirectory, artifactId);
+                await StageImageAsync(temporary, image.Bytes, cancellationToken).ConfigureAwait(false);
+                var hash = Convert.ToHexString(SHA256.HashData(image.Bytes.Span)).ToLowerInvariant();
+                staged.Add(new StagedImage(
+                    new ArtifactReference(
+                        artifactId,
+                        image.MediaType,
+                        image.Bytes.Length,
+                        hash),
+                    temporary,
+                    target));
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporary, target, overwrite: false);
-            published = true;
+            foreach (var image in staged)
+            {
+                File.Move(image.TemporaryPath, image.TargetPath, overwrite: false);
+                publishedTargets.Add(image.TargetPath);
+            }
+
             FlushDirectory(artifactDirectory);
-            var hash = Convert.ToHexString(SHA256.HashData(bytes.Span)).ToLowerInvariant();
-            return new ArtifactReference(artifactId, mediaType, bytes.Length, hash);
+            committed = true;
+            return staged.Select(static image => image.Reference).ToArray();
         }
         catch (OperationCanceledException)
         {
@@ -200,18 +241,165 @@ internal static partial class SessionArtifactStore
         }
         finally
         {
-            if (!published)
+            foreach (var image in staged)
             {
-                try
+                TryDeleteFile(image.TemporaryPath);
+            }
+
+            if (!committed)
+            {
+                foreach (var target in publishedTargets)
                 {
-                    File.Delete(temporary);
-                }
-                catch (Exception exception) when (
-                    exception is IOException or UnauthorizedAccessException or NotSupportedException)
-                {
-                    _ = exception;
+                    TryDeleteFile(target);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// 功能：在 journal 批次提交失败后删除整批尚未被任何 durable 记录引用的图片文件。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="sessionDirectory">当前 journal 自持 Session 目录。</param>
+    /// <param name="artifacts">刚由同一次批量发布返回的有序引用。</param>
+    /// <param name="maximumBytes">发布时使用的同一单 artifact 上限。</param>
+    /// <remarks>不变量：调用方只能在对应 journal 批次确认未提交时调用；全部引用先验证后才删除，绝不接受 wire 路径。</remarks>
+    /// <exception cref="ArtifactValidationException">任一引用不能安全派生目标叶文件。</exception>
+    /// <exception cref="IOException">删除任一目标或刷新目录失败。</exception>
+    internal static void DeleteUncommittedImageBatch(
+        string sessionDirectory,
+        IReadOnlyList<ArtifactReference> artifacts,
+        long maximumBytes)
+    {
+        var artifactDirectory = ValidateArtifactDirectory(sessionDirectory);
+        var targets = new List<string>(artifacts.Count);
+        foreach (var artifact in artifacts)
+        {
+            try
+            {
+                ImageArtifactValidation.ValidateReference(artifact, maximumBytes);
+            }
+            catch (ArgumentException)
+            {
+                throw new ArtifactValidationException();
+            }
+
+            targets.Add(Path.Combine(artifactDirectory, artifact.ArtifactId));
+        }
+
+        try
+        {
+            foreach (var target in targets)
+            {
+                File.Delete(target);
+            }
+
+            FlushDirectory(artifactDirectory);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            throw new IOException("uncommitted artifact batch cleanup failed");
+        }
+    }
+
+    /// <summary>
+    /// 功能：验证单张待暂存图片的 MIME、大小和魔数。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="mediaType">候选规范图片 MIME。</param>
+    /// <param name="bytes">完整候选字节。</param>
+    /// <param name="maximumBytes">单 artifact 上限。</param>
+    /// <exception cref="ArtifactValidationException">任一内容绑定条件不满足。</exception>
+    private static void ValidateImageCandidate(
+        string mediaType,
+        ReadOnlyMemory<byte> bytes,
+        long maximumBytes)
+    {
+        if (!ImageArtifactValidation.IsSupportedMediaType(mediaType) ||
+            bytes.Length == 0 ||
+            bytes.Length > maximumBytes ||
+            !ImageArtifactValidation.HasMatchingSignature(mediaType, bytes.Span))
+        {
+            throw new ArtifactValidationException();
+        }
+    }
+
+    /// <summary>
+    /// 功能：把一张已验证图片完整写入 owner-only 同目录临时文件并强制落盘。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="temporary">artifacts 目录内随机且尚不存在的临时叶路径。</param>
+    /// <param name="bytes">已通过批次先验验证的完整图片字节。</param>
+    /// <param name="cancellationToken">写入与 flush 取消信号。</param>
+    /// <returns>临时文件 durable 后完成的 Task。</returns>
+    private static async Task StageImageAsync(
+        string temporary,
+        ReadOnlyMemory<byte> bytes,
+        CancellationToken cancellationToken)
+    {
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            BufferSize = 16_384,
+            Options = FileOptions.Asynchronous |
+                FileOptions.SequentialScan |
+                FileOptions.WriteThrough,
+        };
+        if (!OperatingSystem.IsWindows())
+        {
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+
+        var completed = false;
+        try
+        {
+            await using (var stream = new FileStream(temporary, options))
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    File.SetUnixFileMode(
+                        temporary,
+                        UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+
+                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+
+            completed = true;
+        }
+        finally
+        {
+            if (!completed)
+            {
+                TryDeleteFile(temporary);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 功能：在失败清理路径尽力删除单个已知随机临时或未引用目标叶文件。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <param name="path">仅由本批次在已验证 artifacts 目录内生成的绝对路径。</param>
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            _ = exception;
         }
     }
 

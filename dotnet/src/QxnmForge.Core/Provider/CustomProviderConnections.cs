@@ -18,6 +18,8 @@ namespace QxnmForge.Provider;
 /// <param name="ModelsUrl">显式模型目录 URL，不从 BaseUrl 猜测。</param>
 /// <param name="ModelIds">0..512 个唯一模型 ID；为空时连接尚不可执行。</param>
 /// <param name="SupportsTools">是否显式声明该连接支持 function tools。</param>
+/// <param name="SupportsImageInput">是否显式声明该连接支持图片输入。</param>
+/// <param name="SupportsImageOutput">是否显式声明该连接支持图片输出。</param>
 /// <param name="LogoAssetId">可选的本地公开 Logo 资源安全 ID。</param>
 /// <param name="Enabled">是否允许下次 daemon 启动注册该连接。</param>
 public sealed record ProviderConnectionInput(
@@ -28,6 +30,8 @@ public sealed record ProviderConnectionInput(
     string ModelsUrl,
     IReadOnlyList<string> ModelIds,
     bool SupportsTools,
+    bool SupportsImageInput,
+    bool SupportsImageOutput,
     string? LogoAssetId,
     bool Enabled);
 
@@ -45,6 +49,8 @@ public sealed record ProviderConnectionInput(
 /// <param name="ModelsUrl">经验证的精确模型目录 URL。</param>
 /// <param name="ModelIds">显式模型 allowlist。</param>
 /// <param name="SupportsTools">显式工具能力声明。</param>
+/// <param name="SupportsImageInput">显式图片输入能力声明。</param>
+/// <param name="SupportsImageOutput">显式图片输出能力声明。</param>
 /// <param name="LogoAssetId">可选本地公开 Logo 资源 ID。</param>
 /// <param name="Enabled">是否允许下次启动注册。</param>
 /// <param name="CreatedAt">UTC 创建时间。</param>
@@ -59,6 +65,8 @@ public sealed record ProviderConnectionConfiguration(
     string ModelsUrl,
     IReadOnlyList<string> ModelIds,
     bool SupportsTools,
+    bool SupportsImageInput,
+    bool SupportsImageOutput,
     string? LogoAssetId,
     bool Enabled,
     DateTimeOffset CreatedAt,
@@ -78,6 +86,8 @@ public sealed record ProviderConnectionConfiguration(
 /// <param name="ModelsUrl">公开的精确模型目录 URL。</param>
 /// <param name="ModelIds">显式模型 allowlist。</param>
 /// <param name="SupportsTools">显式工具能力声明。</param>
+/// <param name="SupportsImageInput">显式图片输入能力声明。</param>
+/// <param name="SupportsImageOutput">显式图片输出能力声明。</param>
 /// <param name="LogoAssetId">可选本地公开 Logo 资源 ID。</param>
 /// <param name="Enabled">是否允许启动注册。</param>
 /// <param name="CredentialConfigured">CredentialStore 是否包含该 Provider ID。</param>
@@ -94,6 +104,8 @@ public sealed record ProviderConnection(
     string ModelsUrl,
     IReadOnlyList<string> ModelIds,
     bool SupportsTools,
+    bool SupportsImageInput,
+    bool SupportsImageOutput,
     string? LogoAssetId,
     bool Enabled,
     bool CredentialConfigured,
@@ -106,7 +118,7 @@ public sealed record ProviderConnection(
 /// 作者：高宏顺
 /// 邮箱：18272669457@163.com
 /// </summary>
-/// <param name="SchemaVersion">固定 0.2。</param>
+/// <param name="SchemaVersion">固定 0.3。</param>
 /// <param name="Connections">最多 128 条非敏感连接。</param>
 internal sealed record ProviderConnectionDocument(
     string SchemaVersion,
@@ -242,7 +254,8 @@ public sealed class ProviderConnectionException : Exception
 /// </summary>
 public sealed class CustomProviderConnectionStore
 {
-    private const string SchemaVersion = "0.2";
+    private const string SchemaVersion = "0.3";
+    private const string PreviousSchemaVersion = "0.2";
     private const string LegacySchemaVersion = "0.1";
     private const long MaxSafeInteger = 9_007_199_254_740_991;
     private const int MaximumDocumentBytes = 2 * 1024 * 1024;
@@ -418,6 +431,8 @@ public sealed class CustomProviderConnectionStore
                 input.ModelsUrl,
                 input.ModelIds.ToArray(),
                 input.SupportsTools,
+                input.SupportsImageInput,
+                input.SupportsImageOutput,
                 input.LogoAssetId,
                 input.Enabled,
                 now,
@@ -542,6 +557,8 @@ public sealed class CustomProviderConnectionStore
                 input.ModelsUrl,
                 input.ModelIds.ToArray(),
                 input.SupportsTools,
+                input.SupportsImageInput,
+                input.SupportsImageOutput,
                 input.LogoAssetId,
                 input.Enabled,
                 current.CreatedAt,
@@ -965,14 +982,19 @@ public sealed class CustomProviderConnectionStore
         var document = CommercialFileSafety.ParseStrict<ProviderConnectionDocument>(
             CommercialFileSafety.ReadBounded(path, MaximumDocumentBytes, sensitive: false),
             "provider_connection_json");
-        if (document.SchemaVersion == LegacySchemaVersion)
+        if (document.SchemaVersion is LegacySchemaVersion or PreviousSchemaVersion)
         {
+            var legacy = document.SchemaVersion == LegacySchemaVersion;
             var migrated = document.Connections.Select(connection => connection with
             {
-                ModelsUrl = NativeProviderEndpoint.Append(
-                    new Uri(connection.BaseUrl, UriKind.Absolute),
-                    "/models").ToString(),
-                SupportsTools = false,
+                ModelsUrl = legacy
+                    ? NativeProviderEndpoint.Append(
+                        new Uri(connection.BaseUrl, UriKind.Absolute),
+                        "/models").ToString()
+                    : connection.ModelsUrl,
+                SupportsTools = legacy ? false : connection.SupportsTools,
+                SupportsImageInput = false,
+                SupportsImageOutput = false,
             }).ToArray();
             document = new ProviderConnectionDocument(SchemaVersion, migrated);
         }
@@ -1046,6 +1068,8 @@ public sealed class CustomProviderConnectionStore
                     connection.ModelsUrl,
                     connection.ModelIds,
                     connection.SupportsTools,
+                    connection.SupportsImageInput,
+                    connection.SupportsImageOutput,
                     connection.LogoAssetId,
                     connection.Enabled),
                 allowLoopbackHttp);
@@ -1403,7 +1427,6 @@ public sealed class CustomProviderConnectionService
         CustomProviderConnectionStore.ValidateSafeId(providerId, "providerId");
         ValidateCredentialKind(credentialKind);
         if (credential is null ||
-            credential.Length is < 1 or > 16_384 ||
             credential.IndexOfAny(['\r', '\n', '\0']) >= 0)
         {
             throw ProviderConnectionException.Invalid("credential");
@@ -1461,7 +1484,6 @@ public sealed class CustomProviderConnectionService
     {
         CustomProviderConnectionStore.ValidateSafeId(providerId, "providerId");
         if (credential is null ||
-            credential.Length is < 1 or > 16_384 ||
             credential.IndexOfAny(['\r', '\n', '\0']) >= 0)
         {
             throw ProviderConnectionException.Invalid("credential");
@@ -1541,7 +1563,7 @@ public sealed class CustomProviderConnectionService
     /// </summary>
     /// <param name="connectionId">服务签发的安全连接 ID。</param>
     /// <returns>符合 CredentialStore ID 语法的独立 identity。</returns>
-    private static string ImageCredentialId(string connectionId)
+    internal static string ImageCredentialId(string connectionId)
     {
         return connectionId + ".image";
     }
@@ -1878,6 +1900,8 @@ public sealed class CustomProviderConnectionService
             connection.ModelsUrl,
             connection.ModelIds.ToArray(),
             connection.SupportsTools,
+            connection.SupportsImageInput,
+            connection.SupportsImageOutput,
             connection.LogoAssetId,
             connection.Enabled,
             configured.Contains(connection.ProviderId),
@@ -1918,6 +1942,11 @@ internal sealed class CustomOpenAiCompletionsProvider : OpenAiChatProvider
 {
     private readonly Uri baseEndpoint;
     private readonly bool supportsTools;
+    private readonly bool supportsImageInput;
+    private readonly bool supportsImageOutput;
+    private readonly ProviderCredentialStore credentialStore;
+    private readonly string providerCredentialId;
+    private readonly string? imageCredentialId;
 
     /// <summary>
     /// 功能：创建只在请求最终边界读取 stored credential 的自定义 adapter。
@@ -1934,13 +1963,25 @@ internal sealed class CustomOpenAiCompletionsProvider : OpenAiChatProvider
         : base(
             connection.ProviderId,
             new Uri(connection.BaseUrl, UriKind.Absolute),
-            ProviderCredentialSource.FromStore(store, connection.ProviderId),
+            ProviderCredentialSource.FromStore(
+                store,
+                connection.SupportsImageOutput
+                    ? CustomProviderConnectionService.ImageCredentialId(connection.ConnectionId)
+                    : connection.ProviderId),
             connection.ApiFamily,
             connection.ModelIds,
-            options)
+            options,
+            connection.SupportsImageOutput)
     {
         baseEndpoint = new Uri(connection.BaseUrl, UriKind.Absolute);
-        supportsTools = connection.SupportsTools;
+        supportsTools = connection.SupportsTools && !connection.SupportsImageOutput;
+        supportsImageInput = connection.SupportsImageInput;
+        supportsImageOutput = connection.SupportsImageOutput;
+        credentialStore = store;
+        providerCredentialId = connection.ProviderId;
+        imageCredentialId = connection.SupportsImageOutput
+            ? CustomProviderConnectionService.ImageCredentialId(connection.ConnectionId)
+            : null;
     }
 
     /// <summary>
@@ -1949,6 +1990,33 @@ internal sealed class CustomOpenAiCompletionsProvider : OpenAiChatProvider
     /// 邮箱：18272669457@163.com
     /// </summary>
     public override bool SupportsTools => supportsTools;
+
+    /// <summary>
+    /// 功能：取得启动快照中有效的图片输入能力。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public override bool SupportsImageInput => supportsImageInput;
+
+    /// <summary>
+    /// 功能：取得经独立图片 credential presence 收窄后的图片输出能力。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public override bool SupportsImageOutput => supportsImageOutput;
+
+    /// <summary>
+    /// 功能：请求前同时复核普通与独立图片 credential，禁止图片 key 回退。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>所有当前 route 必需 credential 均存在时为 true。</returns>
+    public override bool IsAvailable()
+    {
+        return imageCredentialId is null
+            ? credentialStore.ContainsAll(providerCredentialId)
+            : credentialStore.ContainsAll(providerCredentialId, imageCredentialId);
+    }
 
     /// <summary>
     /// 功能：在用户固定 API base 后同源追加 `/chat/completions`。
@@ -1972,6 +2040,11 @@ internal sealed class CustomOpenAiResponsesProvider : OpenAiResponsesProvider
 {
     private readonly Uri baseEndpoint;
     private readonly bool supportsTools;
+    private readonly bool supportsImageInput;
+    private readonly bool supportsImageOutput;
+    private readonly ProviderCredentialStore credentialStore;
+    private readonly string providerCredentialId;
+    private readonly string? imageCredentialId;
 
     /// <summary>
     /// 功能：创建只在最终请求边界读取独立 Responses credential 的自定义 adapter。
@@ -1988,13 +2061,25 @@ internal sealed class CustomOpenAiResponsesProvider : OpenAiResponsesProvider
         : base(
             connection.ProviderId,
             new Uri(connection.BaseUrl, UriKind.Absolute),
-            ProviderCredentialSource.FromStore(store, connection.ProviderId),
+            ProviderCredentialSource.FromStore(
+                store,
+                connection.SupportsImageOutput
+                    ? CustomProviderConnectionService.ImageCredentialId(connection.ConnectionId)
+                    : connection.ProviderId),
             connection.ApiFamily,
             connection.ModelIds,
-            options)
+            options,
+            connection.SupportsImageOutput)
     {
         baseEndpoint = new Uri(connection.BaseUrl, UriKind.Absolute);
-        supportsTools = connection.SupportsTools;
+        supportsTools = connection.SupportsTools && !connection.SupportsImageOutput;
+        supportsImageInput = connection.SupportsImageInput;
+        supportsImageOutput = connection.SupportsImageOutput;
+        credentialStore = store;
+        providerCredentialId = connection.ProviderId;
+        imageCredentialId = connection.SupportsImageOutput
+            ? CustomProviderConnectionService.ImageCredentialId(connection.ConnectionId)
+            : null;
     }
 
     /// <summary>
@@ -2003,6 +2088,33 @@ internal sealed class CustomOpenAiResponsesProvider : OpenAiResponsesProvider
     /// 邮箱：18272669457@163.com
     /// </summary>
     public override bool SupportsTools => supportsTools;
+
+    /// <summary>
+    /// 功能：取得启动快照中有效的图片输入能力。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public override bool SupportsImageInput => supportsImageInput;
+
+    /// <summary>
+    /// 功能：取得经独立图片 credential presence 收窄后的图片输出能力。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    public override bool SupportsImageOutput => supportsImageOutput;
+
+    /// <summary>
+    /// 功能：请求前同时复核普通与独立图片 credential，禁止图片 key 回退。
+    /// 作者：高宏顺
+    /// 邮箱：18272669457@163.com
+    /// </summary>
+    /// <returns>所有当前 route 必需 credential 均存在时为 true。</returns>
+    public override bool IsAvailable()
+    {
+        return imageCredentialId is null
+            ? credentialStore.ContainsAll(providerCredentialId)
+            : credentialStore.ContainsAll(providerCredentialId, imageCredentialId);
+    }
 
     /// <summary>
     /// 功能：在用户固定 API base 后同源追加 `/responses`。
@@ -2062,10 +2174,10 @@ internal static class CustomProviderConnectionAdapterFactory
             modelId,
             connection.ApiFamily,
             new ModelCapabilities(
-                ["text"],
-                ["text"],
-                Streaming: true,
-                Tools: connection.SupportsTools,
+                connection.SupportsImageInput ? ["text", "image"] : ["text"],
+                connection.SupportsImageOutput ? ["text", "image"] : ["text"],
+                Streaming: !connection.SupportsImageOutput,
+                Tools: connection.SupportsTools && !connection.SupportsImageOutput,
                 Reasoning: false))).ToArray();
     }
 }

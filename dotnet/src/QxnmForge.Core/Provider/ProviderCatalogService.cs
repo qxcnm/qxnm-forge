@@ -240,6 +240,8 @@ public sealed class ProviderCatalogService
                         "/models").AbsoluteUri,
                     [],
                     SupportsTools: false,
+                    SupportsImageInput: false,
+                    SupportsImageOutput: false,
                     template.LogoAssetId,
                     Enabled: true),
                 allowLoopbackHttp: false);

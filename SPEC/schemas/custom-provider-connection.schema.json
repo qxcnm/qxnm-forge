@@ -1,10 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentprotocol.local/spec/0.2/schemas/custom-provider-connection.schema.json",
-  "title": "Brand-neutral custom Provider connection DTO v0.2",
+  "$id": "https://schemas.agentprotocol.local/spec/0.3/schemas/custom-provider-connection.schema.json",
+  "title": "Brand-neutral custom Provider connection DTO v0.3",
   "$comment": "Author: 高宏顺 <18272669457@163.com>. Connection DTOs never contain credentials.",
   "$ref": "#/$defs/connection",
   "$defs": {
+    "httpsEndpoint": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?)(?::(?:0|[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*)?$",
+      "maxLength": 2048
+    },
     "connectionInput": {
       "type": "object",
       "required": [
@@ -15,6 +21,8 @@
         "modelsUrl",
         "modelIds",
         "supportsTools",
+        "supportsImageInput",
+        "supportsImageOutput",
         "logoAssetId",
         "enabled"
       ],
@@ -22,8 +30,8 @@
         "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
         "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
         "apiFamily": { "enum": ["openai-responses", "openai-completions"] },
-        "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$", "maxLength": 2048 },
-        "modelsUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$", "maxLength": 2048 },
+        "baseUrl": { "$ref": "#/$defs/httpsEndpoint" },
+        "modelsUrl": { "$ref": "#/$defs/httpsEndpoint" },
         "modelIds": {
           "type": "array",
           "items": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -32,6 +40,8 @@
           "uniqueItems": true
         },
         "supportsTools": { "type": "boolean" },
+        "supportsImageInput": { "type": "boolean" },
+        "supportsImageOutput": { "type": "boolean" },
         "logoAssetId": {
           "type": ["string", "null"],
           "pattern": "^[a-z0-9][a-z0-9.-]*$",
@@ -53,6 +63,8 @@
         "modelsUrl",
         "modelIds",
         "supportsTools",
+        "supportsImageInput",
+        "supportsImageOutput",
         "logoAssetId",
         "enabled",
         "credentialConfigured",
@@ -66,8 +78,8 @@
         "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
         "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
         "apiFamily": { "enum": ["openai-responses", "openai-completions"] },
-        "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$", "maxLength": 2048 },
-        "modelsUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$", "maxLength": 2048 },
+        "baseUrl": { "$ref": "#/$defs/httpsEndpoint" },
+        "modelsUrl": { "$ref": "#/$defs/httpsEndpoint" },
         "modelIds": {
           "type": "array",
           "items": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -76,6 +88,8 @@
           "uniqueItems": true
         },
         "supportsTools": { "type": "boolean" },
+        "supportsImageInput": { "type": "boolean" },
+        "supportsImageOutput": { "type": "boolean" },
         "logoAssetId": {
           "type": ["string", "null"],
           "pattern": "^[a-z0-9][a-z0-9.-]*$",
@@ -101,6 +115,8 @@
         "modelsUrl",
         "modelIds",
         "supportsTools",
+        "supportsImageInput",
+        "supportsImageOutput",
         "logoAssetId",
         "enabled",
         "createdAt",
@@ -112,8 +128,8 @@
         "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
         "providerId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$", "maxLength": 128 },
         "apiFamily": { "enum": ["openai-responses", "openai-completions"] },
-        "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$", "maxLength": 2048 },
-        "modelsUrl": { "type": "string", "format": "uri", "pattern": "^https://[^/?#@]+(?::[0-9]{1,5})?(?:/[^?#]*)?$", "maxLength": 2048 },
+        "baseUrl": { "$ref": "#/$defs/httpsEndpoint" },
+        "modelsUrl": { "$ref": "#/$defs/httpsEndpoint" },
         "modelIds": {
           "type": "array",
           "items": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -122,6 +138,8 @@
           "uniqueItems": true
         },
         "supportsTools": { "type": "boolean" },
+        "supportsImageInput": { "type": "boolean" },
+        "supportsImageOutput": { "type": "boolean" },
         "logoAssetId": {
           "type": ["string", "null"],
           "pattern": "^[a-z0-9][a-z0-9.-]*$",
@@ -137,7 +155,7 @@
       "type": "object",
       "required": ["schemaVersion", "connections"],
       "properties": {
-        "schemaVersion": { "const": "0.2" },
+        "schemaVersion": { "const": "0.3" },
         "connections": {
           "type": "array",
           "items": { "$ref": "#/$defs/configuration" },

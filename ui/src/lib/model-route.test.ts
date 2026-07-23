@@ -9,16 +9,22 @@ const ROUTES: readonly ModelDescriptor[] = [
     modelId: "same-model",
     apiFamily: "openai-completions",
     displayName: "Same model",
+    capabilities: { input: ["text"], output: ["text"] },
     supportsReasoning: false,
     supportsTools: true,
+    supportsImageInput: false,
+    supportsImageOutput: false,
   },
   {
     providerId: "same-provider",
     modelId: "same-model",
     apiFamily: "openrouter-images",
     displayName: "Same model",
+    capabilities: { input: ["text", "image"], output: ["image"] },
     supportsReasoning: false,
     supportsTools: false,
+    supportsImageInput: true,
+    supportsImageOutput: true,
   },
 ];
 

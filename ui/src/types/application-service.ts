@@ -27,13 +27,25 @@ export interface InitializeResult {
 }
 
 /** Provider 模型的稳定三元标识与展示信息。 */
+export type ModelMedia = "text" | "image";
+
+/** Provider 模型经运行时收窄后的输入输出媒介。 */
+export interface ModelMediaCapabilities {
+  readonly input: readonly ModelMedia[];
+  readonly output: readonly ModelMedia[];
+}
+
+/** Provider 模型的稳定三元标识、原始媒介能力与展示信息。 */
 export interface ModelDescriptor {
   readonly providerId: string;
   readonly modelId: string;
   readonly apiFamily: string;
   readonly displayName: string;
+  readonly capabilities: ModelMediaCapabilities;
   readonly supportsReasoning: boolean;
   readonly supportsTools: boolean;
+  readonly supportsImageInput: boolean;
+  readonly supportsImageOutput: boolean;
 }
 
 /** 启动一次运行所需的最小输入。 */
@@ -65,6 +77,18 @@ export interface ArtifactCreateResult {
   readonly artifact: SessionArtifactReference;
 }
 
+/** 按 Session 与 opaque artifact 标识读取图片的有界请求。 */
+export interface ArtifactReadInput {
+  readonly sessionId: string;
+  readonly artifactId: string;
+}
+
+/** 图片 artifact 的严格元数据与 Base64 正文响应。 */
+export interface ArtifactReadResult {
+  readonly artifact: SessionArtifactReference;
+  readonly dataBase64: string;
+}
+
 /** 服务接受运行后的稳定引用。 */
 export interface RunStartResult {
   readonly runId: string;
@@ -86,6 +110,8 @@ export interface ProviderConnectionInput {
   readonly apiFamily: "openai-responses" | "openai-completions";
   readonly modelIds: readonly string[];
   readonly supportsTools: boolean;
+  readonly supportsImageInput: boolean;
+  readonly supportsImageOutput: boolean;
   readonly logoAssetId: string | null;
   readonly enabled: boolean;
 }
@@ -435,6 +461,18 @@ export interface ApplicationServiceClient extends AgentProfileService {
    * 邮箱：18272669457@163.com
    */
   createArtifact(input: ArtifactCreateInput): Promise<ArtifactCreateResult>;
+
+  /**
+   * 读取同 Session 中一张有界图片 artifact，不返回宿主路径。
+   *
+   * 输入：稳定 Session ID 与 opaque artifact ID。
+   * 输出：与引用一致的图片元数据及经过 Base64 校验的有界字节。
+   * 不变量：只允许协议支持的图片 MIME，响应身份、长度、签名与摘要必须一致。
+   * 失败：标识无效、artifact 不存在/不属于 Session、媒体或字节校验失败时拒绝。
+   * 作者：高宏顺
+   * 邮箱：18272669457@163.com
+   */
+  readArtifact(input: ArtifactReadInput): Promise<ArtifactReadResult>;
 
   /**
    * 请求后端开始一次 Agent 运行。

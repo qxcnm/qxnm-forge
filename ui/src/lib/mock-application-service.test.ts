@@ -109,6 +109,8 @@ describe("MockApplicationServiceClient", () => {
       apiFamily: "openai-completions",
       modelIds: ["gpt-5"],
       supportsTools: false,
+      supportsImageInput: false,
+      supportsImageOutput: false,
       logoAssetId: "newapi-gzxsy",
       enabled: true,
     });
@@ -147,6 +149,8 @@ describe("MockApplicationServiceClient", () => {
       apiFamily: "openai-completions" as const,
       modelIds: ["model-v1"],
       supportsTools: false,
+      supportsImageInput: false,
+      supportsImageOutput: false,
       logoAssetId: "custom.logo",
       enabled: true,
     };
@@ -178,6 +182,8 @@ describe("MockApplicationServiceClient", () => {
       apiFamily: "openai-completions",
       modelIds: ["shared-model", "second-model"],
       supportsTools: true,
+      supportsImageInput: true,
+      supportsImageOutput: true,
       logoAssetId: null,
       enabled: true,
     });
@@ -195,7 +201,13 @@ describe("MockApplicationServiceClient", () => {
           providerId: "custom.routes",
           modelId: "shared-model",
           apiFamily: "openai-completions",
+          capabilities: {
+            input: ["text", "image"],
+            output: ["text", "image"],
+          },
           supportsTools: true,
+          supportsImageInput: true,
+          supportsImageOutput: true,
         }),
         expect.objectContaining({
           providerId: "custom.routes",
